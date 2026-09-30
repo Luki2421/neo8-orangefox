@@ -23,6 +23,11 @@ def main():
     device = android / 'device/realme/RE6402L1'
     if device.exists():
         raise RuntimeError('Refusing to overwrite an existing device tree')
+    patch = PROJECT / 'patches/fox16/neo8-manual-menu.patch'
+    recovery = android / 'bootable/recovery'
+    subprocess.run(['git', 'apply', '--check', str(patch)], cwd=recovery, check=True)
+    subprocess.run(['git', 'apply', str(patch)], cwd=recovery, check=True)
+    subprocess.run(['git', 'diff', '--check'], cwd=recovery, check=True)
     shutil.copytree(donor / 'device/realme/RE6402L1', device)
     board = device / 'BoardConfig.mk'
     text = board.read_text().replace('soong-libguitwrp_defaults', 'soong-libfoxui_defaults')
@@ -52,7 +57,8 @@ export FOX_MAINTAINER_PATCH_VERSION=4
     report = {'device_tree_integrated': True, 'source_revision': actual,
               'device': 'RMX8899 / RE6402L1', 'compilation_experiment_only': True,
               'flashable_release': False, 'phone_decryption_verified': False,
-              'remaining': ['manual metadata preparation UI', 'proven v3 touch stack comparison',
+              'manual_metadata_menu_integrated': True,
+              'remaining': ['proven v3 touch stack integration',
                             'Android runtime partition preservation', 'built image inspection']}
     (PROJECT / 'artifacts/neo8-build').mkdir(parents=True, exist_ok=True)
     (PROJECT / 'artifacts/neo8-build/device-integration.json').write_text(json.dumps(report, indent=2) + '\n')

@@ -69,7 +69,9 @@ Ubuntu 24.04; nie kupowano większego serwera.
   brak atrybutów `name` w dwóch `extend-project`. Kompilator nie został uruchomiony.
 - Poprawka: commit `b0448b5c049d9b3b498afd96f49cc67115d5b7e9`.
 - [Druga próba](https://github.com/Luki2421/neo8-orangefox/actions/runs/36699778777):
-  uruchomiona; ostatnio sprawdzony etap: pobieranie pełnych źródeł.
+  zakończona błędem. Pełna synchronizacja i integracja konfiguracji Neo8 przeszły.
+  Po synchronizacji pozostało 31 GiB. `lunch` pokazał poprawny produkt, lecz
+  kolejny etap stracił eksportowane zmienne i zakończył się `Missing config trunk_staging`.
 
 Skrypt przygotowania urządzenia zastępuje nazwę pluginu GUI przez `libfoxui`,
 wyłącza `ro.crypto.metadata_init_delete_all_keys.enabled` i ogranicza czekanie
@@ -97,3 +99,16 @@ Neo8 `e0f95763dacbd84b7ea722be208828a14734334dd1e8924162e57110326ad115`.
 Ma także inną zależność biblioteki C++ (`libc++.so`, zamiast `libc++_v36.so`).
 Nie wyciągano z samej zgodności nazw bibliotek wniosku o zgodności ABI lub
 płynności dotyku. Przed wydaniem obrazu nadal potrzebna jest kontrola tej konfiguracji.
+
+## Poprawka wyboru konfiguracji kompilacji
+
+Błąd odtworzono lokalnie: funkcja Bash wywołana w `lunch ... | tee ...` uruchamia
+się w podpowłoce, więc eksport `TARGET_RELEASE=bp2a` nie zostaje w powłoce
+uruchamiającej `m`. Oficjalny `build/make/envsetup.sh` OrangeFox eksportuje tę
+zmienną w `_lunch_meat`; sprawdzono commit `a11b2e4` gałęzi `fox_16.0`.
+Zmieniono rejestrowanie logu na podstawienie procesu i dodano jawne sprawdzenie
+produktu, wydania i wariantu przed kompilatorem. Ten wariant zachowuje zmienne
+w lokalnej próbie powłoki.
+
+Kolejna próba uwzględnia także poprawkę ręcznego menu w skrypcie integracji.
+Obraz nadal nie jest gotowy do telefonu; potrzebne są dalsze kontrole.

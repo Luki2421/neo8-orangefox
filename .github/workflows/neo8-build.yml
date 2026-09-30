@@ -76,7 +76,11 @@ jobs:
           set -o pipefail
           cd "$ANDROID_ROOT"
           source build/envsetup.sh
-          lunch twrp_RE6402L1-bp2a-eng 2>&1 | tee "$GITHUB_WORKSPACE/artifacts/neo8-build/lunch.log"
+          # lunch exports the selected product/release into this shell. A pipeline loses them.
+          lunch twrp_RE6402L1-bp2a-eng > >(tee "$GITHUB_WORKSPACE/artifacts/neo8-build/lunch.log") 2>&1
+          test "$TARGET_PRODUCT" = twrp_RE6402L1
+          test "$TARGET_RELEASE" = bp2a
+          test "$TARGET_BUILD_VARIANT" = eng
           m recoveryimage -j2 2>&1 | tee "$GITHUB_WORKSPACE/artifacts/neo8-build/build.log"
           sha256sum out/target/product/RE6402L1/recovery.img > "$GITHUB_WORKSPACE/artifacts/neo8-build/recovery-image.sha256"
           stat --printf='%s bytes\n' out/target/product/RE6402L1/recovery.img > "$GITHUB_WORKSPACE/artifacts/neo8-build/recovery-image-size.txt"

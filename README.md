@@ -51,8 +51,10 @@ lub większym serwerze. Ten workflow nie kupuje serwera ani nie zmienia planu.
 
 [Pełna próba kompilacji](https://github.com/Luki2421/neo8-orangefox/actions/runs/36699778777)
 wykorzystuje przypięty manifest OrangeFox `fox_16.0`, sprawdzone poprawki kodu i
-konfigurację urządzenia Neo8. Pierwsza próba zakończyła się na brakujących nazwach
-projektów w lokalnym manifeście; poprawiono je w `b0448b5`.
+konfigurację urządzenia Neo8. Pełne źródła pobrały się i konfiguracja została
+zintegrowana, lecz dalszy etap stracił eksport konfiguracji z `lunch`, gdy ten
+uruchomiono przez potok do `tee`. Poprawiono sposób zapisu logu i dodano
+sprawdzenie `TARGET_RELEASE=bp2a` przed kompilatorem.
 
 To próba zgodności kompilacji. Konfiguracja ma wyłączone usuwanie wszystkich
 kluczy metadanych oraz ograniczone czasowo oczekiwania w głównym init urządzenia.
@@ -62,7 +64,7 @@ sprawdzenie dotyku względem v3 i kontrola struktury, bibliotek oraz AVB.
 Osobna poprawka `neo8-manual-menu.patch` dodaje jawne przygotowanie metadanych
 przed polem PIN-u/hasła. Test hosta sprawdza prawdziwy handler C++ z atrapami usług.
 Poprawka przeszła [test źródeł na GitHubie](https://github.com/Luki2421/neo8-orangefox/actions/runs/36700977806).
-Nie jest jeszcze częścią powyższej próby pełnej kompilacji. Nie obsługuje jeszcze użytkownika bez hasła. Działanie Data
+Dodano ją do skryptu integracji dla kolejnej pełnej próby kompilacji. Nie obsługuje jeszcze użytkownika bez hasła. Działanie Data
 pozostaje niezweryfikowane na telefonie.
 
 Nie uruchamiamy automatycznego flashowania ani formatowania Data/Metadata.
