@@ -80,3 +80,20 @@ Workflow celowo nie publikuje obrazu do wgrania: pozostają integracja partycji
 w czasie pracy, porównanie dotyku z v3 oraz przegląd gotowego ramdisku.
 Osobna poprawka ręcznego menu przechodzi test handlera z atrapami usług, ale nie
 jest jeszcze w tej pełnej próbie budowy. Nie potwierdzono odszyfrowania na telefonie.
+
+## Ręczne przygotowanie metadanych — sprawdzone na hoście
+
+[Test GitHub Actions](https://github.com/Luki2421/neo8-orangefox/actions/runs/36700977806)
+zakończył się sukcesem: poprawki zastosowano na przypiętym kodzie, testowano
+rzeczywisty handler C++ dla 3 typów blokady, 6 sytuacji błędu oraz symulacji.
+Przeszły także wcześniejsze testy startu, ochrony operacji KeyMint i kopii SQLite
+z plikiem WAL. Dodano wpis językowy; lokalny linter GUI zgłasza 0 problemów
+w 25 plikach stron. To nadal nie jest test Androida ani telefonu.
+
+Odczytano publiczne komponenty dotyku Neo8 i porównano je z publiczną bazą v3.
+`libFT3683Gtsa.so`, `libthpalgo.so` oraz `vendor.oplus.hardware.touch-V2-ndk.so`
+są identyczne. Program `vendor-oplus-hardware-touch-V2-service` jest inny:
+Neo8 `e0f95763dacbd84b7ea722be208828a14734334dd1e8924162e57110326ad115`.
+Ma także inną zależność biblioteki C++ (`libc++.so`, zamiast `libc++_v36.so`).
+Nie wyciągano z samej zgodności nazw bibliotek wniosku o zgodności ABI lub
+płynności dotyku. Przed wydaniem obrazu nadal potrzebna jest kontrola tej konfiguracji.

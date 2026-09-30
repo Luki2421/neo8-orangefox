@@ -16,7 +16,8 @@ pobrać pełne źródła i zbudować `recoveryimage`; udostępnia tylko logi i m
 - Użytkownik potwierdził start menu i bardzo płynny dotyk w v3-DIAG.
 - v3 wyłącza dostęp do Data i usługi szyfrowania. Nie służy do decryption.
 - Baza u9 Test1 używa NXP, a wcześniej sprawdzona paczka 500 zawiera TMS.
-- Poprawki Neo8 KeyMint, Weaver i KeyStorage wymagają integracji w kodzie.
+- Poprawki Neo8 KeyMint, Weaver i KeyStorage są przygotowane i przechodzą testy
+  hosta; pełna kompilacja Androida oraz działanie na telefonie pozostają do sprawdzenia.
 - Obraz TWRP przesłany wcześniej ma część poprawek Neo8, lecz jego zgodność
   z nowszą ochroną istniejących kluczy nie została potwierdzona.
 
@@ -60,8 +61,8 @@ sprawdzenie dotyku względem v3 i kontrola struktury, bibliotek oraz AVB.
 
 Osobna poprawka `neo8-manual-menu.patch` dodaje jawne przygotowanie metadanych
 przed polem PIN-u/hasła. Test hosta sprawdza prawdziwy handler C++ z atrapami usług.
-Ta poprawka jest obecnie sprawdzana w workflow źródeł, a nie w powyższej próbie
-pełnej kompilacji. Nie obsługuje jeszcze użytkownika bez hasła. Działanie Data
+Poprawka przeszła [test źródeł na GitHubie](https://github.com/Luki2421/neo8-orangefox/actions/runs/36700977806).
+Nie jest jeszcze częścią powyższej próby pełnej kompilacji. Nie obsługuje jeszcze użytkownika bez hasła. Działanie Data
 pozostaje niezweryfikowane na telefonie.
 
 Nie uruchamiamy automatycznego flashowania ani formatowania Data/Metadata.

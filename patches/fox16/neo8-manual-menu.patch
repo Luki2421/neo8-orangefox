@@ -139,3 +139,12 @@
  		<page name="decrypt">
  			<action>
  				<condition var1="tw_crypto_pwtype" var2="2"/>
+--- a/gui/theme/common/languages/en.xml
++++ b/gui/theme/common/languages/en.xml
+@@ -1267,5 +1267,6 @@
+ 		<string name="listbox_group_additions">Additions</string>
+ 		<string name="partitions_management">Partitions Management</string>
+ 		
++		<string name="neo8_prepare_failed">Unable to prepare credential metadata. No password was submitted.</string>
+ 	</resources>
+ </language>
