@@ -3,6 +3,8 @@
 Cel projektu: kolejna wersja OrangeFox dla RMX8899 / RE6402L1, Android 16,
 RMX8899_16.0.10.500(CN01), z zachowaniem płynnego dotyku potwierdzonego w v3.
 
+[Wyniki testów Actions i sprawdzenia źródeł OrangeFox 16](docs/build-status.md).
+
 **Ten pakiet to wyłącznie pierwszy test zasobów serwera. Nie zawiera v4,
 nie kompiluje recovery i nie naprawia odszyfrowania.** Zielony wynik Actions
 oznacza utworzenie raportu zasobów, a nie zgodność środowiska lub obrazu.
