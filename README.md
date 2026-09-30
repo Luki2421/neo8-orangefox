@@ -28,14 +28,17 @@ Konfiguracja ma następujący układ:
 Workflow uruchomi się po zmianie pliku workflow lub skryptu. Można go też
 uruchomić z Actions → Neo8 - check build resources → Run workflow.
 
-Pierwsze uruchomienie tylko mierzy zasoby. Opcjonalna opcja `cleanup`
-usuwa cztery zbędne SDK z tymczasowego serwera GitHub. Skrypt odmawia tej
+Uruchomienie po zmianie kodu mierzy zasoby przed i po usunięciu zbędnych SDK.
+Przy ręcznym uruchomieniu można wyłączyć opcję `cleanup` (domyślnie włączona).
+Czyszczenie usuwa cztery zbędne SDK z tymczasowego serwera GitHub. Skrypt odmawia tej
 operacji na lokalnym komputerze i na serwerach self-hosted. Nie usuwa plików
 projektu, danych telefonu ani narzędzi uruchamiających Actions.
 
 Raport będzie w podsumowaniu zadania oraz artefakcie `neo8-build-resources`.
 Sprawdzamy rzeczywiste wolne miejsce, RAM, architekturę i położenie `/mnt`.
-Zalecane 100 GiB to praktyczny zapas na źródła i wyniki; nie gwarantuje budowy.
+Próg 100 GiB w raporcie jest orientacyjnym zapasem dla recovery, nie gwarantuje budowy.
+[Instrukcja źródeł Neo8 dla Androida 16](https://github.com/MissMyTime/twrp_device_sm8850/blob/d4b65c0e964942cf1b09ead3ee5f6d5e8649d17e/docs/BUILD.md)
+zaleca co najmniej 200 GB wolnego miejsca oraz 64 GB RAM albo odpowiedni swap.
 Jeśli miejsca zabraknie, raport pozwoli zdecydować o dalszej konfiguracji
 lub większym serwerze. Ten workflow nie kupuje serwera ani nie zmienia planu.
 

@@ -10,7 +10,7 @@ on:
       cleanup:
         description: Remove unused SDKs from the temporary GitHub-hosted runner
         required: true
-        default: false
+        default: true
         type: boolean
 
 permissions:
@@ -31,8 +31,8 @@ jobs:
       - name: Check available CPU, RAM and storage
         run: python3 scripts/neo8_preflight.py --output artifacts/neo8-preflight
 
-      - name: Optional cleanup of unused preinstalled SDKs
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.cleanup }}
+      - name: Cleanup unused SDKs on disposable runner and measure again
+        if: ${{ github.event_name == 'push' || inputs.cleanup }}
         run: python3 scripts/neo8_preflight.py --output artifacts/neo8-preflight --cleanup
 
       - name: Display resource report
@@ -50,4 +50,3 @@ jobs:
           path: artifacts/neo8-preflight/
           retention-days: 3
           if-no-files-found: error
-
