@@ -1,0 +1,97 @@
+name: Neo8 - full Android compilation experiment
+
+on:
+  push:
+    paths:
+      - .github/workflows/neo8-build.yml
+      - scripts/prepare_neo8_build.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: neo8-full-build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  recovery-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    env:
+      ANDROID_ROOT: /home/runner/android
+      USE_CCACHE: '0'
+      BUILD_NUMBER: neo8-ci-${{ github.run_number }}
+    steps:
+      - name: Read port project
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Free space on the disposable runner
+        run: python3 scripts/neo8_preflight.py --cleanup --output artifacts/neo8-build/resources
+
+      - name: Install Android build dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends bc bison build-essential ca-certificates curl flex git git-lfs gnupg gperf lib32z1-dev libelf-dev libncurses-dev libsdl2-dev libssl-dev libsqlite3-dev libxml2-utils lz4 python3 rsync unzip zip zlib1g-dev
+          git config --global user.name 'Neo8 build'
+          git config --global user.email 'neo8-build@users.noreply.github.com'
+          mkdir -p "$ANDROID_ROOT" "$HOME/bin" artifacts/neo8-build
+          curl --fail --location --retry 3 https://storage.googleapis.com/git-repo-downloads/repo -o "$HOME/bin/repo"
+          chmod +x "$HOME/bin/repo"
+
+      - name: Fetch pinned Android 16 manifest and source code
+        run: |
+          set -o pipefail
+          cd "$ANDROID_ROOT"
+          "$HOME/bin/repo" init -u https://gitlab.com/OrangeFox/Manifest.git -b c2949130190cb131adc468259648090249357d68 --depth=1 --no-clone-bundle
+          mkdir -p .repo/local_manifests
+          cat > .repo/local_manifests/neo8.xml <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <manifest>
+            <extend-project path="bootable/recovery" revision="c239fc5a54ecb482e4a49117bf45b7e76de68371" />
+            <extend-project path="system/vold" revision="953de9608eb78380b3c4e39e801c2bc0af7dbddc" />
+            <remove-project path="device/xiaomi/mondrian" optional="true" />
+            <remove-project path="device/xiaomi/sm84xx-common" optional="true" />
+          </manifest>
+          EOF
+          "$HOME/bin/repo" sync -c -j4 --no-tags --no-clone-bundle --fail-fast 2>&1 | tee "$GITHUB_WORKSPACE/artifacts/neo8-build/sync.log"
+          "$HOME/bin/repo" manifest -r -o "$GITHUB_WORKSPACE/artifacts/neo8-build/resolved-manifest.xml"
+          df -h "$ANDROID_ROOT"
+
+      - name: Fetch pinned Neo8 device and apply port changes
+        run: |
+          git init /tmp/neo8-device-source
+          git -C /tmp/neo8-device-source remote add origin https://github.com/MissMyTime/twrp_device_sm8850.git
+          git -C /tmp/neo8-device-source config core.sparseCheckout true
+          printf '/device/realme/RE6402L1/\n/patches/neo8/files/system/vold/\n/patches/common/files/system/vold/Weaver1.cpp\n' > /tmp/neo8-device-source/.git/info/sparse-checkout
+          git -C /tmp/neo8-device-source fetch --depth=1 --no-tags --filter=blob:none origin d4b65c0e964942cf1b09ead3ee5f6d5e8649d17e
+          git -C /tmp/neo8-device-source checkout --detach FETCH_HEAD
+          python3 scripts/prepare_neo8_port.py --recovery-root "$ANDROID_ROOT/bootable/recovery" --vold-root "$ANDROID_ROOT/system/vold" --neo8-root /tmp/neo8-device-source --report artifacts/neo8-build/source-integration.json
+          python3 scripts/prepare_neo8_build.py --android-root "$ANDROID_ROOT" --neo8-root /tmp/neo8-device-source
+
+      - name: Compile recovery image
+        run: |
+          set -o pipefail
+          cd "$ANDROID_ROOT"
+          source build/envsetup.sh
+          lunch twrp_RE6402L1-bp2a-eng 2>&1 | tee "$GITHUB_WORKSPACE/artifacts/neo8-build/lunch.log"
+          m recoveryimage -j2 2>&1 | tee "$GITHUB_WORKSPACE/artifacts/neo8-build/build.log"
+          sha256sum out/target/product/RE6402L1/recovery.img > "$GITHUB_WORKSPACE/artifacts/neo8-build/recovery-image.sha256"
+          stat --printf='%s bytes\n' out/target/product/RE6402L1/recovery.img > "$GITHUB_WORKSPACE/artifacts/neo8-build/recovery-image-size.txt"
+
+      - name: Record result and disk space
+        if: always()
+        run: |
+          df -h > artifacts/neo8-build/disk-final.txt
+          echo 'Full compilation experiment. Images are not published until manual decryption, touch and runtime integration are reviewed.' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Save build logs and manifest
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: neo8-full-build-diagnostics
+          path: artifacts/neo8-build/
+          retention-days: 7
+          if-no-files-found: warn
