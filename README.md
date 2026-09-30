@@ -9,7 +9,8 @@ RMX8899_16.0.10.500(CN01), z zachowaniem płynnego dotyku potwierdzonego w v3.
 **Repozytorium zawiera poprawki portu i workflow pełnej próby kompilacji Androida 16.
 Nie ma jeszcze obrazu v4 gotowego do wgrania.** Testy hosta i raporty zasobów nie
 potwierdzają odszyfrowania na telefonie. Osobny workflow `neo8-build.yml` próbuje
-pobrać pełne źródła i zbudować `recoveryimage`; udostępnia tylko logi i manifest.
+pobrać pełne źródła i zbudować `recoveryimage`. Po udanej budowie i kontroli
+ramdisku/AVB zachowa obraz rozwojowy do przeglądu wraz z raportem.
 
 ## Co jest już potwierdzone
 
@@ -49,17 +50,26 @@ lub większym serwerze. Ten workflow nie kupuje serwera ani nie zmienia planu.
 
 ## Pełna próba kompilacji — uruchomiona
 
-[Pełna próba kompilacji](https://github.com/Luki2421/neo8-orangefox/actions/runs/36699778777)
+[Pełna próba kompilacji](https://github.com/Luki2421/neo8-orangefox/actions/runs/36702317246)
 wykorzystuje przypięty manifest OrangeFox `fox_16.0`, sprawdzone poprawki kodu i
 konfigurację urządzenia Neo8. Pełne źródła pobrały się i konfiguracja została
 zintegrowana, lecz dalszy etap stracił eksport konfiguracji z `lunch`, gdy ten
 uruchomiono przez potok do `tee`. Poprawiono sposób zapisu logu i dodano
-sprawdzenie `TARGET_RELEASE=bp2a` przed kompilatorem.
+sprawdzenie `TARGET_RELEASE=bp2a` przed kompilatorem. Pierwsze uruchomienie tej
+próby przerwał sygnał wyłączenia runnera; ponowiono job na świeżym serwerze.
 
 To próba zgodności kompilacji. Konfiguracja ma wyłączone usuwanie wszystkich
 kluczy metadanych oraz ograniczone czasowo oczekiwania w głównym init urządzenia.
-Przed wydaniem obrazu potrzebne są integracja zachowania partycji w czasie pracy,
-sprawdzenie dotyku względem v3 i kontrola struktury, bibliotek oraz AVB.
+Nowy profil dodaje zachowanie montowań przy automatycznym czyszczeniu fstab oraz
+stock wartości KeyMint przed pierwszą operacją metadanych. Reader właściwości
+stock ROM pozostaje w recovery `/system`, także po zamontowaniu stock `/vendor`.
+Kontrola struktury, bibliotek i AVB oraz test telefonu pozostają do wykonania.
+
+Profil używa natywnego programu dotyku z przypiętej konfiguracji Neo8. Jego
+program różni się od v3; trzy porównane biblioteki interfejsu/algorytmu są identyczne.
+Ustawiono kolejność bibliotek zgodną z v3, jawny start po servicemanager oraz
+ograniczone do 5 sekund czekanie po inicjalizacji GUI. Płynność tego nowego profilu
+wymaga ponownego testu na telefonie.
 
 Osobna poprawka `neo8-manual-menu.patch` dodaje jawne przygotowanie metadanych
 przed polem PIN-u/hasła. Test hosta sprawdza prawdziwy handler C++ z atrapami usług.

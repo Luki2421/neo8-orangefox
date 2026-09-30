@@ -1,0 +1,137 @@
+--- a/partitionmanager.cpp
++++ b/partitionmanager.cpp
+@@ -246,6 +246,10 @@
+ 	return ver;
+ }
+ 
++static inline bool Keep_Runtime_Partitions() {
++	return android::base::GetBoolProperty("twrp.recovery.keep_runtime_partitions", false);
++}
++
+ void inline Process_Keymaster_Version(TWPartition *ven, bool Display_Error) {
+ 	// Fetch the Keymaster Service version to be started
+ 	std::string version;
+@@ -257,7 +261,7 @@
+ 		*/
+ 	if (version.empty()) {
+ 		// unmount partition(s)
+-		if (ven) ven->UnMount(Display_Error);
++		if (ven && !Keep_Runtime_Partitions()) ven->UnMount(Display_Error);
+ 
+ 		// Use keymaster_ver prop set from device tree (if exists)
+ 		version = android::base::GetProperty(TW_KEYMASTER_VERSION_PROP, version);
+@@ -268,10 +272,10 @@
+ 			LOGINFO("Keymaster_Ver::Unable to find vendor manifest on the device. Setting to default value.\n");
+ 		}
+ 	} else {
+-		if (ven) ven->UnMount(Display_Error);
++		if (ven && !Keep_Runtime_Partitions()) ven->UnMount(Display_Error);
+ 	}
+ #else
+-	if (ven) ven->UnMount(Display_Error);
++	if (ven && !Keep_Runtime_Partitions()) ven->UnMount(Display_Error);
+ 
+ 	version = android::base::GetProperty(TW_KEYMASTER_VERSION_PROP, version);
+ 	if (version.empty()) {
+@@ -527,10 +531,10 @@
+ #endif
+ 
+ 	usleep(65536);
+-	if (odm) odm->UnMount(Display_Error);
++	if (odm && !Keep_Runtime_Partitions()) odm->UnMount(Display_Error);
+ 	if (recovery_mode)
+ 		Process_Keymaster_Version(ven, false);
+-	if (ven) ven->UnMount(Display_Error);
++	if (ven && !Keep_Runtime_Partitions()) ven->UnMount(Display_Error);
+ 	return true;
+ }
+ 
+@@ -680,6 +684,23 @@
+ 	return true;
+ }
+ 
++#ifdef TW_NO_AUTO_DECRYPT
++static bool PrepareNeo8StockMetadataEnvironment() {
++	if (android::keystore::setRecoveryKeyMintEnvironment == nullptr) {
++		LOGERR("Neo8 metadata: stock KeyMint environment hook is unavailable\n");
++		return false;
++	}
++	// Preserve the recovery /system; stock system is mounted at /system_root.
++	PartitionManager.Mount_By_Path("/system_root", false);
++	PartitionManager.Mount_By_Path("/vendor", false);
++	if (!android::keystore::setRecoveryKeyMintEnvironment(true)) {
++		LOGERR("Neo8 metadata: stock KeyMint preparation failed; no metadata decrypt attempted\n");
++		return false;
++	}
++	return true;
++}
++#endif
++
+ void TWPartitionManager::Decrypt_Data() {
+ 	#ifdef TW_INCLUDE_CRYPTO
+ 	TWPartition* Decrypt_Data = Find_Partition_By_Path("/data");
+@@ -719,6 +740,9 @@
+ 				Decrypt_Data->Current_File_System.c_str(), Decrypt_Data->Key_Directory.c_str());
+ #ifdef TW_INCLUDE_FBE_METADATA_DECRYPT
+ #ifdef USE_FSCRYPT
++#ifdef TW_NO_AUTO_DECRYPT
++			if (!PrepareNeo8StockMetadataEnvironment()) return;
++#endif
+ 			std::vector<std::string> user_devices;
+ 			std::vector<bool> device_aliased;
+ 			auto cleanup_metadata_attempt = [&]() {
+@@ -760,8 +784,12 @@
+ 				}
+ 			};
+ 
++#ifdef TW_NO_AUTO_DECRYPT
++			std::string metadata_environment = "stock";
++#else
+ 			std::string metadata_environment =
+ 				android::base::GetProperty("twrp.keymint.metadata_env", "recovery");
++#endif
+ 			bool metadata_ready = try_metadata_environment();
+ 			const bool allow_stock_retry = android::base::GetBoolProperty(
+ 				"twrp.keymint.allow_stock_retry", false);
+--- a/twrp.cpp
++++ b/twrp.cpp
+@@ -82,6 +82,31 @@
+ static void Print_Prop(const char *key, const char *name, void *cookie) {
+ 	printf("%s=%s\n", key, name);
+ }
++
++static void Wait_For_Configured_Touch_Service() {
++	char service[PROPERTY_VALUE_MAX] = {};
++	property_get("twrp.recovery.touch_service", service, "");
++	if (service[0] == '\0')
++		return;
++
++	const std::string state_property = "init.svc." + std::string(service);
++	LOGINFO("Waiting up to 5 seconds for touch service '%s'\n", service);
++	for (int retry = 0; retry < 250; ++retry) {
++		char state[PROPERTY_VALUE_MAX] = {};
++		property_get(state_property.c_str(), state, "");
++		if (strcmp(state, "running") == 0) {
++			// Do not query the vendor Binder service from the splash thread.
++			// AServiceManager_checkService can block indefinitely while the
++			// vendor service manager is still settling, defeating this timeout.
++			usleep(300000);
++			LOGINFO("Touch service is running; controller settled\n");
++			return;
++		}
++		usleep(20000);
++	}
++	LOGINFO("Touch service timed out after 5 seconds; continuing startup\n");
++}
++
+ 
+ static void Decrypt_Page(bool SkipDecryption, bool datamedia) {
+ #ifdef TW_NO_AUTO_DECRYPT
+@@ -552,6 +577,7 @@
+ 	// start the UI
+ 	printf("Starting the UI...\n");
+ 	gui_init();
++	Wait_For_Configured_Touch_Service();
+ 
+ #ifndef TW_SKIP_POST_GUI_FSTAB_SETUP
+ 	if (!startup.Get_Fastboot_Mode()) PartitionManager.Setup_Fstab_Partitions(true);

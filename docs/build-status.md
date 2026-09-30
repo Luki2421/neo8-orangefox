@@ -131,9 +131,29 @@ Dodano również walidację właściwości systemu dla Androida 16. Kod przyjmuj
 wartości zapisane przez czytnik stock ROM lub z plików zamontowanego stock systemu;
 nie korzysta z właściwości nagłówka recovery jako zapasowej wartości. Wartości
 99.87.36, 2099-12-31, brak patcha vendora i nieprawidłowe daty przerywają próbę.
-Lokalnie 30 przypadków funkcji przeszło; nowa walidacja oczekuje na sprawdzenie CI.
+Lokalnie 30 przypadków funkcji przeszło; potwierdził je
+[test GitHub Actions](https://github.com/Luki2421/neo8-orangefox/actions/runs/36706941299).
 
 Przygotowano czytnik i inwentaryzację ramdisku boot-v4/LZ4. Sześć testów obejmuje
 uszkodzone archiwa, duplikaty, niebezpieczne ścieżki i pętle dowiązań. Inwentaryzację
 uruchomiono na publicznej bazie Test1, nie na nowym obrazie Neo8. Nie potwierdza
 działania usług ani odszyfrowania na telefonie.
+
+## Profil do następnej pełnej budowy
+
+Dodano `neo8-runtime.patch`: stock KeyMint jest przygotowywany przed pierwszą
+operacją metadanych, a automatyczne czyszczenie fstab respektuje opt-in zachowania
+vendor/ODM. Dodano ograniczone oczekiwanie na dotyk z kodu Neo8; nie sprawdza
+usługi Binder w wątku startu GUI. Lokalnie przeszły testy brakującego/błędnego
+hooka, cztery scenariusze czekania na dotyk i 16 scenariuszy unmount vendor.
+
+Profil urządzenia konfiguruje natywną usługę dotyku Neo8 z kolejnością bibliotek
+v3 i jawnie uruchamia helper właściwości u9 przed usługą. Nie importuje całego
+stosu bibliotek systemowych ze starego obrazu. Czytnik właściwości stock ROM
+przeniesiono do recovery `/system`, aby zachować go po montowaniu `/vendor`.
+Przygotowanie całego profilu sprawdzono lokalnie na tekstach i konfiguracji
+przypiętych źródeł; nie była to kompilacja Androida.
+
+Nowy workflow zachowa po udanej kompilacji i kontroli ramdisku/AVB artefakt
+`neo8-development-image-unreviewed`. To obraz do przeglądu; nie potwierdza
+działania Data ani dotyku. Dotychczasowy job nadal używa commitu `19e5f735`.

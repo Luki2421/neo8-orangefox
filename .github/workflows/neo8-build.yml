@@ -85,11 +85,31 @@ jobs:
           sha256sum out/target/product/RE6402L1/recovery.img > "$GITHUB_WORKSPACE/artifacts/neo8-build/recovery-image.sha256"
           stat --printf='%s bytes\n' out/target/product/RE6402L1/recovery.img > "$GITHUB_WORKSPACE/artifacts/neo8-build/recovery-image-size.txt"
 
+      - name: Inspect boot header, ramdisk and AVB
+        run: |
+          set -o pipefail
+          image="$ANDROID_ROOT/out/target/product/RE6402L1/recovery.img"
+          python3 scripts/inspect_recovery.py --image "$image" --report artifacts/neo8-build/image-inventory.json
+          python3 "$ANDROID_ROOT/external/avb/avbtool.py" verify_image --image "$image" 2>&1 | tee artifacts/neo8-build/avb-verification.txt
+          mkdir -p artifacts/neo8-development-image
+          cp "$image" artifacts/neo8-development-image/OrangeFox-Neo8-development.img
+          cp artifacts/neo8-build/image-inventory.json artifacts/neo8-development-image/
+          cp artifacts/neo8-build/recovery-image.sha256 artifacts/neo8-development-image/
+          printf '%s\n' 'Development image for review. Startup, touch and phone decryption have not been tested.' > artifacts/neo8-development-image/README.txt
+
+      - name: Retain development image for review
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: neo8-development-image-unreviewed
+          path: artifacts/neo8-development-image/
+          retention-days: 7
+          if-no-files-found: error
+
       - name: Record result and disk space
         if: always()
         run: |
           df -h > artifacts/neo8-build/disk-final.txt
-          echo 'Full compilation experiment. Images are not published until manual decryption, touch and runtime integration are reviewed.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Development build. A successful compilation retains an image and static inventory for review; phone touch and decryption remain unverified.' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Save build logs and manifest
         if: always()
