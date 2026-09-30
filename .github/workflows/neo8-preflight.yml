@@ -1,0 +1,53 @@
+name: Neo8 - check build resources
+
+on:
+  push:
+    paths:
+      - .github/workflows/neo8-preflight.yml
+      - scripts/neo8_preflight.py
+  workflow_dispatch:
+    inputs:
+      cleanup:
+        description: Remove unused SDKs from the temporary GitHub-hosted runner
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: neo8-preflight-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  resources:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Read project files
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Check available CPU, RAM and storage
+        run: python3 scripts/neo8_preflight.py --output artifacts/neo8-preflight
+
+      - name: Optional cleanup of unused preinstalled SDKs
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.cleanup }}
+        run: python3 scripts/neo8_preflight.py --output artifacts/neo8-preflight --cleanup
+
+      - name: Display resource report
+        if: always()
+        run: |
+          if test -f artifacts/neo8-preflight/summary.md; then
+            cat artifacts/neo8-preflight/summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Save resource report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: neo8-build-resources
+          path: artifacts/neo8-preflight/
+          retention-days: 3
+          if-no-files-found: error
+
