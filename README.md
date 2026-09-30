@@ -6,9 +6,10 @@ RMX8899_16.0.10.500(CN01), z zachowaniem płynnego dotyku potwierdzonego w v3.
 [Wyniki testów Actions i sprawdzenia źródeł OrangeFox 16](docs/build-status.md).
 [Przygotowane poprawki kodu i zakres testów](docs/source-port.md).
 
-**Repozytorium zawiera test zasobów i poprawki kodu do portu Neo8. Nie zawiera
-obrazu v4 i nie kompiluje recovery.** Zielony wynik Actions potwierdza tylko
-wykonane testy hosta lub utworzenie raportu, nie odszyfrowanie na telefonie.
+**Repozytorium zawiera poprawki portu i workflow pełnej próby kompilacji Androida 16.
+Nie ma jeszcze obrazu v4 gotowego do wgrania.** Testy hosta i raporty zasobów nie
+potwierdzają odszyfrowania na telefonie. Osobny workflow `neo8-build.yml` próbuje
+pobrać pełne źródła i zbudować `recoveryimage`; udostępnia tylko logi i manifest.
 
 ## Co jest już potwierdzone
 
@@ -45,13 +46,23 @@ zaleca co najmniej 200 GB wolnego miejsca oraz 64 GB RAM albo odpowiedni swap.
 Jeśli miejsca zabraknie, raport pozwoli zdecydować o dalszej konfiguracji
 lub większym serwerze. Ten workflow nie kupuje serwera ani nie zmienia planu.
 
-## Dalsza kompilacja — jeszcze nie jest skonfigurowana
+## Pełna próba kompilacji — uruchomiona
 
-Należy ustalić gałąź OrangeFox zgodną z wymaganymi interfejsami Androida 16,
-przenieść poprawki Neo8 i ochronę przed trwałym zapisem zmienionych kluczy,
-ustawić ręczne odszyfrowanie, dobrać spójne komponenty TMS do firmware 500
-i przenieść działającą konfigurację dotyku. Obraz przeznaczony do testu wymaga
-potem kontroli struktury, bibliotek i AVB. Działanie trzeba sprawdzić na telefonie.
+[Pełna próba kompilacji](https://github.com/Luki2421/neo8-orangefox/actions/runs/36699778777)
+wykorzystuje przypięty manifest OrangeFox `fox_16.0`, sprawdzone poprawki kodu i
+konfigurację urządzenia Neo8. Pierwsza próba zakończyła się na brakujących nazwach
+projektów w lokalnym manifeście; poprawiono je w `b0448b5`.
+
+To próba zgodności kompilacji. Konfiguracja ma wyłączone usuwanie wszystkich
+kluczy metadanych oraz ograniczone czasowo oczekiwania w głównym init urządzenia.
+Przed wydaniem obrazu potrzebne są integracja zachowania partycji w czasie pracy,
+sprawdzenie dotyku względem v3 i kontrola struktury, bibliotek oraz AVB.
+
+Osobna poprawka `neo8-manual-menu.patch` dodaje jawne przygotowanie metadanych
+przed polem PIN-u/hasła. Test hosta sprawdza prawdziwy handler C++ z atrapami usług.
+Ta poprawka jest obecnie sprawdzana w workflow źródeł, a nie w powyższej próbie
+pełnej kompilacji. Nie obsługuje jeszcze użytkownika bez hasła. Działanie Data
+pozostaje niezweryfikowane na telefonie.
 
 Nie uruchamiamy automatycznego flashowania ani formatowania Data/Metadata.
 Nie przesyłamy do repozytorium Twoich kluczy, PIN-u, danych ani podpisanego

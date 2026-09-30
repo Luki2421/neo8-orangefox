@@ -44,6 +44,15 @@ jobs:
             --neo8-root /tmp/neo8-port-sources/neo8 \
             --report artifacts/neo8-port/source-check.json
 
+      - name: Apply manual preparation menu patch
+        run: |
+          git -C /tmp/neo8-port-sources/recovery apply --check "$GITHUB_WORKSPACE/patches/fox16/neo8-manual-menu.patch"
+          git -C /tmp/neo8-port-sources/recovery apply "$GITHUB_WORKSPACE/patches/fox16/neo8-manual-menu.patch"
+          git -C /tmp/neo8-port-sources/recovery diff --check
+
+      - name: Test manual preparation handler on host
+        run: python3 tests/test_manual_prepare.py --recovery-root /tmp/neo8-port-sources/recovery
+
       - name: Test startup and KeyMint upgrade handling on host
         run: |
           python3 tests/test_startup_and_key_guard.py \

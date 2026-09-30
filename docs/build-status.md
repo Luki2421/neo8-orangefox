@@ -15,8 +15,8 @@ Oba uruchomienia zakończyły się powodzeniem:
 - [Raport JSON i Markdown](https://github.com/Luki2421/neo8-orangefox/actions/runs/36692264169/artifacts/11085733473), retencja 3 dni.
 
 Wyniki pochodzą z logów zakończonych zadań. Nie sumowano miejsca z `/mnt`.
-Próg orientacyjny 100 GiB został osiągnięty. Pełna synchronizacja źródeł i kompilacja
-nie zostały wykonane, więc raport nie potwierdza, że obraz zmieści się na serwerze.
+Próg orientacyjny 100 GiB został osiągnięty. Powyższe pomiary nie wykonują synchronizacji ani kompilacji i nie potwierdzają,
+że pełny obraz zmieści się na serwerze. Osobną próbę pełnej budowy uruchomiono poniżej.
 [Instrukcja źródeł Neo8](https://github.com/MissMyTime/twrp_device_sm8850/blob/d4b65c0e964942cf1b09ead3ee5f6d5e8649d17e/docs/BUILD.md)
 zaleca co najmniej 200 GB dysku i 64 GB RAM lub odpowiedni swap.
 
@@ -56,3 +56,27 @@ plikami wspólnymi TWRP, bo zmieniłoby to jego własną implementację.
 - Nie wykonano flashowania ani zmian na telefonie przez GitHub Actions.
 
 Dokumentacja: GPL-3.0-or-later.
+
+## Pełna próba kompilacji — 30 września
+
+Dodano workflow `neo8-build.yml`: oficjalny manifest Androida 16, przypięte
+recovery/vold, konfiguracja Neo8, integracja sprawdzonych poprawek i cel
+`recoveryimage` z dwoma zadaniami kompilatora. Runner jest zwykłym GitHub-hosted
+Ubuntu 24.04; nie kupowano większego serwera.
+
+- [Pierwsza próba](https://github.com/Luki2421/neo8-orangefox/actions/runs/36699386590):
+  przygotowanie runnera i zależności udane; synchronizacja nie rozpoczęła się przez
+  brak atrybutów `name` w dwóch `extend-project`. Kompilator nie został uruchomiony.
+- Poprawka: commit `b0448b5c049d9b3b498afd96f49cc67115d5b7e9`.
+- [Druga próba](https://github.com/Luki2421/neo8-orangefox/actions/runs/36699778777):
+  uruchomiona; ostatnio sprawdzony etap: pobieranie pełnych źródeł.
+
+Skrypt przygotowania urządzenia zastępuje nazwę pluginu GUI przez `libfoxui`,
+wyłącza `ro.crypto.metadata_init_delete_all_keys.enabled` i ogranicza czekanie
+w `init.recovery.qcom.rc`. Lokalnie wykonano ten skrypt na przypiętej konfiguracji,
+sprawdzono wynik i składnię kroków shell workflow.
+
+Workflow celowo nie publikuje obrazu do wgrania: pozostają integracja partycji
+w czasie pracy, porównanie dotyku z v3 oraz przegląd gotowego ramdisku.
+Osobna poprawka ręcznego menu przechodzi test handlera z atrapami usług, ale nie
+jest jeszcze w tej pełnej próbie budowy. Nie potwierdzono odszyfrowania na telefonie.

@@ -1,0 +1,141 @@
+--- a/gui/action.cpp
++++ b/gui/action.cpp
+@@ -287,6 +287,7 @@
+       ADD_ACTION(terminalcommand);
+       ADD_ACTION(reinjecttwrp);
+       ADD_ACTION(decrypt);
++      ADD_ACTION(neo8preparedecrypt);
+       ADD_ACTION(adbsideload);
+       ADD_ACTION(openrecoveryscript);
+       ADD_ACTION(installsu);
+@@ -2084,6 +2085,42 @@
+ }
+ 
+ 
++int GUIAction::neo8preparedecrypt(std::string arg __unused)
++{
++	operation_start("Decrypt");
++	int status = 1;
++	if (simulate) {
++		simulate_progress_bar();
++		status = 0;
++	} else {
++#ifdef TW_NO_AUTO_DECRYPT
++		// Explicit menu action only. Never submit a credential or default password here.
++		TWPartition* data = PartitionManager.Find_Partition_By_Path("/data");
++		DataManager::SetValue(TW_CRYPTO_PWTYPE, -1);
++		DataManager::SetValue("tw_crypto_pwtype_0", -1);
++		DataManager::SetValue("tw_crypto_password", "");
++		DataManager::SetValue("tw_crypto_display", "");
++		DataManager::SetValue("tw_crypto_user_id", "0");
++		DataManager::SetValue("tw_password_fail", 0);
++		DataManager::SetValue("of_decrypt_from_menu", 1);
++		if (data && !data->Key_Directory.empty()) {
++			PartitionManager.Decrypt_Data();
++			const int type = DataManager::GetIntValue(TW_CRYPTO_PWTYPE);
++			if (data->Is_Mounted() && DataManager::GetIntValue(TW_IS_FBE) == 1 &&
++					(type == 1 || type == 2 || type == 3)) {
++				status = 0;
++			} else {
++				gui_err("neo8_prepare_failed=Unable to prepare credential metadata. No password was submitted.");
++			}
++		} else {
++			gui_err("neo8_prepare_failed=Unable to prepare credential metadata. No password was submitted.");
++		}
++#endif
++	}
++	operation_end(status);
++	return 0;
++}
++
+ int GUIAction::decrypt(std::string arg __unused)
+ {
+ 	int op_status = 0;
+--- a/gui/objects.hpp
++++ b/gui/objects.hpp
+@@ -621,6 +621,7 @@
+ 	int checkbackupname(std::string arg);
+ 	int checkbackupfolder(std::string arg);
+ 	int generatedigests(std::string arg);
++	int neo8preparedecrypt(std::string arg);
+ 	int decrypt(std::string arg);
+ 	int adbsideload(std::string arg);
+ 	int adbsideloadcancel(std::string arg);
+--- a/partitionmanager.cpp
++++ b/partitionmanager.cpp
+@@ -635,6 +635,7 @@
+ #ifndef TW_NO_AUTO_DECRYPT
+ 		Decrypt_Data();
+ #else
++		DataManager::SetValue("neo8_manual_decrypt", 1);
+ 		LOGINFO("TW_NO_AUTO_DECRYPT: keeping data locked during startup\n");
+ #endif
+ 	#endif
+@@ -703,6 +704,15 @@
+ 			if (!Key_Directory_Partition->Is_Mounted())
+ 				Mount_By_Path(Decrypt_Data->Key_Directory, false);
+ 		if (!Decrypt_Data->Key_Directory.empty()) {
++#ifdef TW_NO_AUTO_DECRYPT
++			// This test profile must only open the existing metadata key.
++			struct stat key_stat = {};
++			const std::string key_path = Decrypt_Data->Key_Directory + "/key/encrypted_key";
++			if (stat(key_path.c_str(), &key_stat) != 0 || !S_ISREG(key_stat.st_mode) || key_stat.st_size <= 0) {
++				LOGERR("Existing metadata key is unavailable; refusing key generation\n");
++				return;
++			}
++#endif
+ 			Set_Crypto_Type("file");
+ 			LOGINFO("Metadata decrypt setup: block='%s', mount='%s', fs='%s', key_dir='%s'\n",
+ 				Decrypt_Data->Actual_Block_Device.c_str(), Decrypt_Data->Mount_Point.c_str(),
+--- a/gui/theme/portrait_hdpi/pages/advanced.xml
++++ b/gui/theme/portrait_hdpi/pages/advanced.xml
+@@ -619,6 +619,13 @@
+ 			<listbox style="group_list">
+ 				<placement x="0" y="%ab_h%" w="%screen_w%" h="%files_np_w%"/>
+ 				<listitem name="{@decrypt_data_btn}">
++					<condition var1="neo8_manual_decrypt" var2="1"/>
++					<condition var1="tw_is_encrypted" var2="1"/>
++					<icon res="key"/>
++					<action function="page">neo8_prepare_decrypt</action>
++				</listitem>
++				<listitem name="{@decrypt_data_btn}">
++					<condition var1="neo8_manual_decrypt" op="!=" var2="1"/>
+ 					<condition var1="tw_is_fbe" op="!=" var2="1"/>
+ 					<condition var1="tw_is_encrypted" var2="1"/>
+ 					<condition var1="tw_is_decrypted" var2="0"/>
+@@ -631,6 +638,7 @@
+ 					<action function="page">decrypt</action>
+ 				</listitem>
+ 				<listitem name="{@decrypt_users}">
++					<condition var1="neo8_manual_decrypt" op="!=" var2="1"/>
+ 					<condition var1="tw_is_fbe" var2="1"/>
+ 					<condition var1="tw_all_users_decrypted" var2="0"/>
+ 					<icon res="key"/>
+--- a/gui/theme/portrait_hdpi/pages/mount.xml
++++ b/gui/theme/portrait_hdpi/pages/mount.xml
+@@ -227,6 +227,25 @@
+ 			</action>
+ 		</page>
+ 
++		<page name="neo8_prepare_decrypt">
++			<template name="body_ct"/>
++			<template name="progress_bar"/>
++			<template name="action_page_console_big"/>
++			<action>
++				<action function="neo8preparedecrypt"/>
++			</action>
++			<action>
++				<condition var1="tw_operation_state" var2="1"/>
++				<condition var1="tw_operation_status" var2="0"/>
++				<action function="page">decrypt</action>
++			</action>
++			<action>
++				<condition var1="tw_operation_state" var2="1"/>
++				<condition var1="tw_operation_status" op="!=" var2="0"/>
++				<action function="page">fox_other_additions</action>
++			</action>
++		</page>
++
+ 		<page name="decrypt">
+ 			<action>
+ 				<condition var1="tw_crypto_pwtype" var2="2"/>
