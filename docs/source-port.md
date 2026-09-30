@@ -4,6 +4,11 @@ To przygotowanie źródeł, nie obraz do flashowania. Workflow
 `Neo8 - validate source patches` sprawdza zastosowanie poprawek i wykonuje
 testy na komputerze ze sztucznymi danymi. Nie kompiluje recovery dla Androida.
 
+30 września 2026 [test GitHub Actions zakończył się powodzeniem](https://github.com/Luki2421/neo8-orangefox/actions/runs/36696800917)
+dla commitu `bdd9476ddd7d1f6af94c4292581b7ae182dc9325`: poprawki zostały zastosowane,
+oba zestawy testów hosta przeszły. Zgodność binariów dla Androida i działanie
+na telefonie pozostają niesprawdzone.
+
 ## Co zostało przygotowane
 
 - Obsługa `TW_NO_AUTO_DECRYPT`, `TW_SKIP_POST_GUI_FSTAB_SETUP` i
