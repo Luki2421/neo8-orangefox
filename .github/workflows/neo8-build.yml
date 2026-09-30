@@ -50,8 +50,8 @@ jobs:
           cat > .repo/local_manifests/neo8.xml <<'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
           <manifest>
-            <extend-project path="bootable/recovery" revision="c239fc5a54ecb482e4a49117bf45b7e76de68371" />
-            <extend-project path="system/vold" revision="953de9608eb78380b3c4e39e801c2bc0af7dbddc" />
+            <extend-project name="bootable/Recovery" path="bootable/recovery" revision="c239fc5a54ecb482e4a49117bf45b7e76de68371" />
+            <extend-project name="system/vold" path="system/vold" revision="953de9608eb78380b3c4e39e801c2bc0af7dbddc" />
             <remove-project path="device/xiaomi/mondrian" optional="true" />
             <remove-project path="device/xiaomi/sm84xx-common" optional="true" />
           </manifest>
