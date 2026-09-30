@@ -112,3 +112,28 @@ w lokalnej próbie powłoki.
 
 Kolejna próba uwzględnia także poprawkę ręcznego menu w skrypcie integracji.
 Obraz nadal nie jest gotowy do telefonu; potrzebne są dalsze kontrole.
+
+## Przerwanie runnera i dodatkowe zabezpieczenia
+
+[Trzecia próba, uruchomienie 1](https://github.com/Luki2421/neo8-orangefox/actions/runs/36702317246/attempts/1)
+przeszła synchronizację, konfigurację produktu i kompilację narzędzia Soong.
+O 10:51 UTC runner dostał sygnał wyłączenia; proces zakończył się kodem 143.
+Log nie zawiera błędu C++ ani potwierdzenia OOM. Ponowiono ten sam job;
+uruchomienie 2 ponownie pobiera źródła. Ten job używa wcześniejszego commitu
+`19e5f735`; poniższe nowe zabezpieczenia trafią do następnej pełnej budowy.
+
+[Testy zabezpieczenia zatrzymania usług](https://github.com/Luki2421/neo8-orangefox/actions/runs/36705808729)
+zakończyły się powodzeniem: 13 przypadków rzeczywistych funkcji z atrapami usług.
+Odczyt bazy nie rozpoczyna się, jeśli keystore2 nie jest zatrzymany. Zmiana
+właściwości KeyMint wymaga zatrzymania zarówno KeyMint, jak i keystore2.
+
+Dodano również walidację właściwości systemu dla Androida 16. Kod przyjmuje
+wartości zapisane przez czytnik stock ROM lub z plików zamontowanego stock systemu;
+nie korzysta z właściwości nagłówka recovery jako zapasowej wartości. Wartości
+99.87.36, 2099-12-31, brak patcha vendora i nieprawidłowe daty przerywają próbę.
+Lokalnie 30 przypadków funkcji przeszło; nowa walidacja oczekuje na sprawdzenie CI.
+
+Przygotowano czytnik i inwentaryzację ramdisku boot-v4/LZ4. Sześć testów obejmuje
+uszkodzone archiwa, duplikaty, niebezpieczne ścieżki i pętle dowiązań. Inwentaryzację
+uruchomiono na publicznej bazie Test1, nie na nowym obrazie Neo8. Nie potwierdza
+działania usług ani odszyfrowania na telefonie.

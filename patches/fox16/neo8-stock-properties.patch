@@ -1,0 +1,66 @@
+--- a/Decrypt.cpp
++++ b/Decrypt.cpp
+@@ -643,8 +643,8 @@
+ 		const std::vector<std::string> system_props = {
+ 			"/system_root/system/build.prop",
+ 			"/system_root/build.prop",
+-			"/system/system/build.prop",
+-			"/system/build.prop",
++			"/s/system/build.prop",
++			"/s/build.prop",
+ 		};
+ 		const std::vector<std::string> vendor_props = {
+ 			"/vendor/build.prop",
+@@ -657,19 +657,11 @@
+ 		std::string os_version = android::base::GetProperty("twrp.keymint.osver", "");
+ 		if (os_version.empty())
+ 			os_version = readRecoveryBuildProperty(system_props, "ro.build.version.release");
+-		if (os_version.empty())
+-			os_version = android::base::GetProperty(
+-				"ro.bootimage.build.version.release",
+-				android::base::GetProperty("ro.build.version.release", "16"));
+ 
+ 		std::string os_patch = android::base::GetProperty("twrp.keymint.ospatch", "");
+ 		if (os_patch.empty())
+ 			os_patch = readRecoveryBuildProperty(
+ 				system_props, "ro.build.version.security_patch");
+-		if (os_patch.empty())
+-			os_patch = android::base::GetProperty(
+-				"ro.bootimage.build.version.security_patch",
+-				android::base::GetProperty("ro.build.version.security_patch", ""));
+ 		if (os_patch.empty()) {
+ 			printf("KeyMint environment: stock OS patch level is unavailable\n");
+ 			ALOGE("Neo8 KeyMint: stock OS patch level is unavailable");
+@@ -680,11 +672,27 @@
+ 		if (vendor_patch.empty())
+ 			vendor_patch = readRecoveryBuildProperty(
+ 				vendor_props, "ro.vendor.build.security_patch");
+-		if (vendor_patch.empty())
+-			vendor_patch = android::base::GetProperty(
+-				"ro.vendor.build.security_patch", os_patch);
+-		if (vendor_patch.empty())
+-			vendor_patch = os_patch;
++		// Only the stock-reader hints or mounted stock files above are accepted.
++		// Recovery's own boot header/properties may contain 99.87.36 / 2099-12-31.
++		auto valid_patch = [](const std::string& patch) {
++			if (patch.size() != 10 || patch[4] != '-' || patch[7] != '-') return false;
++			for (size_t i = 0; i < patch.size(); ++i) {
++				if (i != 4 && i != 7 && (patch[i] < '0' || patch[i] > '9')) return false;
++			}
++			int year = std::stoi(patch.substr(0, 4));
++			int month = std::stoi(patch.substr(5, 2));
++			int day = std::stoi(patch.substr(8, 2));
++			if (year < 2000 || year >= 2099 || month < 1 || month > 12) return false;
++			const int days[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
++			int limit = days[month - 1];
++			if (month == 2 && (year % 400 == 0 || (year % 4 == 0 && year % 100 != 0))) ++limit;
++			return day >= 1 && day <= limit;
++		};
++		if ((os_version != "16" && os_version != "16.0" && os_version != "16.0.0") ||
++		    !valid_patch(os_patch) || !valid_patch(vendor_patch)) {
++			printf("Neo8 KeyMint: valid Android 16 stock OS/vendor values are required\n");
++			return false;
++		}
+ 		char command[256];
+ 		char service_state[PROPERTY_VALUE_MAX] = {};
+ 		const char* request_name = stock_environment ? "stock-user-key" : "metadata/CE";

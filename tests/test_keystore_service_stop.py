@@ -74,7 +74,8 @@ static std::string GetProperty(const std::string& key, const std::string& fallba
 }
 }}
 static std::string readRecoveryBuildProperty(const std::vector<std::string>&, const std::string& name) {
-    return props[name];
+    auto found = props.find("stock-file:" + name);
+    return found == props.end() ? "" : found->second;
 }
 #define R_OK 4
 #define access fake_access
@@ -115,6 +116,23 @@ int main() {
     }
     reset(); props.clear(); assert(!setRecoveryKeyMintEnvironment(true));
     assert(commands == 0 && sleeps == 0);
+    reset(); props = {{"ro.bootimage.build.version.release", "99.87.36"},
+                     {"ro.bootimage.build.version.security_patch", "2099-12-31"}};
+    assert(!setRecoveryKeyMintEnvironment(true)); assert(commands == 0 && sleeps == 0);
+    for (const char* version : {"99.87.36", "15", "16;echo invalid"}) {
+        reset(); props["twrp.keymint.osver"] = version;
+        assert(!setRecoveryKeyMintEnvironment(true)); assert(commands == 0 && sleeps == 0);
+    }
+    for (const char* patch : {"", "2099-12-31", "2026-13-01", "2026-02-29", "2026-00-00", "2026-08-01;"}) {
+        for (const char* key : {"twrp.keymint.ospatch", "twrp.keymint.venpatch"}) {
+            reset(); props[key] = patch;
+            assert(!setRecoveryKeyMintEnvironment(true)); assert(commands == 0 && sleeps == 0);
+        }
+    }
+    reset(); props = {{"stock-file:ro.build.version.release", "16.0"},
+                     {"stock-file:ro.build.version.security_patch", "2024-02-29"},
+                     {"stock-file:ro.vendor.build.security_patch", "2024-02-29"}};
+    assert(setRecoveryKeyMintEnvironment(true)); assert(commands == 4);
     reset(); binder_km = false; assert(!setRecoveryKeyMintEnvironment(true));
     assert(commands == 4 && sleeps == 100);
     reset(); binder_ks = false; assert(!setRecoveryKeyMintEnvironment(true));
@@ -135,7 +153,7 @@ def main():
         binary = Path(directory) / 'stop'
         subprocess.run(['g++', '-std=c++17', '-Wall', '-Wextra', str(source), '-o', str(binary)], check=True)
         subprocess.run([str(binary)], check=True, timeout=5)
-    print('PASS: 13 actual-function cases for database backup and service-stop failures.')
+    print('PASS: 30 actual-function cases for service stops and stock-property validation.')
     print('Host stubs do not verify Android or phone decryption.')
 
 if __name__ == '__main__':

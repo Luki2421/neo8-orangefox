@@ -43,18 +43,22 @@ def main():
     # Verify every patch and source file before the first mutation.
     for root, patch in patches:
         run('git', 'apply', '--check', str(patch), cwd=root)
-    guard = PROJECT / 'patches/fox16/neo8-keystore-stop.patch'
+    guards = [PROJECT / 'patches/fox16/neo8-keystore-stop.patch',
+              PROJECT / 'patches/fox16/neo8-stock-properties.patch']
     decrypt = next(content for target, content in copies if target.name == 'Decrypt.cpp')
     with tempfile.TemporaryDirectory(prefix='neo8-guard-check-', dir='/tmp') as directory:
         temporary = Path(directory)
         (temporary / 'Decrypt.cpp').write_bytes(decrypt)
-        run('git', 'apply', '--check', str(guard), cwd=temporary)
+        for guard in guards:
+            run('git', 'apply', '--check', str(guard), cwd=temporary)
+            run('git', 'apply', str(guard), cwd=temporary)
     for root, patch in patches:
         run('git', 'apply', str(patch), cwd=root)
     for target, content in copies:
         target.write_bytes(content)
     # This patch is based on the pinned Neo8 Decrypt.cpp copied above.
-    run('git', 'apply', str(guard), cwd=roots['vold'])
+    for guard in guards:
+        run('git', 'apply', str(guard), cwd=roots['vold'])
     for name in ('recovery', 'vold'):
         run('git', 'diff', '--check', cwd=roots[name])
     report = {'sources': sources, 'source_changes_applied': True,

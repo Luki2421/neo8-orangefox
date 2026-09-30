@@ -8,6 +8,8 @@ on:
       - patches/fox16/**
       - scripts/fetch_port_sources.py
       - scripts/prepare_neo8_port.py
+      - scripts/boot_ramdisk.py
+      - scripts/inspect_recovery.py
       - tests/**
   workflow_dispatch:
 
@@ -31,7 +33,10 @@ jobs:
       - name: Install host test dependencies
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y --no-install-recommends g++ libsqlite3-dev
+          sudo apt-get install -y --no-install-recommends g++ libsqlite3-dev liblz4-1 binutils
+
+      - name: Test ramdisk reader against malformed archives and links
+        run: python3 tests/test_ramdisk_reader.py
 
       - name: Fetch pinned source code without device firmware
         run: python3 scripts/fetch_port_sources.py --output /tmp/neo8-port-sources
