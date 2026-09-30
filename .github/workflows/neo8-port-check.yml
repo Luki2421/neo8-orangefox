@@ -1,0 +1,68 @@
+name: Neo8 - validate source patches
+
+on:
+  push:
+    paths:
+      - .github/workflows/neo8-port-check.yml
+      - port-sources.json
+      - patches/fox16/**
+      - scripts/fetch_port_sources.py
+      - scripts/prepare_neo8_port.py
+      - tests/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: neo8-port-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Read project files
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Install host test dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends g++ libsqlite3-dev
+
+      - name: Fetch pinned source code without device firmware
+        run: python3 scripts/fetch_port_sources.py --output /tmp/neo8-port-sources
+
+      - name: Apply source changes
+        run: |
+          python3 scripts/prepare_neo8_port.py \
+            --recovery-root /tmp/neo8-port-sources/recovery \
+            --vold-root /tmp/neo8-port-sources/vold \
+            --neo8-root /tmp/neo8-port-sources/neo8 \
+            --report artifacts/neo8-port/source-check.json
+
+      - name: Test startup and KeyMint upgrade handling on host
+        run: |
+          python3 tests/test_startup_and_key_guard.py \
+            --recovery-root /tmp/neo8-port-sources/recovery \
+            --vold-root /tmp/neo8-port-sources/vold
+
+      - name: Test keystore snapshot with synthetic WAL database
+        run: python3 tests/test_keystore_snapshot.py --vold-root /tmp/neo8-port-sources/vold
+
+      - name: Display scope of this check
+        if: always()
+        run: |
+          echo 'Source patches and host tests only. No Android recovery image was compiled; phone decryption remains unverified.' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Save source report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: neo8-source-check
+          path: artifacts/neo8-port/
+          retention-days: 7
+          if-no-files-found: warn

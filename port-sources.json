@@ -1,0 +1,21 @@
+{
+  "recovery": {
+    "url": "https://gitlab.com/OrangeFox/bootable/Recovery.git",
+    "branch": "fox_16.0",
+    "commit": "c239fc5a54ecb482e4a49117bf45b7e76de68371"
+  },
+  "vold": {
+    "url": "https://gitlab.com/OrangeFox/system/vold.git",
+    "branch": "fox_16.0",
+    "commit": "953de9608eb78380b3c4e39e801c2bc0af7dbddc"
+  },
+  "neo8": {
+    "url": "https://github.com/MissMyTime/twrp_device_sm8850.git",
+    "commit": "d4b65c0e964942cf1b09ead3ee5f6d5e8649d17e",
+    "files": {
+      "patches/neo8/files/system/vold/Decrypt.cpp": "2328603599bf4f3f0b07132e3dd63692e484732db8a4180b22f5905d81788439",
+      "patches/neo8/files/system/vold/KeyStorage.cpp": "6b250c9e46538e384e10deb05e3f405539d99900889f659756b8a88aac0c7f76",
+      "patches/common/files/system/vold/Weaver1.cpp": "749d4d301dbbfd3cd6c022b569b358085b443fb2cf9b7d1418424de03637e18b"
+    }
+  }
+}

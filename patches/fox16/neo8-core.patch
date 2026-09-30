@@ -1,0 +1,352 @@
+diff --git a/Android.mk b/Android.mk
+index 95a4b9c..8f2e1bf 100644
+--- a/Android.mk
++++ b/Android.mk
+@@ -519,6 +519,12 @@ endif
+ ifeq ($(TW_SKIP_ADDITIONAL_FSTAB), true)
+     LOCAL_CFLAGS += -DTW_SKIP_ADDITIONAL_FSTAB
+ endif
++ifeq ($(TW_NO_AUTO_DECRYPT), true)
++    LOCAL_CFLAGS += -DTW_NO_AUTO_DECRYPT
++endif
++ifeq ($(TW_SKIP_POST_GUI_FSTAB_SETUP), true)
++    LOCAL_CFLAGS += -DTW_SKIP_POST_GUI_FSTAB_SETUP
++endif
+ ifeq ($(TW_FORCE_KEYMASTER_VER), true)
+     LOCAL_CFLAGS += -DTW_FORCE_KEYMASTER_VER
+ endif
+diff --git a/gui/action.cpp b/gui/action.cpp
+index bd5da25..7d60876 100644
+--- a/gui/action.cpp
++++ b/gui/action.cpp
+@@ -2095,6 +2095,14 @@ int GUIAction::decrypt(std::string arg __unused)
+ 		string Password;
+ 		string userID;
+ 		DataManager::GetValue("tw_crypto_password", Password);
++#ifdef TW_NO_AUTO_DECRYPT
++		char fbe_contents[PROPERTY_VALUE_MAX] = {};
++		property_get("fbe.contents", fbe_contents, "");
++		if (!DataManager::GetIntValue(TW_IS_FBE) && fbe_contents[0] != '\0') {
++			DataManager::SetValue(TW_IS_FBE, 1);
++			DataManager::SetValue("tw_crypto_user_id", "0");
++		}
++#endif
+ 
+ 		if (DataManager::GetIntValue(TW_IS_FBE)) {  // for FBE
+ 			DataManager::GetValue("tw_crypto_user_id", userID);
+diff --git a/gui/gui.cpp b/gui/gui.cpp
+index a3eb4fd..dbad7b3 100644
+--- a/gui/gui.cpp
++++ b/gui/gui.cpp
+@@ -1030,6 +1030,13 @@ extern "C" int gui_init(void)
+ 
+ extern "C" int gui_loadResources(void)
+ {
++#ifdef TW_FORCE_STOCK_THEME_ON_BOOT
++	if (PageManager::LoadPackage("OrangeFox", TWRES "ui.xml", "main"))
++	{
++		gui_err("base_pkg_err=Failed to load base packages.");
++		goto error;
++	}
++#else
+ #ifndef TW_OEM_BUILD
+ 	int check = 0;
+ 	DataManager::GetValue(TW_IS_ENCRYPTED, check);
+@@ -1046,7 +1053,12 @@ extern "C" int gui_loadResources(void)
+ 
+ 	if (check)
+ 	{
+-		if (PageManager::LoadPackage("OrangeFox", TWRES "ui.xml", "decrypt"))
++#ifdef TW_NO_AUTO_DECRYPT
++		const char* start_page = "main";
++#else
++		const char* start_page = "decrypt";
++#endif
++		if (PageManager::LoadPackage("OrangeFox", TWRES "ui.xml", start_page))
+ 		{
+ 			gui_err("base_pkg_err=Failed to load base packages.");
+ 			goto error;
+@@ -1089,6 +1101,7 @@ extern "C" int gui_loadResources(void)
+ 		}
+ 	}
+ #endif // ifndef TW_OEM_BUILD
++#endif // TW_FORCE_STOCK_THEME_ON_BOOT
+ 	// Set the default package
+ 	PageManager::SelectPackage("OrangeFox");
+ 
+diff --git a/gui/libfoxui_defaults.go b/gui/libfoxui_defaults.go
+index 88d0e6a..2e6e9b0 100644
+--- a/gui/libfoxui_defaults.go
++++ b/gui/libfoxui_defaults.go
+@@ -272,6 +272,11 @@ func copyTheme(ctx android.BaseContext) bool {
+ 
+ func globalFlags(ctx android.BaseContext) []string {
+ 	var cflags []string
++	for _, flag := range []string{"TW_NO_AUTO_DECRYPT", "TW_FORCE_STOCK_THEME_ON_BOOT"} {
++		if getMakeVars(ctx, flag) == "true" {
++			cflags = append(cflags, "-D"+flag)
++		}
++	}
+ 
+ 
+ 	if getMakeVars(ctx, "AB_OTA_UPDATER") == "true" {
+diff --git a/partition.cpp b/partition.cpp
+index 1914cf4..74915da 100644
+--- a/partition.cpp
++++ b/partition.cpp
+@@ -742,6 +742,13 @@ void TWPartition::Setup_Data_Partition(bool Display_Error) {
+ 			*/
+ 				Is_Encrypted = true;
+ 				Is_Decrypted = false;
++#ifdef TW_NO_AUTO_DECRYPT
++				if (!Key_Directory.empty()) {
++					Is_FBE = true;
++					DataManager::SetValue(TW_IS_FBE, 1);
++					DataManager::SetValue(TW_IS_ENCRYPTED, 1);
++				}
++#endif
+ 				if (datamedia)
+ 					Setup_Data_Media();
+ //			}
+diff --git a/partitionmanager.cpp b/partitionmanager.cpp
+index 2fe6694..b7c7422 100755
+--- a/partitionmanager.cpp
++++ b/partitionmanager.cpp
+@@ -132,6 +132,13 @@ std::vector<users_struct> Users_List;
+ 
+ std::string additional_fstab = "/etc/additional.fstab";
+ 
++namespace android {
++namespace keystore {
++	bool setRecoveryKeyMintEnvironment(bool stock_environment) __attribute__((weak));
++}
++}
++
++
+ TWPartitionManager::TWPartitionManager(void) {
+ 	mtp_was_enabled = false;
+ 	mtp_write_fd = -1;
+@@ -625,7 +632,11 @@ void TWPartitionManager::Setup_Fstab_Partitions(bool Display_Error) {
+ 
+ 	#ifdef TW_INCLUDE_CRYPTO
+ 		DataManager::SetValue(TW_IS_ENCRYPTED, 1);
++#ifndef TW_NO_AUTO_DECRYPT
+ 		Decrypt_Data();
++#else
++		LOGINFO("TW_NO_AUTO_DECRYPT: keeping data locked during startup\n");
++#endif
+ 	#endif
+ 
+ 		Update_System_Details();
+@@ -671,7 +682,21 @@ int TWPartitionManager::Write_Fstab(void) {
+ void TWPartitionManager::Decrypt_Data() {
+ 	#ifdef TW_INCLUDE_CRYPTO
+ 	TWPartition* Decrypt_Data = Find_Partition_By_Path("/data");
+-	if (Decrypt_Data && Decrypt_Data->Is_Encrypted && !Decrypt_Data->Is_Decrypted) {
++	bool force_metadata_setup = false;
++	if (Decrypt_Data && !Decrypt_Data->Key_Directory.empty() &&
++			DataManager::GetIntValue(TW_IS_FBE) &&
++			(Decrypt_Data->Decrypted_Block_Device.empty() || !Decrypt_Data->Is_Mounted())) {
++		force_metadata_setup = true;
++	}
++	if (Decrypt_Data && ((Decrypt_Data->Is_Encrypted && !Decrypt_Data->Is_Decrypted) || force_metadata_setup)) {
++		if (force_metadata_setup) {
++			LOGINFO("Forcing metadata decrypt setup for FBE /data: encrypted=%d decrypted=%d block='%s'\n",
++				Decrypt_Data->Is_Encrypted ? 1 : 0, Decrypt_Data->Is_Decrypted ? 1 : 0,
++				Decrypt_Data->Decrypted_Block_Device.c_str());
++			Decrypt_Data->Is_Encrypted = true;
++			Decrypt_Data->Is_Decrypted = false;
++			Decrypt_Data->Decrypted_Block_Device.clear();
++		}
+ 		Set_Crypto_State();
+ 		TWPartition* Key_Directory_Partition = Find_Partition_By_Path(Decrypt_Data->Key_Directory);
+ 		if (Key_Directory_Partition != nullptr)
+@@ -679,36 +704,95 @@ void TWPartitionManager::Decrypt_Data() {
+ 				Mount_By_Path(Decrypt_Data->Key_Directory, false);
+ 		if (!Decrypt_Data->Key_Directory.empty()) {
+ 			Set_Crypto_Type("file");
++			LOGINFO("Metadata decrypt setup: block='%s', mount='%s', fs='%s', key_dir='%s'\n",
++				Decrypt_Data->Actual_Block_Device.c_str(), Decrypt_Data->Mount_Point.c_str(),
++				Decrypt_Data->Current_File_System.c_str(), Decrypt_Data->Key_Directory.c_str());
+ #ifdef TW_INCLUDE_FBE_METADATA_DECRYPT
+ #ifdef USE_FSCRYPT
+ 			std::vector<std::string> user_devices;
+ 			std::vector<bool> device_aliased;
+-			if (android::vold::fscrypt_mount_metadata_encrypted(Decrypt_Data->Actual_Block_Device, Decrypt_Data->Mount_Point, false, false, Decrypt_Data->Current_File_System, false, user_devices, device_aliased, 0, TWFunc::Path_Exists(additional_fstab) ? additional_fstab : "")) {
++			auto cleanup_metadata_attempt = [&]() {
++				Decrypt_Data->UnMount(false);
++				TWFunc::Exec_Cmd("dmsetup remove userdata", false);
++				Decrypt_Data->Is_Decrypted = false;
++				Decrypt_Data->Decrypted_Block_Device.clear();
++			};
++			auto try_metadata_environment = [&]() -> bool {
++				if (!android::vold::fscrypt_mount_metadata_encrypted(
++						Decrypt_Data->Actual_Block_Device, Decrypt_Data->Mount_Point,
++						false, false, Decrypt_Data->Current_File_System, false,
++						user_devices, device_aliased, 0,
++						TWFunc::Path_Exists(additional_fstab) ? additional_fstab : "")) {
++					LOGINFO("Unable to decrypt metadata encryption in current KeyMint environment\n");
++					cleanup_metadata_attempt();
++					return false;
++				}
+ 				std::string crypto_blkdev = android::base::GetProperty("ro.crypto.fs_crypto_blkdev", "error");
+ 				Decrypt_Data->Decrypted_Block_Device = crypto_blkdev;
+ 				LOGINFO("Successfully decrypted metadata encrypted data partition with new block device: '%s'\n", crypto_blkdev.c_str());
+-#endif
+ 				Decrypt_Data->Is_Decrypted = true; // Needed to make the mount function work correctly
+-				int retry_count = 10;
+-				while (!Decrypt_Data->Mount(false) && --retry_count)
++				bool mounted = false;
++				for (int retry_count = 0; retry_count < 10 && !mounted; ++retry_count) {
++					mounted = Decrypt_Data->Mount(false);
++					if (mounted)
++						break;
+ 					usleep(500);
+-				if (Decrypt_Data->Mount(false)) {
++				}
++				if (mounted) {
+ 					if (!Decrypt_Data->Decrypt_FBE_DE()) {
+ 						LOGERR("Unable to decrypt FBE device\n");
+ 					}
+-
++					return true;
+ 				} else {
+-					LOGINFO("Failed to mount data after metadata decrypt\n");
++					LOGINFO("Failed to mount data after metadata decrypt in current KeyMint environment\n");
++					cleanup_metadata_attempt();
++					return false;
+ 				}
+-			} else {
+-				LOGINFO("Unable to decrypt metadata encryption\n");
++			};
++
++			std::string metadata_environment =
++				android::base::GetProperty("twrp.keymint.metadata_env", "recovery");
++			bool metadata_ready = try_metadata_environment();
++			const bool allow_stock_retry = android::base::GetBoolProperty(
++				"twrp.keymint.allow_stock_retry", false);
++			const bool has_environment_hook =
++				android::keystore::setRecoveryKeyMintEnvironment != nullptr;
++			if (!metadata_ready && metadata_environment != "stock" &&
++					allow_stock_retry && has_environment_hook) {
++				LOGINFO("Metadata decrypt failed in the recovery KeyMint environment; "
++					"retrying with device stock values\n");
++				if (!Mount_By_Path("/system_root", false))
++					LOGINFO("Metadata compatibility: unable to mount /system_root; "
++						"stock property discovery will use fallbacks\n");
++				Mount_By_Path("/vendor", false);
++				if (android::keystore::setRecoveryKeyMintEnvironment(true)) {
++					metadata_environment = "stock";
++					metadata_ready = try_metadata_environment();
++				}
++			} else if (!metadata_ready && allow_stock_retry && !has_environment_hook) {
++				LOGINFO("Metadata stock retry was requested, but no device KeyMint hook is available\n");
++			}
++			if (metadata_ready) {
++				android::base::SetProperty("twrp.keymint.metadata_env", metadata_environment);
++				LOGINFO("Metadata decrypt selected KeyMint environment: %s\n",
++					metadata_environment.c_str());
++			} else if (metadata_environment == "stock" && has_environment_hook) {
++				LOGINFO("Metadata retry with stock values failed; restoring recovery values\n");
++				android::keystore::setRecoveryKeyMintEnvironment(false);
++				android::base::SetProperty("twrp.keymint.metadata_env", "recovery");
+ 			}
++#endif
+ #else
+ 			LOGERR("Metadata FBE decrypt support not present in this TWRP\n");
+ #endif
+ 		}
+ 		if (Decrypt_Data->Is_FBE) {
+-			if (DataManager::GetIntValue(TW_CRYPTO_PWTYPE) == 0) {
++			if (!Decrypt_Data->Is_Mounted()) {
++				LOGINFO("Skipping automatic default-password FBE decrypt because "
++					"/data metadata mapping is not ready\n");
++			}
++#ifndef TW_NO_AUTO_DECRYPT
++			else if (DataManager::GetIntValue(TW_CRYPTO_PWTYPE) == 0) {
+ 				if (Decrypt_Device("!") == 0) {
+ 					gui_msg("decrypt_success=Successfully decrypted with default password.");
+ 					DataManager::SetValue(TW_IS_ENCRYPTED, 0);
+@@ -716,6 +800,7 @@ void TWPartitionManager::Decrypt_Data() {
+ 					gui_err("unable_to_decrypt=Unable to decrypt with default password.");
+ 				}
+ 			}
++#endif
+ 		} else {
+ 			LOGINFO("FBE setup failed. Trying FDE...\n");
+ // 			Set_Crypto_State();
+@@ -735,7 +820,7 @@ void TWPartitionManager::Decrypt_Data() {
+ //			}
+ 		}
+ 	}
+-	if (Decrypt_Data && (!Decrypt_Data->Is_Encrypted || Decrypt_Data->Is_Decrypted)) {
++	if (Decrypt_Data && (!Decrypt_Data->Is_Encrypted || Decrypt_Data->Is_Decrypted) && Decrypt_Data->Is_Mounted()) {
+ 		Decrypt_Adopted();
+ 	}
+ #endif
+@@ -2355,13 +2440,25 @@ int TWPartitionManager::Decrypt_Device(string Password, int user_id) {
+ 
+   property_set("orangefox.mount_to_decrypt", "1");
+   Set_Crypto_State();
++#ifdef TW_NO_AUTO_DECRYPT
++  Set_Crypto_Type(DataManager::GetIntValue(TW_IS_FBE) ? "file" : "block");
++#else
+   Set_Crypto_Type("block");
++#endif
+ 
+   if (DataManager::GetIntValue(TW_IS_FBE))
+     {
+ #ifdef TW_INCLUDE_FBE
+-		if (!Mount_By_Path("/data", true)) // /data has to be mounted for FBE
++		if (!Mount_By_Path("/data", true)) { // /data has to be mounted for FBE
++#ifdef TW_NO_AUTO_DECRYPT
++			LOGINFO("Manual FBE request: preparing metadata mapping\n");
++			Decrypt_Data();
++			if (!Mount_By_Path("/data", true))
++				return -1;
++#else
+ 			return -1;
++#endif
++		}
+ 
+ 		bool user_need_decrypt = false;
+ 		std::vector<users_struct>::iterator iter;
+@@ -2370,6 +2467,10 @@ int TWPartitionManager::Decrypt_Device(string Password, int user_id) {
+ 				user_need_decrypt = true;
+ 			}
+ 		}
++#ifdef TW_NO_AUTO_DECRYPT
++		if (user_id == 0 && !TWFunc::Path_Exists("/data/media/0"))
++			user_need_decrypt = true;
++#endif
+ 		if (!user_need_decrypt) {
+ 			LOGINFO("User %d does not require decryption\n", user_id);
+ 			return 0;
+diff --git a/twrp.cpp b/twrp.cpp
+index d8221d5..9058270 100644
+--- a/twrp.cpp
++++ b/twrp.cpp
+@@ -84,6 +84,11 @@ static void Print_Prop(const char *key, const char *name, void *cookie) {
+ }
+ 
+ static void Decrypt_Page(bool SkipDecryption, bool datamedia) {
++#ifdef TW_NO_AUTO_DECRYPT
++	// Credential handling remains available through the explicit GUI action.
++	LOGINFO("TW_NO_AUTO_DECRYPT: starting the main page without decryption\n");
++	return;
++#endif
+ 	// Offer to decrypt if the device is encrypted
+ 	if (DataManager::GetIntValue(TW_IS_ENCRYPTED) != 0) {
+ 		if (SkipDecryption) {
+@@ -548,7 +553,11 @@ int main(int argc, char **argv) {
+ 	printf("Starting the UI...\n");
+ 	gui_init();
+ 
++#ifndef TW_SKIP_POST_GUI_FSTAB_SETUP
+ 	if (!startup.Get_Fastboot_Mode()) PartitionManager.Setup_Fstab_Partitions(true);
++#else
++	LOGINFO("TW_SKIP_POST_GUI_FSTAB_SETUP: skipping duplicate fstab setup\n");
++#endif
+ 
+ 	// Load up all the resources
+ 	gui_loadResources();
