@@ -18,7 +18,7 @@ def main():
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
     sources = json.loads((PROJECT / 'port-sources.json').read_text())
-    for name in ('recovery', 'vold', 'neo8'):
+    for name in ('recovery', 'vold', 'vendor_twrp', 'neo8'):
         source = sources[name]
         root = output / name
         root.mkdir()

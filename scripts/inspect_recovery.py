@@ -50,7 +50,7 @@ def elf_dependencies(content):
     if len(content) < 64 or content[:6] != b'\x7fELF\x02\x01' or struct.unpack_from('<H', content, 18)[0] != 183:
         raise ValueError('Expected a little-endian ARM64 ELF')
     # readelf reads metadata only; the target executable is never run.
-    with tempfile.NamedTemporaryFile(prefix='neo8-inspect-', dir='/tmp') as file:
+    with tempfile.NamedTemporaryFile(prefix='neo8-inspect-') as file:
         file.write(content)
         file.flush()
         result = subprocess.run(['readelf', '-d', file.name], check=True, text=True,

@@ -9,6 +9,11 @@
     "branch": "fox_16.0",
     "commit": "953de9608eb78380b3c4e39e801c2bc0af7dbddc"
   },
+  "vendor_twrp": {
+    "url": "https://gitlab.com/OrangeFox/vendor/twrp.git",
+    "branch": "fox_16.0",
+    "commit": "3e0b71f4d1f624f7ea462507a1b974d80cc65627"
+  },
   "neo8": {
     "url": "https://github.com/MissMyTime/twrp_device_sm8850.git",
     "commit": "d4b65c0e964942cf1b09ead3ee5f6d5e8649d17e",

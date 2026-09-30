@@ -113,7 +113,7 @@ def main():
     # Ensure the production call precedes all metadata attempts in Decrypt_Data.
     body = text[text.index('void TWPartitionManager::Decrypt_Data() {'):]
     assert body.index('if (!PrepareNeo8StockMetadataEnvironment()) return;') < body.index('fscrypt_mount_metadata_encrypted(')
-    with tempfile.TemporaryDirectory(prefix='neo8-metadata-test-', dir='/tmp') as directory:
+    with tempfile.TemporaryDirectory(prefix='neo8-metadata-test-') as directory:
         source = Path(directory) / 'metadata.cpp'
         source.write_text(STUBS + function + CASES)
         for hook in (False, True):

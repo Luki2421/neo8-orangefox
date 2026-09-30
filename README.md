@@ -5,6 +5,7 @@ RMX8899_16.0.10.500(CN01), z zachowaniem płynnego dotyku potwierdzonego w v3.
 
 [Wyniki testów Actions i sprawdzenia źródeł OrangeFox 16](docs/build-status.md).
 [Przygotowane poprawki kodu i zakres testów](docs/source-port.md).
+[Najnowsza analiza i lokalna poprawka integracji GUI/Soong](docs/build-fix-2026-09-30.md).
 
 **Repozytorium zawiera poprawki portu i workflow pełnej próby kompilacji Androida 16.
 Nie ma jeszcze obrazu v4 gotowego do wgrania.** Testy hosta i raporty zasobów nie

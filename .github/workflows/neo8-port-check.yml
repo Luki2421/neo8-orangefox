@@ -60,6 +60,12 @@ jobs:
       - name: Test manual preparation handler on host
         run: python3 tests/test_manual_prepare.py --recovery-root /tmp/neo8-port-sources/recovery
 
+      - name: Test real Make to Soong flag export
+        run: |
+          python3 tests/test_soong_flags.py \
+            --recovery-root /tmp/neo8-port-sources/recovery \
+            --vendor-root /tmp/neo8-port-sources/vendor_twrp
+
       - name: Test startup and KeyMint upgrade handling on host
         run: |
           python3 tests/test_startup_and_key_guard.py \

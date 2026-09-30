@@ -41,7 +41,7 @@ class ReaderTests(unittest.TestCase):
         struct.pack_into('<II', header, 8, 0, len(packed))
         struct.pack_into('<I', header, 20, 1584)
         struct.pack_into('<I', header, 40, 4)
-        with tempfile.NamedTemporaryFile(dir='/tmp') as file:
+        with tempfile.NamedTemporaryFile() as file:
             file.write(header + packed); file.flush()
             image, files = read_recovery(file.name)
             self.assertEqual(files['system/file']['data'], b'content')
