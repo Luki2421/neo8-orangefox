@@ -7,12 +7,13 @@ on:
       - port-sources.json
       - patches/fox16/**
       - patches/build-soong/**
-      - scripts/prepare_ci_swap.py
+      - scripts/neo8_service_config.py
       - scripts/prepare_neo8_build.py
+      - scripts/inspect_recovery.py
+      - scripts/prepare_ci_swap.py
       - scripts/prepare_neo8_port.py
       - scripts/neo8_preflight.py
       - scripts/boot_ramdisk.py
-      - scripts/inspect_recovery.py
       - tests/test_soong_flags.py
   workflow_dispatch:
 
@@ -50,6 +51,9 @@ jobs:
           mkdir -p "$ANDROID_ROOT" "$HOME/bin" artifacts/neo8-build
           curl --fail --location --retry 3 https://storage.googleapis.com/git-repo-downloads/repo -o "$HOME/bin/repo"
           chmod +x "$HOME/bin/repo"
+
+      - name: Test recovery service configuration
+        run: python3 tests/test_service_config.py
 
       - name: Fetch pinned Android 16 manifest and source code
         run: |

@@ -10,6 +10,9 @@ import stat
 import struct
 import subprocess
 import tempfile
+import xml.etree.ElementTree as ET
+
+from neo8_service_config import REQUIRED_PROFILES, profile_names
 
 from boot_ramdisk import read_recovery
 
@@ -57,6 +60,31 @@ def elf_dependencies(content):
                                 capture_output=True, timeout=10)
     return re.findall(r'\(NEEDED\).*?\[([^\]]+)\]', result.stdout)
 
+def inspect_service_config(entries):
+    # /etc is created as a symlink by recovery init on this device. Validate
+    # its target in the archive as well as an existing archive link if present.
+    profile_path = 'etc/task_profiles.json' if 'etc' in entries else 'system/etc/task_profiles.json'
+    name, entry = resolve(entries, profile_path)
+    if not entry or not stat.S_ISREG(entry['mode']):
+        raise ValueError('Missing recovery task_profiles.json')
+    config = json.loads(entry['data'])
+    missing = REQUIRED_PROFILES - profile_names(config)
+    if missing:
+        raise ValueError('Missing task profiles: ' + ', '.join(sorted(missing)))
+    checked = []
+    for path, entry in entries.items():
+        if not stat.S_ISREG(entry['mode']) or not path.endswith('.xml'):
+            continue
+        if any(path.startswith(part + '/etc/vintf/manifest/') or
+               path == part + '/etc/vintf/manifest.xml'
+               for part in ('system', 'system_ext', 'product')):
+            manifest = ET.fromstring(entry['data'])
+            if manifest.tag == 'manifest' and manifest.get('type') != 'framework':
+                raise ValueError('Device manifest in framework directory: ' + path)
+            checked.append(path)
+    return {'task_profiles_path': name, 'required_task_profiles_present': True,
+            'framework_manifests_checked': checked}
+
 def inspect(path):
     image, entries = read_recovery(path)
     if len(image) > PARTITION_SIZE:
@@ -64,6 +92,7 @@ def inspect(path):
     name, executable = resolve(entries, 'system/bin/recovery')
     if not executable or not stat.S_ISREG(executable['mode']) or not executable['mode'] & 0o111:
         raise ValueError('Missing executable system/bin/recovery')
+    service_config = inspect_service_config(entries)
     needed = elf_dependencies(executable['data'])
     candidates = ['system/lib64', 'system/lib64/bootstrap', 'lib64',
                   'vendor/lib64', 'vendor/odm/lib64']
@@ -88,6 +117,7 @@ def inspect(path):
     _, odm = resolve(entries, 'odm')
     return {'image_sha256': hashlib.sha256(image).hexdigest(), 'image_bytes': len(image),
             'partition_bytes': PARTITION_SIZE, 'header_version': 4, 'kernel_included': False,
+            'service_configuration': service_config,
             'ramdisk_entries': len(entries), 'recovery_executable': name,
             'recovery_direct_libraries': libraries,
             'unresolved_direct_libraries': [key for key, value in libraries.items() if value is None],

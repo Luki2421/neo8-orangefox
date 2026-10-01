@@ -8,6 +8,8 @@ from pathlib import Path
 import shutil
 import subprocess
 
+from neo8_service_config import configure_service_files
+
 PROJECT = Path(__file__).resolve().parents[1]
 
 def configure_runtime(device):
@@ -66,6 +68,7 @@ def main():
     subprocess.run(['git', 'diff', '--check'], cwd=recovery, check=True)
     shutil.copytree(donor / 'device/realme/RE6402L1', device)
     runtime = configure_runtime(device)
+    runtime["service_files"] = configure_service_files(device, android)
     board = device / 'BoardConfig.mk'
     text = board.read_text().replace('soong-libguitwrp_defaults', 'soong-libfoxui_defaults')
     text = text.replace('TW_DEFAULT_LANGUAGE := zh_CN', 'TW_DEFAULT_LANGUAGE := en')
