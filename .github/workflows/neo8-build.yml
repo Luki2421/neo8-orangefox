@@ -6,6 +6,8 @@ on:
       - .github/workflows/neo8-build.yml
       - port-sources.json
       - patches/fox16/**
+      - patches/build-soong/**
+      - scripts/prepare_ci_swap.py
       - scripts/prepare_neo8_build.py
       - scripts/prepare_neo8_port.py
       - scripts/neo8_preflight.py
@@ -28,6 +30,7 @@ jobs:
     env:
       ANDROID_ROOT: /home/runner/android
       USE_CCACHE: '0'
+      NEO8_LOW_MEMORY_BUILD: '1'
       BUILD_NUMBER: neo8-ci-${{ github.run_number }}
     steps:
       - name: Read port project
@@ -59,6 +62,7 @@ jobs:
           <manifest>
             <extend-project name="bootable/Recovery" path="bootable/recovery" revision="c239fc5a54ecb482e4a49117bf45b7e76de68371" />
             <extend-project name="system/vold" path="system/vold" revision="953de9608eb78380b3c4e39e801c2bc0af7dbddc" />
+            <extend-project name="build/soong" revision="6dc77879464584ef3f178cae622134ed0bf19e1e" />
             <remove-project path="device/xiaomi/mondrian" optional="true" />
             <remove-project path="device/xiaomi/sm84xx-common" optional="true" />
           </manifest>
@@ -66,6 +70,12 @@ jobs:
           "$HOME/bin/repo" sync -c -j4 --no-tags --no-clone-bundle --fail-fast 2>&1 | tee "$GITHUB_WORKSPACE/artifacts/neo8-build/sync.log"
           "$HOME/bin/repo" manifest -r -o "$GITHUB_WORKSPACE/artifacts/neo8-build/resolved-manifest.xml"
           df -h "$ANDROID_ROOT"
+
+      - name: Prepare memory for the Soong graph
+        run: |
+          python3 scripts/prepare_ci_swap.py --android-root "$ANDROID_ROOT" --report artifacts/neo8-build/swap.json
+          git -C "$ANDROID_ROOT/build/soong" apply --check "$GITHUB_WORKSPACE/patches/build-soong/neo8-ci-memory.patch"
+          git -C "$ANDROID_ROOT/build/soong" apply "$GITHUB_WORKSPACE/patches/build-soong/neo8-ci-memory.patch"
 
       - name: Fetch pinned Neo8 device and apply port changes
         run: |
