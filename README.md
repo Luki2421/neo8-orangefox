@@ -7,11 +7,14 @@ RMX8899_16.0.10.500(CN01), z zachowaniem płynnego dotyku potwierdzonego w v3.
 [Przygotowane poprawki kodu i zakres testów](docs/source-port.md).
 [Najnowsza analiza i lokalna poprawka integracji GUI/Soong](docs/build-fix-2026-09-30.md).
 
-**Repozytorium zawiera poprawki portu i workflow pełnej próby kompilacji Androida 16.
-Nie ma jeszcze obrazu v4 gotowego do wgrania.** Testy hosta i raporty zasobów nie
-potwierdzają odszyfrowania na telefonie. Osobny workflow `neo8-build.yml` próbuje
-pobrać pełne źródła i zbudować `recoveryimage`. Po udanej budowie i kontroli
-ramdisku/AVB zachowa obraz rozwojowy do przeglądu wraz z raportem.
+**Pełna kompilacja zakończyła się sukcesem 1 października 2026.**
+[Wynik budowy](https://github.com/Luki2421/neo8-orangefox/actions/runs/36806165795).
+Użytkownik zgłosił działający start i dotyk, lecz brak dostępu do pamięci.
+Następna poprawka przywraca inicjalizację zablokowanej pamięci oraz menu
+ręcznego odszyfrowania: [diagnoza i dalszy test](docs/storage-fix-2026-10-01.md).
+Działanie odszyfrowania na telefonie nadal wymaga potwierdzenia.
+
+Poniższe notatki opisują wcześniejsze etapy portowania.
 
 ## Co jest już potwierdzone
 

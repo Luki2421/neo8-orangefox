@@ -59,7 +59,12 @@ jobs:
           git -C /tmp/neo8-port-sources/recovery apply "$GITHUB_WORKSPACE/patches/fox16/neo8-manual-menu.patch"
           git -C /tmp/neo8-port-sources/recovery apply --check "$GITHUB_WORKSPACE/patches/fox16/neo8-runtime.patch"
           git -C /tmp/neo8-port-sources/recovery apply "$GITHUB_WORKSPACE/patches/fox16/neo8-runtime.patch"
+          git -C /tmp/neo8-port-sources/recovery apply --check "$GITHUB_WORKSPACE/patches/fox16/neo8-storage-init.patch"
+          git -C /tmp/neo8-port-sources/recovery apply "$GITHUB_WORKSPACE/patches/fox16/neo8-storage-init.patch"
           git -C /tmp/neo8-port-sources/recovery diff --check
+
+      - name: Test deferred storage initialization from the real startup path
+        run: python3 tests/test_storage_init.py --recovery-root /tmp/neo8-port-sources/recovery
 
       - name: Test manual preparation handler on host
         run: python3 tests/test_manual_prepare.py --recovery-root /tmp/neo8-port-sources/recovery
