@@ -46,3 +46,26 @@ Kontrola nowego obrazu po kompilacji wymaga pliku profili i właściwego typu
 manifestów; błąd zatrzymuje publikację artefaktu obrazu. Są to testy struktury.
 Start logd, gotowość KeyMint/Weaver i odszyfrowanie PIN-em trzeba zweryfikować
 na telefonie po zbudowaniu tej wersji.
+
+## Kontrola obrazu wykryła drugi generator manifestu fastboot
+
+Budowa `36883073952` zakończyła kompilację 1 października o 19:37 czasu
+polskiego, ale kontrola ramdisku odrzuciła
+`system/etc/vintf/manifest/android.hardware.fastboot-service.example.xml`.
+Nie powstał artefakt obrazu do pobrania; pozostały logi diagnostyczne.
+
+Usunięcie kopii z drzewa urządzenia było niewystarczające. Moduł Soong
+`android.hardware.fastboot-service.example_recovery` w
+`hardware/interfaces/fastboot/aidl/default/Android.bp` ponownie instalował ten
+sam fragment w system poprzez `vintf_fragments`. Sprawdzona rewizja
+hardware/interfaces: `bdefb2a8bce20dc15882d4ab668fb628c427e26b`.
+
+Integracja usuwa ten jeden wpis z modułu wyłącznie dla przygotowywanego drzewa
+budowy Neo8. Zachowuje pliki programu, bibliotek i init.rc oraz deklarację
+`IFastboot/default` w vendor. Odmawia zmiany, jeśli nie ma prawidłowej deklaracji
+vendor lub struktura modułu różni się od sprawdzonej. Kontrola końcowego obrazu
+pozostaje bez zmian.
+
+Przeszło dziewięć testów konfiguracji oraz zastosowanie poprawki do rzeczywistego
+Android.bp z podanej rewizji. Wynik wymaga ponownej pełnej kompilacji i kontroli
+ramdisku; nie jest jeszcze potwierdzeniem poprawnego startu usług na telefonie.

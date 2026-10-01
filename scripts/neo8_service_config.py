@@ -11,6 +11,34 @@ REQUIRED_PROFILES = {'SCHED_SP_BACKGROUND', 'BlkIOBackground', 'NormalIoPriority
 def profile_names(config):
     return {p['Name'] for group in ('Profiles', 'AggregateProfiles') for p in config.get(group, [])}
 
+def configure_fastboot_manifest(device, android):
+    # This recovery-only Soong module regenerates the system-side fragment
+    # even after the donor copy has been removed. Keep its executable and rc;
+    # the device declaration is installed separately under vendor below.
+    vendor = device / 'prebuilt/vendor/etc/vintf/manifest/android.hardware.fastboot-service.example.xml'
+    manifest = ET.parse(vendor).getroot()
+    if manifest.get('type') != 'device' or not any(
+            hal.findtext('name') == 'android.hardware.fastboot' and
+            hal.findtext('fqname') == 'IFastboot/default' for hal in manifest.findall('hal')):
+        raise ValueError('Missing vendor fastboot HAL declaration')
+    path = android / 'hardware/interfaces/fastboot/aidl/default/Android.bp'
+    source = path.read_text()
+    original = '\n'.join([
+        '    name: "android.hardware.fastboot-service.example_recovery",',
+        '    init_rc: ["android.hardware.fastboot-service.example_recovery.rc"],',
+        '    vintf_fragments: ["android.hardware.fastboot-service.example.xml"],',
+        '    recovery: true,',
+    ])
+    if source.count(original) != 1:
+        raise ValueError('Unexpected recovery fastboot Soong module')
+    replacement = original.replace(
+        '    vintf_fragments: ["android.hardware.fastboot-service.example.xml"],',
+        '    // Neo8 installs the device VINTF fragment in vendor, not system.')
+    path.write_text(source.replace(original, replacement, 1))
+    return {'soong_source_sha256': hashlib.sha256(source.encode()).hexdigest(),
+            'framework_fragment_generation_disabled': True,
+            'vendor_fragment': str(vendor.relative_to(device))}
+
 def configure_service_files(device, android):
     source = android / 'system/core/libprocessgroup/profiles/task_profiles.json'
     config = json.loads(source.read_text())

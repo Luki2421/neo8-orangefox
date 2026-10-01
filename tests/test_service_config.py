@@ -8,7 +8,7 @@ import sys
 import tempfile
 import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-from neo8_service_config import configure_service_files
+from neo8_service_config import configure_service_files, configure_fastboot_manifest
 from inspect_recovery import inspect_service_config
 
 class ServiceConfigTests(unittest.TestCase):
@@ -58,6 +58,47 @@ class ServiceConfigTests(unittest.TestCase):
         # The /etc symlink may be created at runtime by init, not in the CPIO.
         del entries['etc']
         self.assertTrue(inspect_service_config(entries)['required_task_profiles_present'])
+
+    def fastboot_fixture(self):
+        vendor = self.vendor.parent / 'android.hardware.fastboot-service.example.xml'
+        vendor.write_text('<manifest type="device"><hal format="aidl">'
+                          '<name>android.hardware.fastboot</name>'
+                          '<fqname>IFastboot/default</fqname></hal></manifest>')
+        path = self.root / 'hardware/interfaces/fastboot/aidl/default/Android.bp'
+        path.parent.mkdir(parents=True)
+        path.write_text('cc_binary {\n'
+                        '    name: "android.hardware.fastboot-service.example_recovery",\n'
+                        '    init_rc: ["android.hardware.fastboot-service.example_recovery.rc"],\n'
+                        '    vintf_fragments: ["android.hardware.fastboot-service.example.xml"],\n'
+                        '    recovery: true,\n'
+                        '    srcs: ["Fastboot.cpp", "main.cpp"],\n}\n')
+        return path, vendor
+
+    def test_soong_fragment_source_fixed_without_removing_service(self):
+        path, vendor = self.fastboot_fixture()
+        original_vendor = vendor.read_bytes()
+        configure_fastboot_manifest(self.device, self.root)
+        self.assertNotIn('vintf_fragments:', path.read_text())
+        self.assertIn('init_rc:', path.read_text())
+        self.assertIn('recovery: true,', path.read_text())
+        self.assertIn('"Fastboot.cpp", "main.cpp"', path.read_text())
+        self.assertEqual(vendor.read_bytes(), original_vendor)
+
+    def test_soong_fix_requires_vendor_declaration(self):
+        path, vendor = self.fastboot_fixture()
+        original = path.read_bytes()
+        vendor.write_text('<manifest type="device"/>')
+        with self.assertRaisesRegex(ValueError, 'Missing vendor fastboot'):
+            configure_fastboot_manifest(self.device, self.root)
+        self.assertEqual(path.read_bytes(), original)
+
+    def test_unexpected_soong_module_rejected(self):
+        path, _ = self.fastboot_fixture()
+        path.write_text(path.read_text().replace('recovery: true', 'recovery: false'))
+        original = path.read_bytes()
+        with self.assertRaisesRegex(ValueError, 'Unexpected recovery fastboot'):
+            configure_fastboot_manifest(self.device, self.root)
+        self.assertEqual(path.read_bytes(), original)
 
     def test_missing_profile_file_rejected(self):
         with self.assertRaisesRegex(ValueError, 'Missing recovery task_profiles'):

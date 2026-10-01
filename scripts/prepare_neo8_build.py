@@ -8,7 +8,7 @@ from pathlib import Path
 import shutil
 import subprocess
 
-from neo8_service_config import configure_service_files
+from neo8_service_config import configure_service_files, configure_fastboot_manifest
 
 PROJECT = Path(__file__).resolve().parents[1]
 
@@ -69,6 +69,7 @@ def main():
     shutil.copytree(donor / 'device/realme/RE6402L1', device)
     runtime = configure_runtime(device)
     runtime["service_files"] = configure_service_files(device, android)
+    runtime["fastboot_manifest"] = configure_fastboot_manifest(device, android)
     board = device / 'BoardConfig.mk'
     text = board.read_text().replace('soong-libguitwrp_defaults', 'soong-libfoxui_defaults')
     text = text.replace('TW_DEFAULT_LANGUAGE := zh_CN', 'TW_DEFAULT_LANGUAGE := en')
