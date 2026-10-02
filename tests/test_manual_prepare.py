@@ -5,6 +5,35 @@ import argparse
 from pathlib import Path
 import subprocess
 import tempfile
+import xml.etree.ElementTree as ET
+
+def check_automatic_prompt(root):
+    page = ET.parse(root / 'gui/theme/portrait_hdpi/pages/main.xml').find(".//page[@name='main']")
+    actions = [a for a in page.findall('action')
+               if any(c.get('function') == 'page' and c.text == 'neo8_prepare_decrypt'
+                      for c in a.findall('action'))]
+    assert len(actions) == 1
+    action = actions[0]
+    def enabled(state):
+        for cond in action.findall('condition'):
+            same = state.get(cond.get('var1'), '') == cond.get('var2')
+            if not (not same if cond.get('op') == '!=' else same):
+                return False
+        return True
+    ready = dict(first_start='0', fox_use_pass='0', neo8_manual_decrypt='1', tw_is_encrypted='1')
+    assert enabled(ready)
+    for key, value in [('first_start', '1'), ('fox_use_pass', '1'),
+                       ('neo8_manual_decrypt', '0'), ('tw_is_encrypted', '0'),
+                       ('neo8_auto_prompt_done', '1')]:
+        assert not enabled(dict(ready, **{key: value})), key
+    steps = [(c.get('function'), c.text) for c in action.findall('action')]
+    assert steps == [('set', 'neo8_auto_prompt_done=1'), ('page', 'neo8_prepare_decrypt')]
+    # The session guard is set before navigation, so cancellation or failure
+    # followed by returning to main cannot immediately reopen the prompt.
+    ready['neo8_auto_prompt_done'] = '1'
+    assert not enabled(ready)
+    vars_text = (root / 'gui/theme/portrait_hdpi/resources/vars.xml').read_text()
+    assert 'name="neo8_auto_prompt_done"' not in vars_text  # no persistent preference
 
 STUBS = r'''
 #include <cassert>
@@ -85,6 +114,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--recovery-root', type=Path, required=True)
     args = parser.parse_args()
+    check_automatic_prompt(args.recovery_root)
     text = (args.recovery_root / 'gui/action.cpp').read_text()
     start = text.index('int GUIAction::neo8preparedecrypt(')
     end = text.index('int GUIAction::decrypt(', start)
@@ -97,6 +127,7 @@ def main():
                         str(source), '-o', str(binary)], check=True)
         subprocess.run([str(binary)], check=True)
     print('PASS: 3 credential types, 6 preparation failures and simulation. No credential submission API is available to this handler.')
+    print('PASS: automatic prompt eligibility, welcome/password guards, and no repeated prompt after returning to main.')
 
 if __name__ == '__main__':
     main()

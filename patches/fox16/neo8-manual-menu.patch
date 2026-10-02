@@ -21,7 +21,7 @@
 +		status = 0;
 +	} else {
 +#ifdef TW_NO_AUTO_DECRYPT
-+		// Explicit menu action only. Never submit a credential or default password here.
++		// Startup or manual preparation. Never submit a credential or default password here.
 +		TWPartition* data = PartitionManager.Find_Partition_By_Path("/data");
 +		DataManager::SetValue(TW_CRYPTO_PWTYPE, -1);
 +		DataManager::SetValue("tw_crypto_pwtype_0", -1);
@@ -111,6 +111,27 @@
  					<condition var1="tw_is_fbe" var2="1"/>
  					<condition var1="tw_all_users_decrypted" var2="0"/>
  					<icon res="key"/>
+--- a/gui/theme/portrait_hdpi/pages/main.xml
++++ b/gui/theme/portrait_hdpi/pages/main.xml
+@@ -82,6 +82,18 @@
+ 				<action function="set">tw_clear_destination=navbar</action>
+ 				<action function="page">clear_vars</action>
+ 			</action>
++
++			<!-- Neo8: open the credential prompt once after startup. This only
++			     prepares existing metadata keys; nothing is submitted without the user. -->
++			<action>
++				<condition var1="first_start" op="!=" var2="1"/>
++				<condition var1="fox_use_pass" op="!=" var2="1"/>
++				<condition var1="neo8_manual_decrypt" var2="1"/>
++				<condition var1="tw_is_encrypted" var2="1"/>
++				<condition var1="neo8_auto_prompt_done" op="!=" var2="1"/>
++				<action function="set">neo8_auto_prompt_done=1</action>
++				<action function="page">neo8_prepare_decrypt</action>
++			</action>
+ 		</page>
+ 
+ 
 --- a/gui/theme/portrait_hdpi/pages/mount.xml
 +++ b/gui/theme/portrait_hdpi/pages/mount.xml
 @@ -227,6 +227,25 @@
