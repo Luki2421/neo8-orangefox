@@ -17,7 +17,7 @@ def main():
     parser.add_argument('--sqlite-include', type=Path)
     args = parser.parse_args()
     vold = args.vold_root.resolve()
-    with tempfile.TemporaryDirectory(prefix='neo8-test-', dir='/tmp') as directory:
+    with tempfile.TemporaryDirectory(prefix='neo8-test-') as directory:
         root = Path(directory)
         include = root / 'include/cutils'
         include.mkdir(parents=True)

@@ -46,7 +46,7 @@ def main():
     guards = [PROJECT / 'patches/fox16/neo8-keystore-stop.patch',
               PROJECT / 'patches/fox16/neo8-stock-properties.patch']
     decrypt = next(content for target, content in copies if target.name == 'Decrypt.cpp')
-    with tempfile.TemporaryDirectory(prefix='neo8-guard-check-', dir='/tmp') as directory:
+    with tempfile.TemporaryDirectory(prefix='neo8-guard-check-') as directory:
         temporary = Path(directory)
         (temporary / 'Decrypt.cpp').write_bytes(decrypt)
         for guard in guards:

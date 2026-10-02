@@ -1,0 +1,119 @@
+--- a/partition.cpp
++++ b/partition.cpp
+@@ -1299,7 +1299,7 @@
+ 	Mount_Storage_Retry(true);
+ }
+ 
+-void TWPartition::Setup_Data_Media() {
++void TWPartition::Setup_Data_Media(bool probe_media) {
+ 	LOGINFO("Setting up '%s' as data/media emulated storage.\n", Mount_Point.c_str());
+ 	if (Storage_Name.empty() || Storage_Name == "Data")
+ 		Storage_Name = "Internal Storage";
+@@ -1316,16 +1316,18 @@
+ 			Make_Dir("/sdcard", false);
+ 			Symlink_Mount_Point = "/sdcard";
+ 		}
+-		#ifdef OF_FIX_DECRYPTION_ON_DATA_MEDIA
+-		if (Mount(false) && TWFunc::Path_Exists(Mount_Point + "/media/0")) {
+-		#else
+-		Mount(false);
+-		if (TWFunc::Path_Exists(Mount_Point + "/media/0")) {
+-		#endif
+-			Storage_Path = Mount_Point + "/media/0";
+-			Symlink_Path = Storage_Path;
+-			DataManager::SetValue(TW_INTERNAL_PATH, Mount_Point + "/media/0");
+-			UnMount(true);
++		if (probe_media) {
++			#ifdef OF_FIX_DECRYPTION_ON_DATA_MEDIA
++			if (Mount(false) && TWFunc::Path_Exists(Mount_Point + "/media/0")) {
++			#else
++			Mount(false);
++			if (TWFunc::Path_Exists(Mount_Point + "/media/0")) {
++			#endif
++				Storage_Path = Mount_Point + "/media/0";
++				Symlink_Path = Storage_Path;
++				DataManager::SetValue(TW_INTERNAL_PATH, Mount_Point + "/media/0");
++				UnMount(true);
++			}
+ 		}
+ 		DataManager::SetValue("tw_has_internal", 1);
+ 		DataManager::SetValue("tw_has_data_media", 1);
+@@ -1377,7 +1379,7 @@
+ 				break;
+ 			}
+ 		}
+-		if (Mount(true) && TWFunc::Path_Exists(Mount_Point + "/media/0")) {
++		if (probe_media && Mount(true) && TWFunc::Path_Exists(Mount_Point + "/media/0")) {
+ 			Storage_Path = Mount_Point + "/media/0";
+ 			Symlink_Path = Storage_Path;
+ 			UnMount(true);
+--- a/partitionmanager.cpp
++++ b/partitionmanager.cpp
+@@ -536,6 +536,36 @@
+ 		Process_Keymaster_Version(ven, false);
+ 	if (ven && !Keep_Runtime_Partitions()) ven->UnMount(Display_Error);
+ 	return true;
++}
++
++void TWPartitionManager::Setup_Manual_Data() {
++#if defined(TW_INCLUDE_CRYPTO) && defined(TW_NO_AUTO_DECRYPT)
++	TWPartition* data = Find_Partition_By_Path("/data");
++	if (!data || data->Key_Directory.empty()) {
++		LOGERR("Manual FBE setup requires /data with a metadata key directory\n");
++		return;
++	}
++	// Process_Fstab only parses entries. The skipped full setup used to leave
++	// /data unregistered and the manual decrypt menu hidden. Do no crypto or
++	// userdata probing here; the explicit GUI action prepares metadata later.
++	data->Can_Be_Encrypted = true;
++	data->Is_Encrypted = true;
++	data->Is_Decrypted = false;
++	data->Is_FBE = true;
++	datamedia = true;
++	data->Setup_Data_Media(false);
++	unsigned int storageid = 1 << 16;
++	for (auto* part : Partitions) {
++		if (part->Is_Storage) part->MTP_Storage_ID = ++storageid;
++	}
++	Setup_Settings_Storage_Partition(data);
++	DataManager::SetValue(TW_IS_FBE, 1);
++	DataManager::SetValue(TW_IS_ENCRYPTED, 1);
++	DataManager::SetValue(TW_IS_DECRYPTED, 0);
++	DataManager::SetValue(TW_CRYPTO_PWTYPE, -1);
++	DataManager::SetValue("neo8_manual_decrypt", 1);
++	LOGINFO("Manual FBE storage registered; waiting for explicit decrypt action\n");
++#endif
+ }
+ 
+ void TWPartitionManager::Setup_Fstab_Partitions(bool Display_Error) {
+--- a/partitions.hpp
++++ b/partitions.hpp
+@@ -198,7 +198,7 @@
+ 
+ protected:
+ 	bool Has_Data_Media;                                                      // Indicates presence of /data/media, may affect wiping and backup methods
+-	void Setup_Data_Media();                                                  // Sets up a partition as a /data/media emulated storage partition
++	void Setup_Data_Media(bool probe_media = true);                                                  // Sets up a partition as a /data/media emulated storage partition
+ 	void Set_Block_Device(std::string block_device);			  // Allow super partition setup to change block device
+ 
+ private:
+@@ -347,6 +347,7 @@
+ 	int Process_Fstab(string Fstab_Filename, bool Display_Error, bool recovery_mode); // Parses the fstab files
+ 	void Setup_Fstab_Partitions(bool Display_Error);                          // Populates the partitions
+ 	int Write_Fstab();                                                        // Creates /etc/fstab file that's used by the command line for mount commands
++	void Setup_Manual_Data();                                                // Register locked FBE storage without mounting or decrypting
+ 	void Decrypt_Data();							  // Decrypt Data if enabled
+ 	void Output_Partition_Logging();                                          // Outputs partition information to the log
+ 	void Output_Partition(TWPartition* Part);                                 // Outputs partition details to the log
+--- a/twrp.cpp
++++ b/twrp.cpp
+@@ -582,7 +582,8 @@
+ #ifndef TW_SKIP_POST_GUI_FSTAB_SETUP
+ 	if (!startup.Get_Fastboot_Mode()) PartitionManager.Setup_Fstab_Partitions(true);
+ #else
+-	LOGINFO("TW_SKIP_POST_GUI_FSTAB_SETUP: skipping duplicate fstab setup\n");
++	LOGINFO("TW_SKIP_POST_GUI_FSTAB_SETUP: using deferred data setup\n");
++	if (!startup.Get_Fastboot_Mode()) PartitionManager.Setup_Manual_Data();
+ #endif
+ 
+ 	// Load up all the resources

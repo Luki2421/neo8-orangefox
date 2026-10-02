@@ -8,6 +8,10 @@ from pathlib import Path
 import shutil
 import subprocess
 
+from neo8_service_config import (configure_service_files, configure_fastboot_manifest,
+                                 configure_omapi_manifest, configure_qseecomd,
+                                 preserve_ssg_ta_files)
+
 PROJECT = Path(__file__).resolve().parents[1]
 
 GATEKEEPER_HAL = ('    <hal format="aidl">\n'
@@ -85,13 +89,18 @@ def main():
     if device.exists():
         raise RuntimeError('Refusing to overwrite an existing device tree')
     recovery = android / 'bootable/recovery'
-    for name in ('neo8-manual-menu.patch', 'neo8-runtime.patch'):
+    for name in ('neo8-manual-menu.patch', 'neo8-runtime.patch', 'neo8-storage-init.patch'):
         patch = PROJECT / 'patches/fox16' / name
         subprocess.run(['git', 'apply', '--check', str(patch)], cwd=recovery, check=True)
         subprocess.run(['git', 'apply', str(patch)], cwd=recovery, check=True)
     subprocess.run(['git', 'diff', '--check'], cwd=recovery, check=True)
     shutil.copytree(donor / 'device/realme/RE6402L1', device)
     runtime = configure_runtime(device)
+    runtime["service_files"] = configure_service_files(device, android)
+    runtime["fastboot_manifest"] = configure_fastboot_manifest(device, android)
+    runtime["omapi_manifest"] = configure_omapi_manifest(device, android)
+    runtime["qseecomd"] = configure_qseecomd(device)
+    runtime["ssg_ta_files"] = preserve_ssg_ta_files(device)
     board = device / 'BoardConfig.mk'
     text = board.read_text().replace('soong-libguitwrp_defaults', 'soong-libfoxui_defaults')
     text = text.replace('TW_DEFAULT_LANGUAGE := zh_CN', 'TW_DEFAULT_LANGUAGE := en')
@@ -132,7 +141,7 @@ export FOX_MAINTAINER_PATCH_VERSION=4
               'flashable_release': False, 'phone_decryption_verified': False,
               'manual_metadata_menu_integrated': True,
               'runtime_configuration': runtime,
-              'stock_keymint_before_first_metadata_operation': True,
+              'metadata_environment_order': 'current first, stock retry on failure (reference TWRP)',
               'automatic_fstab_runtime_partition_preservation': True,
               'remaining': ['full Android compilation', 'built image inspection',
                             'phone startup, native touch and decryption test']}

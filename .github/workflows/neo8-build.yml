@@ -4,7 +4,17 @@ on:
   push:
     paths:
       - .github/workflows/neo8-build.yml
+      - port-sources.json
+      - patches/fox16/**
+      - patches/build-soong/**
+      - scripts/neo8_service_config.py
       - scripts/prepare_neo8_build.py
+      - scripts/inspect_recovery.py
+      - scripts/prepare_ci_swap.py
+      - scripts/prepare_neo8_port.py
+      - scripts/neo8_preflight.py
+      - scripts/boot_ramdisk.py
+      - tests/test_soong_flags.py
   workflow_dispatch:
 
 permissions:
@@ -21,6 +31,7 @@ jobs:
     env:
       ANDROID_ROOT: /home/runner/android
       USE_CCACHE: '0'
+      NEO8_LOW_MEMORY_BUILD: '1'
       BUILD_NUMBER: neo8-ci-${{ github.run_number }}
     steps:
       - name: Read port project
@@ -41,6 +52,9 @@ jobs:
           curl --fail --location --retry 3 https://storage.googleapis.com/git-repo-downloads/repo -o "$HOME/bin/repo"
           chmod +x "$HOME/bin/repo"
 
+      - name: Test recovery service configuration
+        run: python3 tests/test_service_config.py
+
       - name: Fetch pinned Android 16 manifest and source code
         run: |
           set -o pipefail
@@ -52,6 +66,7 @@ jobs:
           <manifest>
             <extend-project name="bootable/Recovery" path="bootable/recovery" revision="c239fc5a54ecb482e4a49117bf45b7e76de68371" />
             <extend-project name="system/vold" path="system/vold" revision="953de9608eb78380b3c4e39e801c2bc0af7dbddc" />
+            <extend-project name="build/soong" revision="6dc77879464584ef3f178cae622134ed0bf19e1e" />
             <remove-project path="device/xiaomi/mondrian" optional="true" />
             <remove-project path="device/xiaomi/sm84xx-common" optional="true" />
           </manifest>
@@ -59,6 +74,12 @@ jobs:
           "$HOME/bin/repo" sync -c -j4 --no-tags --no-clone-bundle --fail-fast 2>&1 | tee "$GITHUB_WORKSPACE/artifacts/neo8-build/sync.log"
           "$HOME/bin/repo" manifest -r -o "$GITHUB_WORKSPACE/artifacts/neo8-build/resolved-manifest.xml"
           df -h "$ANDROID_ROOT"
+
+      - name: Prepare memory for the Soong graph
+        run: |
+          python3 scripts/prepare_ci_swap.py --android-root "$ANDROID_ROOT" --report artifacts/neo8-build/swap.json
+          git -C "$ANDROID_ROOT/build/soong" apply --check "$GITHUB_WORKSPACE/patches/build-soong/neo8-ci-memory.patch"
+          git -C "$ANDROID_ROOT/build/soong" apply "$GITHUB_WORKSPACE/patches/build-soong/neo8-ci-memory.patch"
 
       - name: Fetch pinned Neo8 device and apply port changes
         run: |
@@ -70,11 +91,41 @@ jobs:
           git -C /tmp/neo8-device-source checkout --detach FETCH_HEAD
           python3 scripts/prepare_neo8_port.py --recovery-root "$ANDROID_ROOT/bootable/recovery" --vold-root "$ANDROID_ROOT/system/vold" --neo8-root /tmp/neo8-device-source --report artifacts/neo8-build/source-integration.json
           python3 scripts/prepare_neo8_build.py --android-root "$ANDROID_ROOT" --neo8-root /tmp/neo8-device-source
+          python3 tests/test_metadata_environment.py --recovery-root "$ANDROID_ROOT/bootable/recovery"
+          python3 tests/test_storage_init.py --recovery-root "$ANDROID_ROOT/bootable/recovery"
+          python3 tests/test_soong_flags.py --recovery-root "$ANDROID_ROOT/bootable/recovery" --vendor-root "$ANDROID_ROOT/vendor/twrp"
+
+      # A terminated runner cannot execute even an always() upload at job end.
+      - name: Retain source diagnostics before starting the compiler
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: neo8-precompile-diagnostics
+          path: artifacts/neo8-build/
+          retention-days: 7
+          if-no-files-found: error
 
       - name: Compile recovery image
         run: |
           set -o pipefail
           cd "$ANDROID_ROOT"
+          # Capture evidence in the live Actions log as well as the artifact.
+          # Exit 143 alone does not establish an out-of-memory failure.
+          monitor_resources() {
+            while true; do
+              date -u '+%Y-%m-%dT%H:%M:%SZ'
+              free -m
+              df -h "$ANDROID_ROOT"
+              if [ -r /sys/fs/cgroup/memory.events ]; then
+                cat /sys/fs/cgroup/memory.events
+              fi
+              ps -eo pid,ppid,rss,comm --sort=-rss | head -n 12 || true
+              sleep 30
+            done
+          }
+          monitor_resources > >(tee "$GITHUB_WORKSPACE/artifacts/neo8-build/resources-live.log") 2>&1 &
+          monitor_pid=$!
+          trap 'kill "$monitor_pid" 2>/dev/null || true' EXIT
+          trap 'echo "Build shell received SIGTERM; image completion is not confirmed"; exit 143' TERM
           source build/envsetup.sh
           # lunch exports the selected product/release into this shell. A pipeline loses them.
           lunch twrp_RE6402L1-bp2a-eng > >(tee "$GITHUB_WORKSPACE/artifacts/neo8-build/lunch.log") 2>&1
@@ -94,7 +145,7 @@ jobs:
           mkdir -p artifacts/neo8-development-image
           cp "$image" artifacts/neo8-development-image/OrangeFox-Neo8-development.img
           cp artifacts/neo8-build/image-inventory.json artifacts/neo8-development-image/
-          cp artifacts/neo8-build/recovery-image.sha256 artifacts/neo8-development-image/
+          (cd artifacts/neo8-development-image && sha256sum OrangeFox-Neo8-development.img > recovery-image.sha256)
           printf '%s\n' 'Development image for review. Startup, touch and phone decryption have not been tested.' > artifacts/neo8-development-image/README.txt
 
       - name: Retain development image for review
@@ -108,7 +159,10 @@ jobs:
       - name: Record result and disk space
         if: always()
         run: |
+          mkdir -p artifacts/neo8-build
           df -h > artifacts/neo8-build/disk-final.txt
+          free -m > artifacts/neo8-build/memory-final.txt
+          sudo dmesg --ctime > artifacts/neo8-build/kernel-final.txt 2>&1 || true
           echo 'Development build. A successful compilation retains an image and static inventory for review; phone touch and decryption remain unverified.' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Save build logs and manifest

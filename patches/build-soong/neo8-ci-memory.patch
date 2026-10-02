@@ -1,0 +1,18 @@
+diff --git a/ui/build/soong.go b/ui/build/soong.go
+--- a/ui/build/soong.go
++++ b/ui/build/soong.go
+@@ -214,6 +214,14 @@ func (pb PrimaryBuilderFactory) primaryBuilderInvocation(config Config) bootstrap.PrimaryBuilderInvocation {
+ 
+ 	commonArgs = append(commonArgs, "-l", filepath.Join(pb.config.FileListDir(), "Android.bp.list"))
+ 	invocationEnv := make(map[string]string)
++	// Blueprint invokes soong_build with env -i. Shell exports alone are lost.
++	// This opt-in trades GC CPU time for memory on the 16 GiB Neo8 CI runner.
++	if os.Getenv("NEO8_LOW_MEMORY_BUILD") == "1" {
++		invocationEnv["GOGC"] = "50"
++		invocationEnv["GOMEMLIMIT"] = "10GiB"
++		invocationEnv["GOMAXPROCS"] = "2"
++	}
++
+ 	if pb.debugPort != "" {
+ 		//debug mode
+ 		commonArgs = append(commonArgs, "--delve_listen", pb.debugPort,

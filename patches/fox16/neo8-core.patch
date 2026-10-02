@@ -90,6 +90,17 @@ index 88d0e6a..2e6e9b0 100644
  
  
  	if getMakeVars(ctx, "AB_OTA_UPDATER") == "true" {
+diff --git a/orangefox_soong.mk b/orangefox_soong.mk
+--- a/orangefox_soong.mk
++++ b/orangefox_soong.mk
+@@ -22,4 +22,6 @@
+ # additional soong variables
+ EXPORT_TO_SOONG += \
+-   OF_LANDSCAPE_MODE
++   OF_LANDSCAPE_MODE \
++   TW_NO_AUTO_DECRYPT \
++   TW_FORCE_STOCK_THEME_ON_BOOT
+ #
 diff --git a/partition.cpp b/partition.cpp
 index 1914cf4..74915da 100644
 --- a/partition.cpp

@@ -10,6 +10,9 @@ on:
       - scripts/prepare_neo8_port.py
       - scripts/boot_ramdisk.py
       - scripts/inspect_recovery.py
+      - scripts/neo8_service_config.py
+      - scripts/prepare_neo8_build.py
+      - scripts/prepare_ci_swap.py
       - tests/**
   workflow_dispatch:
 
@@ -38,6 +41,12 @@ jobs:
       - name: Test ramdisk reader against malformed archives and links
         run: python3 tests/test_ramdisk_reader.py
 
+      - name: Test swap sizing without modifying the host
+        run: python3 tests/test_ci_swap.py
+
+      - name: Test recovery service configuration
+        run: python3 tests/test_service_config.py
+
       - name: Fetch pinned source code without device firmware
         run: python3 scripts/fetch_port_sources.py --output /tmp/neo8-port-sources
 
@@ -55,10 +64,21 @@ jobs:
           git -C /tmp/neo8-port-sources/recovery apply "$GITHUB_WORKSPACE/patches/fox16/neo8-manual-menu.patch"
           git -C /tmp/neo8-port-sources/recovery apply --check "$GITHUB_WORKSPACE/patches/fox16/neo8-runtime.patch"
           git -C /tmp/neo8-port-sources/recovery apply "$GITHUB_WORKSPACE/patches/fox16/neo8-runtime.patch"
+          git -C /tmp/neo8-port-sources/recovery apply --check "$GITHUB_WORKSPACE/patches/fox16/neo8-storage-init.patch"
+          git -C /tmp/neo8-port-sources/recovery apply "$GITHUB_WORKSPACE/patches/fox16/neo8-storage-init.patch"
           git -C /tmp/neo8-port-sources/recovery diff --check
+
+      - name: Test deferred storage initialization from the real startup path
+        run: python3 tests/test_storage_init.py --recovery-root /tmp/neo8-port-sources/recovery
 
       - name: Test manual preparation handler on host
         run: python3 tests/test_manual_prepare.py --recovery-root /tmp/neo8-port-sources/recovery
+
+      - name: Test real Make to Soong flag export
+        run: |
+          python3 tests/test_soong_flags.py \
+            --recovery-root /tmp/neo8-port-sources/recovery \
+            --vendor-root /tmp/neo8-port-sources/vendor_twrp
 
       - name: Test startup and KeyMint upgrade handling on host
         run: |
@@ -72,7 +92,7 @@ jobs:
       - name: Test service-stop failures before database and property changes
         run: python3 tests/test_keystore_service_stop.py --vold-root /tmp/neo8-port-sources/vold
 
-      - name: Test stock metadata preparation and bounded touch wait
+      - name: Test metadata-first preparation and bounded touch wait
         run: python3 tests/test_metadata_environment.py --recovery-root /tmp/neo8-port-sources/recovery
 
       - name: Display scope of this check

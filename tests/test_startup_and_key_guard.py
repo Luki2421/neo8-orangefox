@@ -106,7 +106,7 @@ def main():
     startup_block = manager[begin:end]
     key = between((vold / 'KeyStorage.cpp').read_text(),
                   'static KeystoreOperation BeginKeystoreOp(', '\nstatic bool encryptWithKeystoreKey(')
-    with tempfile.TemporaryDirectory(prefix='neo8-source-test-', dir='/tmp') as directory:
+    with tempfile.TemporaryDirectory(prefix='neo8-source-test-') as directory:
         root = Path(directory)
         startup_source = root / 'startup.cpp'
         startup_source.write_text(STARTUP_STUBS + page + gui + '\nvoid StartupSetup() {\n' +

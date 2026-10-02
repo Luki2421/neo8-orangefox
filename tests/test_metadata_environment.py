@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Test actual stock-environment preparation before any metadata operation."""
+"""Test reference metadata-first ordering, fallback, touch and runtime mounts."""
 import argparse
 from pathlib import Path
 import subprocess
@@ -10,37 +10,58 @@ STUBS = r'''
 #include <cassert>
 #include <string>
 #include <vector>
-#define LOGERR(...) ((void)0)
+#define LOGINFO(...) ((void)0)
 static std::vector<std::string> events;
-static bool hook_result = true;
-namespace android { namespace keystore {
+static bool hook_result = true, first_result = true, retry_result = true, allow_retry = true;
+static std::string environment = "recovery";
+namespace android {
+namespace keystore {
 bool setRecoveryKeyMintEnvironment(bool) __attribute__((weak));
 #ifdef WITH_HOOK
 bool setRecoveryKeyMintEnvironment(bool stock) {
-    assert(stock); events.push_back("keymint-stock"); return hook_result;
+    events.push_back(stock ? "keymint-stock" : "keymint-restore"); return hook_result;
 }
 #endif
+}
+namespace base {
+std::string GetProperty(const std::string& key, const std::string&) {
+    assert(key == "twrp.keymint.metadata_env"); return environment;
+}
+bool GetBoolProperty(const std::string& key, bool) {
+    assert(key == "twrp.keymint.allow_stock_retry"); return allow_retry;
+}
+void SetProperty(const std::string& key, const std::string& value) {
+    assert(key == "twrp.keymint.metadata_env"); environment = value;
+}
 }}
-struct Manager {
-    bool Mount_By_Path(const std::string& path, bool show_errors) {
-        assert(!show_errors); events.push_back(path); return false;
-    }
-} PartitionManager;
+static bool Mount_By_Path(const std::string& path, bool show_errors) {
+    assert(!show_errors); events.push_back(path); return true;
+}
 '''
 CASES = r'''
-static bool attempt() {
-    if (!PrepareNeo8StockMetadataEnvironment()) return false;
-    events.push_back("metadata-operation"); return true;
-}
 int main() {
+    for (bool stock : {false, true}) for (bool success : {false, true})
+    for (bool retry : {false, true}) for (bool hook_ok : {false, true})
+    for (bool retry_ok : {false, true}) {
+        events.clear(); environment = stock ? "stock" : "recovery";
+        first_result = success; allow_retry = retry;
+        hook_result = hook_ok; retry_result = retry_ok;
+        attempt();
+        std::vector<std::string> expected{"metadata-current"};
 #ifdef WITH_HOOK
-    assert(attempt());
-    assert((events == std::vector<std::string>{"/system_root","/vendor","keymint-stock","metadata-operation"}));
-    events.clear(); hook_result = false; assert(!attempt());
-    assert((events == std::vector<std::string>{"/system_root","/vendor","keymint-stock"}));
+        bool switched = !success && !stock && retry && hook_ok;
+        if (!success && !stock && retry) {
+            expected.insert(expected.end(), {"/system_root", "/vendor", "keymint-stock"});
+            if (hook_ok) expected.push_back("metadata-retry");
+        }
+        bool ready = success || (switched && retry_ok);
+        if (!ready && (stock || switched)) expected.push_back("keymint-restore");
+        assert(environment == (ready && (stock || switched) ? "stock" : "recovery"));
 #else
-    assert(!attempt()); assert(events.empty());
+        assert(environment == (stock ? "stock" : "recovery"));
 #endif
+        assert(events == expected);
+    }
 }
 '''
 
@@ -108,14 +129,27 @@ def main():
     parser.add_argument('--recovery-root', type=Path, required=True)
     args = parser.parse_args()
     text = (args.recovery_root / 'partitionmanager.cpp').read_text()
-    start = text.index('static bool PrepareNeo8StockMetadataEnvironment() {')
-    function = text[start:text.index('\n#endif', start)]
-    # Ensure the production call precedes all metadata attempts in Decrypt_Data.
     body = text[text.index('void TWPartitionManager::Decrypt_Data() {'):]
-    assert body.index('if (!PrepareNeo8StockMetadataEnvironment()) return;') < body.index('fscrypt_mount_metadata_encrypted(')
-    with tempfile.TemporaryDirectory(prefix='neo8-metadata-test-', dir='/tmp') as directory:
+    body = body[:body.index('void TWPartitionManager::Setup_Settings_Storage_Partition')]
+    # A mandatory environment switch here depended on keystore2 before /data
+    # metadata was mounted and could prevent the credential page entirely.
+    assert 'PrepareNeo8StockMetadataEnvironment' not in body
+    before_mount = body[:body.index('fscrypt_mount_metadata_encrypted(')]
+    assert 'setRecoveryKeyMintEnvironment(' not in before_mount
+    assert 'Existing metadata key is unavailable; refusing key generation' in before_mount
+    start = body.index('\t\t\tstd::string metadata_environment =')
+    end = body.index('\n#endif', start)
+    actual = body[start:end]
+    with tempfile.TemporaryDirectory(prefix='neo8-metadata-test-') as directory:
         source = Path(directory) / 'metadata.cpp'
-        source.write_text(STUBS + function + CASES)
+        source.write_text(STUBS + '''
+static void attempt() {
+    int attempts = 0;
+    auto try_metadata_environment = [&]() {
+        events.push_back(attempts == 0 ? "metadata-current" : "metadata-retry");
+        return attempts++ == 0 ? first_result : retry_result;
+    };
+''' + actual + '\n}\n' + CASES)
         for hook in (False, True):
             binary = Path(directory) / ('hook' if hook else 'no-hook')
             flags = ['-DWITH_HOOK'] if hook else []
@@ -138,7 +172,7 @@ def main():
             flags = ['-DTW_FORCE_KEYMASTER_VER'] if force else []
             subprocess.run(['g++', '-std=c++17', *flags, str(partition_source), '-o', str(binary)], check=True)
             subprocess.run([str(binary)], check=True, timeout=5)
-    print('PASS: stock preparation precedes metadata; failed/missing hooks block the operation.')
+    print('PASS: 64 metadata environment cases; current environment first, stock retry only after failure, existing-key guard retained.')
     print('PASS: 4 touch-service wait cases; the startup thread never queries Binder.')
     print('PASS: 16 automatic Keymaster vendor-unmount cases preserve the opt-in runtime mount.')
     print('Host stubs do not verify Android service readiness or phone decryption.')

@@ -147,7 +147,7 @@ def main():
     text = (args.vold_root / 'Decrypt.cpp').read_text()
     start = text.index('\tbool syncKeystore2DbForDecrypt() {')
     end = text.index('\n\t/* C++ replacement', start)
-    with tempfile.TemporaryDirectory(prefix='neo8-stop-test-', dir='/tmp') as directory:
+    with tempfile.TemporaryDirectory(prefix='neo8-stop-test-') as directory:
         source = Path(directory) / 'stop.cpp'
         source.write_text(STUBS + text[start:end] + CASES)
         binary = Path(directory) / 'stop'
