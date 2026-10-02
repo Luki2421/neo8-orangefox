@@ -6,6 +6,7 @@ on:
       - .github/workflows/neo8-port-check.yml
       - port-sources.json
       - patches/fox16/**
+      - files/neo8-restore-identity.sh
       - scripts/fetch_port_sources.py
       - scripts/prepare_neo8_port.py
       - scripts/boot_ramdisk.py

@@ -42,7 +42,11 @@ def configure_runtime(device):
     destination.chmod(0o755)
     reader_rc.write_text(rc.replace(original, 'service prepdecrypt.vendor /system/bin/neo8-prepdecrypt.sh', 1))
     touch.write_text(text)
+    identity = device / 'recovery/root/system/bin/neo8-restore-identity.sh'
+    shutil.copyfile(PROJECT / 'files/neo8-restore-identity.sh', identity)
+    identity.chmod(0o755)
     return {'touch_library_order_matches_v3': True,
+            'restore_neo8_identity_after_touch_start': True,
             'touch_program': 'pinned Neo8 native service; differs from u9/v3',
             'touch_phone_test_required': True,
             'stock_reader_preserved_in_recovery_system': True,

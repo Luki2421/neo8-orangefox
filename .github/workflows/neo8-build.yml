@@ -6,6 +6,7 @@ on:
       - .github/workflows/neo8-build.yml
       - port-sources.json
       - patches/fox16/**
+      - files/neo8-restore-identity.sh
       - patches/build-soong/**
       - scripts/neo8_service_config.py
       - scripts/prepare_neo8_build.py

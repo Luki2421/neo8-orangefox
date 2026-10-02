@@ -3,6 +3,7 @@
 """Regress the missing logd profiles and misplaced VINTF fragments from phone logs."""
 import json
 import hashlib
+import os
 from pathlib import Path
 import stat
 import subprocess
@@ -17,6 +18,57 @@ from neo8_service_config import (configure_service_files, configure_fastboot_man
 from inspect_recovery import inspect_service_config, inspect_ssg_ta_files
 
 class ServiceConfigTests(unittest.TestCase):
+    def test_identity_restore_allowlist_and_failures(self):
+        # Execute the production shell helper against an isolated property store.
+        helper = (Path(__file__).resolve().parents[1] / 'files/neo8-restore-identity.sh').read_text()
+        fake = self.root / 'property-tool'
+        fake.write_text('''#!/usr/bin/env python3
+import json, os, pathlib, sys
+p = pathlib.Path(os.environ['TEST_PROPS'])
+props = json.loads(p.read_text())
+kind = pathlib.Path(sys.argv[0]).name
+args = sys.argv[1:]
+if kind == 'resetprop':
+    assert args.pop(0) == '-n'
+if kind == 'getprop':
+    print(props.get(args[0], ''))
+else:
+    if args[0] == os.environ.get('TEST_FAIL_PROP'):
+        sys.exit(1)
+    if args[0] != os.environ.get('TEST_IGNORE_PROP'):
+        props[args[0]] = args[1]
+        p.write_text(json.dumps(props))
+''')
+        fake.chmod(0o755)
+        for name in ('resetprop', 'getprop', 'setprop'):
+            (self.root / name).symlink_to(fake)
+        script = self.root / 'restore.sh'
+        script.write_text(helper.replace('RP=/system/bin/resetprop', 'RP="' + str(self.root / 'resetprop') + '"'))
+        db = self.root / 'props.json'
+        expected = {'ro.product.' + scope + key: value
+                    for scope in ('', 'system.', 'vendor.', 'odm.', 'product.', 'system_ext.')
+                    for key, value in {'device': 'RE6402L1', 'name': 'RMX8899',
+                                       'model': 'RMX8899', 'manufacturer': 'realme'}.items()}
+        initial = {key: 'u9' for key in expected}
+        initial.update({'ro.build.fingerprint': 'keep-fingerprint',
+                        'ro.vendor.build.security_patch': 'keep-patch',
+                        'ro.product.first_api_level': '36', 'ro.board.platform': 'canoe'})
+        env = dict(os.environ, PATH=str(self.root) + os.pathsep + os.environ['PATH'], TEST_PROPS=str(db))
+        for failure in ('', 'TEST_FAIL_PROP', 'TEST_IGNORE_PROP'):
+            with self.subTest(failure=failure):
+                db.write_text(json.dumps(initial))
+                case_env = dict(env)
+                if failure:
+                    case_env[failure] = 'ro.product.device'
+                result = subprocess.run(['sh', str(script)], env=case_env, timeout=15)
+                actual = json.loads(db.read_text())
+                if failure:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(actual['twrp.neo8.identity_restored'], '0')
+                else:
+                    self.assertEqual(result.returncode, 0)
+                    self.assertEqual(actual, dict(initial, **expected, **{'twrp.neo8.identity_restored': '1'}))
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

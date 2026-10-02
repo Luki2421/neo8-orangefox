@@ -48,16 +48,16 @@
  
 --- a/twrp.cpp
 +++ b/twrp.cpp
-@@ -82,6 +82,31 @@
+@@ -82,6 +82,32 @@
  static void Print_Prop(const char *key, const char *name, void *cookie) {
  	printf("%s=%s\n", key, name);
  }
 +
-+static void Wait_For_Configured_Touch_Service() {
++static bool Wait_For_Configured_Touch_Service() {
 +	char service[PROPERTY_VALUE_MAX] = {};
 +	property_get("twrp.recovery.touch_service", service, "");
 +	if (service[0] == '\0')
-+		return;
++		return false;
 +
 +	const std::string state_property = "init.svc." + std::string(service);
 +	LOGINFO("Waiting up to 5 seconds for touch service '%s'\n", service);
@@ -70,21 +70,32 @@
 +			// vendor service manager is still settling, defeating this timeout.
 +			usleep(300000);
 +			LOGINFO("Touch service is running; controller settled\n");
-+			return;
++			return true;
 +		}
 +		usleep(20000);
 +	}
 +	LOGINFO("Touch service timed out after 5 seconds; continuing startup\n");
++	return false;
 +}
 +
  
  static void Decrypt_Page(bool SkipDecryption, bool datamedia) {
  #ifdef TW_NO_AUTO_DECRYPT
-@@ -552,6 +577,7 @@
- 	// start the UI
- 	printf("Starting the UI...\n");
- 	gui_init();
-+	Wait_For_Configured_Touch_Service();
+@@ -521,6 +547,17 @@
+   	// Set the start date to the recovery's build date
+   	TWFunc::Reset_Clock();
  
- #ifndef TW_SKIP_POST_GUI_FSTAB_SETUP
- 	if (!startup.Get_Fastboot_Mode()) PartitionManager.Setup_Fstab_Partitions(true);
++	// Allow touch to consume its initial compatibility properties, then restore
++	// the real identity before caching it or allowing package installation.
++	if (Wait_For_Configured_Touch_Service() &&
++		TWFunc::Path_Exists("/system/bin/neo8-restore-identity.sh")) {
++		if (TWFunc::Exec_Cmd("/system/bin/sh /system/bin/neo8-restore-identity.sh", false) == 0) {
++			DataManager::SetValue(FOX_COMPATIBILITY_DEVICE, TWFunc::Fox_Property_Get("ro.product.device"));
++			LOGINFO("Neo8 identity restored after touch startup\n");
++		} else {
++			LOGERR("Neo8 identity restoration failed; inspect device properties before installing packages\n");
++		}
++	}
+   	DataManager::GetValue(FOX_COMPATIBILITY_DEVICE, Fox_Current_Device);
+ 	printf("Starting OrangeFox Recovery %s [%s, core: %s] (built on %s for %s [dev_ver: %s (branch: %s)]; pid %d)\n",
+ 		FOX_BUILD, FOX_VARIANT, FOX_MAIN_VERSION_STR, fox_build_date.c_str(), Fox_Current_Device.c_str(), FOX_CURRENT_DEV_STR, OF_CURRENT_BRANCH, getpid());

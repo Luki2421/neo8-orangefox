@@ -87,11 +87,11 @@ static int usleep(unsigned int value) { elapsed += value; return 0; }
 '''
 TOUCH_CASES = r'''
 int main() {
-    configured = false; Wait_For_Configured_Touch_Service(); assert(polls == 0 && elapsed == 0);
-    configured = true; Wait_For_Configured_Touch_Service(); assert(polls == 1 && elapsed == 300000);
-    polls = 0; elapsed = 0; ready_after = 10; Wait_For_Configured_Touch_Service();
+    configured = false; assert(!Wait_For_Configured_Touch_Service()); assert(polls == 0 && elapsed == 0);
+    configured = true; assert(Wait_For_Configured_Touch_Service()); assert(polls == 1 && elapsed == 300000);
+    polls = 0; elapsed = 0; ready_after = 10; assert(Wait_For_Configured_Touch_Service());
     assert(polls == 11 && elapsed == 500000);
-    polls = 0; elapsed = 0; ready_after = 1000; Wait_For_Configured_Touch_Service();
+    polls = 0; elapsed = 0; ready_after = 1000; assert(!Wait_For_Configured_Touch_Service());
     assert(polls == 250 && elapsed == 5000000);
 }
 '''
@@ -156,7 +156,9 @@ static void attempt() {
             subprocess.run(['g++', '-std=c++17', *flags, str(source), '-o', str(binary)], check=True)
             subprocess.run([str(binary)], check=True, timeout=5)
         main_text = (args.recovery_root / 'twrp.cpp').read_text()
-        start = main_text.index('static void Wait_For_Configured_Touch_Service() {')
+        assert main_text.index('if (Wait_For_Configured_Touch_Service() &&') < main_text.index('DataManager::GetValue(FOX_COMPATIBILITY_DEVICE, Fox_Current_Device)')
+        assert main_text.count('if (Wait_For_Configured_Touch_Service() &&') == 1
+        start = main_text.index('static bool Wait_For_Configured_Touch_Service() {')
         end = main_text.index('\nstatic void Decrypt_Page(', start)
         touch_source = Path(directory) / 'touch.cpp'
         touch_source.write_text(TOUCH_STUBS + main_text[start:end] + TOUCH_CASES)
