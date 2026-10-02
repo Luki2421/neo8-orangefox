@@ -100,7 +100,7 @@ export FOX_MAINTAINER_PATCH_VERSION=4
               'flashable_release': False, 'phone_decryption_verified': False,
               'manual_metadata_menu_integrated': True,
               'runtime_configuration': runtime,
-              'stock_keymint_before_first_metadata_operation': True,
+              'metadata_environment_order': 'current first, stock retry on failure (reference TWRP)',
               'automatic_fstab_runtime_partition_preservation': True,
               'remaining': ['full Android compilation', 'built image inspection',
                             'phone startup, native touch and decryption test']}

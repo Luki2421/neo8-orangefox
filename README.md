@@ -13,6 +13,7 @@ Użytkownik zgłosił działający start i dotyk, lecz brak dostępu do pamięci
 Następna poprawka przywraca inicjalizację zablokowanej pamięci oraz menu
 ręcznego odszyfrowania: [diagnoza i dalszy test](docs/storage-fix-2026-10-01.md).
 Działanie odszyfrowania na telefonie nadal wymaga potwierdzenia.
+[Poprawka kolejności odszyfrowania zgodnie z działającym TWRP](docs/decrypt-order-fix-2026-10-02.md).
 Log z telefonu ujawnił też [błędy konfiguracji logd i manifestów usług](docs/service-fix-2026-10-01.md); poprawka obejmuje je wraz z kontrolą ramdisku.
 
 Poniższe notatki opisują wcześniejsze etapy portowania.

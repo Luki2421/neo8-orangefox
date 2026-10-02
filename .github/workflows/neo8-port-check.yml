@@ -92,7 +92,7 @@ jobs:
       - name: Test service-stop failures before database and property changes
         run: python3 tests/test_keystore_service_stop.py --vold-root /tmp/neo8-port-sources/vold
 
-      - name: Test stock metadata preparation and bounded touch wait
+      - name: Test metadata-first preparation and bounded touch wait
         run: python3 tests/test_metadata_environment.py --recovery-root /tmp/neo8-port-sources/recovery
 
       - name: Display scope of this check

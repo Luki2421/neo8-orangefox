@@ -46,53 +46,6 @@
  	return true;
  }
  
-@@ -680,6 +684,23 @@
- 	return true;
- }
- 
-+#ifdef TW_NO_AUTO_DECRYPT
-+static bool PrepareNeo8StockMetadataEnvironment() {
-+	if (android::keystore::setRecoveryKeyMintEnvironment == nullptr) {
-+		LOGERR("Neo8 metadata: stock KeyMint environment hook is unavailable\n");
-+		return false;
-+	}
-+	// Preserve the recovery /system; stock system is mounted at /system_root.
-+	PartitionManager.Mount_By_Path("/system_root", false);
-+	PartitionManager.Mount_By_Path("/vendor", false);
-+	if (!android::keystore::setRecoveryKeyMintEnvironment(true)) {
-+		LOGERR("Neo8 metadata: stock KeyMint preparation failed; no metadata decrypt attempted\n");
-+		return false;
-+	}
-+	return true;
-+}
-+#endif
-+
- void TWPartitionManager::Decrypt_Data() {
- 	#ifdef TW_INCLUDE_CRYPTO
- 	TWPartition* Decrypt_Data = Find_Partition_By_Path("/data");
-@@ -719,6 +740,9 @@
- 				Decrypt_Data->Current_File_System.c_str(), Decrypt_Data->Key_Directory.c_str());
- #ifdef TW_INCLUDE_FBE_METADATA_DECRYPT
- #ifdef USE_FSCRYPT
-+#ifdef TW_NO_AUTO_DECRYPT
-+			if (!PrepareNeo8StockMetadataEnvironment()) return;
-+#endif
- 			std::vector<std::string> user_devices;
- 			std::vector<bool> device_aliased;
- 			auto cleanup_metadata_attempt = [&]() {
-@@ -760,8 +784,12 @@
- 				}
- 			};
- 
-+#ifdef TW_NO_AUTO_DECRYPT
-+			std::string metadata_environment = "stock";
-+#else
- 			std::string metadata_environment =
- 				android::base::GetProperty("twrp.keymint.metadata_env", "recovery");
-+#endif
- 			bool metadata_ready = try_metadata_environment();
- 			const bool allow_stock_retry = android::base::GetBoolProperty(
- 				"twrp.keymint.allow_stock_retry", false);
 --- a/twrp.cpp
 +++ b/twrp.cpp
 @@ -82,6 +82,31 @@
