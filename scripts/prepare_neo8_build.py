@@ -10,6 +10,30 @@ import subprocess
 
 PROJECT = Path(__file__).resolve().parents[1]
 
+GATEKEEPER_HAL = ('    <hal format="aidl">\n'
+                  '        <name>android.hardware.gatekeeper</name>\n'
+                  '        <fqname>IGatekeeper/default</fqname>\n'
+                  '    </hal>\n')
+
+def fix_vendor_manifest(device):
+    """Drop the IGatekeeper entry duplicated by its own VINTF fragment.
+
+    On the phone servicemanager logged 'VINTF parse error ... HAL
+    "android.hardware.gatekeeper" has a conflict' for manifest.xml vs
+    manifest/android.hardware.gatekeeper-service-qti.xml. With the device
+    manifest unreadable, AServiceManager_addService() returns -3 and the boot,
+    health and weaver HALs abort. The fragment keeps the declaration.
+    """
+    vintf = device / 'prebuilt/vendor/etc/vintf'
+    manifest = vintf / 'manifest.xml'
+    fragment = vintf / 'manifest/android.hardware.gatekeeper-service-qti.xml'
+    text = manifest.read_text()
+    if text.count(GATEKEEPER_HAL) != 1:
+        raise RuntimeError('Unexpected pinned vendor VINTF manifest')
+    if '<fqname>IGatekeeper/default</fqname>' not in fragment.read_text():
+        raise RuntimeError('Gatekeeper VINTF fragment missing; refusing to drop manifest entry')
+    manifest.write_text(text.replace(GATEKEEPER_HAL, '', 1))
+
 def configure_runtime(device):
     touch = device / 'prebuilt/vendor/odm/etc/init/vendor-oplus-hardware-touch-V2-service.rc'
     text = touch.read_text()
@@ -38,7 +62,9 @@ def configure_runtime(device):
     destination.chmod(0o755)
     reader_rc.write_text(rc.replace(original, 'service prepdecrypt.vendor /system/bin/neo8-prepdecrypt.sh', 1))
     touch.write_text(text)
+    fix_vendor_manifest(device)
     return {'touch_library_order_matches_v3': True,
+            'vendor_manifest_gatekeeper_duplicate_removed': True,
             'touch_program': 'pinned Neo8 native service; differs from u9/v3',
             'touch_phone_test_required': True,
             'stock_reader_preserved_in_recovery_system': True,
@@ -70,6 +96,16 @@ def main():
     text = board.read_text().replace('soong-libguitwrp_defaults', 'soong-libfoxui_defaults')
     text = text.replace('TW_DEFAULT_LANGUAGE := zh_CN', 'TW_DEFAULT_LANGUAGE := en')
     text = text.replace('TW_DEFAULT_TIMEZONE := "Asia/Shanghai"', 'TW_DEFAULT_TIMEZONE := "Europe/Warsaw"')
+    # OrangeFox 16 runs Setup_Fstab_Partitions() only after gui_init(), so this flag
+    # skipped it entirely: no /data setup, no /sdcard, no APEX, and the manual
+    # decrypt menu entry (neo8_manual_decrypt) stayed hidden. TW_NO_AUTO_DECRYPT
+    # already keeps startup from decrypting, so the setup itself is safe to run.
+    skip_flag = 'TW_SKIP_POST_GUI_FSTAB_SETUP := true'
+    if skip_flag not in text:
+        raise RuntimeError(f'Expected {skip_flag!r} in BoardConfig.mk')
+    if 'TW_NO_AUTO_DECRYPT := true' not in text:
+        raise RuntimeError('Refusing to enable fstab setup without TW_NO_AUTO_DECRYPT')
+    text = text.replace(skip_flag, 'TW_SKIP_POST_GUI_FSTAB_SETUP := false')
     board.write_text(text)
     props = device / 'system.prop'
     text = props.read_text().replace('ro.crypto.metadata_init_delete_all_keys.enabled=true',
