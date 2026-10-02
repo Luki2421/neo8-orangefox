@@ -12,6 +12,27 @@ REQUIRED_PROFILES = {'SCHED_SP_BACKGROUND', 'BlkIOBackground', 'NormalIoPriority
 def profile_names(config):
     return {p['Name'] for group in ('Profiles', 'AggregateProfiles') for p in config.get(group, [])}
 
+def configure_qseecomd(device):
+    """Run the pinned listener daemon in the existing recovery domain.
+
+    init requires a valid domain transition even in permissive mode. Match
+    the explicit recovery label used by the other device crypto services.
+    Phone validation is still needed to confirm listener registration.
+    """
+    path = device / 'prebuilt/vendor/etc/init/qseecomd.rc'
+    source = path.read_text()
+    original = ('service vendor.qseecomd /vendor/bin/qseecomd\n'
+                '    socket notify-topology stream 660 system drmrpc\n'
+                '    class core\n'
+                '    user root\n'
+                '    group root drmrpc\n')
+    if source.count(original) != 1 or 'seclabel' in source:
+        raise ValueError('Unexpected pinned qseecomd init configuration')
+    path.write_text(source.replace(original, original + '    seclabel u:r:recovery:s0\n', 1))
+    return {'source_sha256': hashlib.sha256(source.encode()).hexdigest(),
+            'service': 'vendor.qseecomd', 'seclabel': 'u:r:recovery:s0',
+            'listener_registration_verified_on_phone': False}
+
 def aidl_instances(hal):
     """Normalize the two instance syntaxes present in the pinned device tree."""
     instances = [(fq.text or '').strip() for fq in hal.findall('fqname')]

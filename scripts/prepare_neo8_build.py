@@ -8,7 +8,8 @@ from pathlib import Path
 import shutil
 import subprocess
 
-from neo8_service_config import configure_service_files, configure_fastboot_manifest, configure_omapi_manifest
+from neo8_service_config import (configure_service_files, configure_fastboot_manifest,
+                                 configure_omapi_manifest, configure_qseecomd)
 
 PROJECT = Path(__file__).resolve().parents[1]
 
@@ -71,6 +72,7 @@ def main():
     runtime["service_files"] = configure_service_files(device, android)
     runtime["fastboot_manifest"] = configure_fastboot_manifest(device, android)
     runtime["omapi_manifest"] = configure_omapi_manifest(device, android)
+    runtime["qseecomd"] = configure_qseecomd(device)
     board = device / 'BoardConfig.mk'
     text = board.read_text().replace('soong-libguitwrp_defaults', 'soong-libfoxui_defaults')
     text = text.replace('TW_DEFAULT_LANGUAGE := zh_CN', 'TW_DEFAULT_LANGUAGE := en')

@@ -10,7 +10,8 @@ import tempfile
 import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 from neo8_service_config import (configure_service_files, configure_fastboot_manifest,
-                                 configure_omapi_manifest, remove_duplicate_device_fragments)
+                                 configure_omapi_manifest, configure_qseecomd,
+                                 remove_duplicate_device_fragments)
 from inspect_recovery import inspect_service_config
 
 class ServiceConfigTests(unittest.TestCase):
@@ -152,6 +153,44 @@ class ServiceConfigTests(unittest.TestCase):
                         '    recovery: true,\n'
                         '    srcs: ["Fastboot.cpp", "main.cpp"],\n}\n')
         return path, vendor
+
+    def qseecomd_fixture(self):
+        path = self.base / 'etc/init/qseecomd.rc'
+        path.parent.mkdir(parents=True)
+        path.write_text('on init\n    start vendor.qseecomd\n\n'
+                        'service vendor.qseecomd /vendor/bin/qseecomd\n'
+                        '    socket notify-topology stream 660 system drmrpc\n'
+                        '    class core\n    user root\n    group root drmrpc\n\n'
+                        'on property:vendor.car.hiber=hiberExit\n'
+                        '    stop vendor.qseecomd\n    start vendor.qseecomd\n')
+        return path
+
+    def test_qseecomd_label_preserves_service_and_triggers(self):
+        path = self.qseecomd_fixture()
+        original = path.read_text()
+        report = configure_qseecomd(self.device)
+        self.assertEqual(report['seclabel'], 'u:r:recovery:s0')
+        text = path.read_text()
+        self.assertEqual(text.replace('    seclabel u:r:recovery:s0\n', ''), original)
+        service = text.split('service vendor.qseecomd ', 1)[1].split('\non ', 1)[0]
+        self.assertIn('    seclabel u:r:recovery:s0\n', service)
+
+    def test_qseecomd_existing_label_not_overwritten(self):
+        path = self.qseecomd_fixture()
+        path.write_text(path.read_text().replace('    class core\n',
+                                               '    class core\n    seclabel u:r:vendor_qseecomd:s0\n'))
+        original = path.read_bytes()
+        with self.assertRaisesRegex(ValueError, 'Unexpected pinned qseecomd'):
+            configure_qseecomd(self.device)
+        self.assertEqual(path.read_bytes(), original)
+
+    def test_qseecomd_changed_service_not_modified(self):
+        path = self.qseecomd_fixture()
+        path.write_text(path.read_text().replace('/vendor/bin/qseecomd', '/vendor/bin/other'))
+        original = path.read_bytes()
+        with self.assertRaisesRegex(ValueError, 'Unexpected pinned qseecomd'):
+            configure_qseecomd(self.device)
+        self.assertEqual(path.read_bytes(), original)
 
     def omapi_fixture(self):
         path = self.root / 'bootable/recovery/Android.mk'
