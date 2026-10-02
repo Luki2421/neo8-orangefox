@@ -9,7 +9,8 @@ import shutil
 import subprocess
 
 from neo8_service_config import (configure_service_files, configure_fastboot_manifest,
-                                 configure_omapi_manifest, configure_qseecomd)
+                                 configure_omapi_manifest, configure_qseecomd,
+                                 preserve_ssg_ta_files)
 
 PROJECT = Path(__file__).resolve().parents[1]
 
@@ -73,6 +74,7 @@ def main():
     runtime["fastboot_manifest"] = configure_fastboot_manifest(device, android)
     runtime["omapi_manifest"] = configure_omapi_manifest(device, android)
     runtime["qseecomd"] = configure_qseecomd(device)
+    runtime["ssg_ta_files"] = preserve_ssg_ta_files(device)
     board = device / 'BoardConfig.mk'
     text = board.read_text().replace('soong-libguitwrp_defaults', 'soong-libfoxui_defaults')
     text = text.replace('TW_DEFAULT_LANGUAGE := zh_CN', 'TW_DEFAULT_LANGUAGE := en')

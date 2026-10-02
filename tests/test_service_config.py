@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Regress the missing logd profiles and misplaced VINTF fragments from phone logs."""
 import json
+import hashlib
 from pathlib import Path
 import stat
 import subprocess
@@ -11,8 +12,9 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 from neo8_service_config import (configure_service_files, configure_fastboot_manifest,
                                  configure_omapi_manifest, configure_qseecomd,
-                                 remove_duplicate_device_fragments)
-from inspect_recovery import inspect_service_config
+                                 remove_duplicate_device_fragments, preserve_ssg_ta_files,
+                                 TA_RECOVERY_PATH)
+from inspect_recovery import inspect_service_config, inspect_ssg_ta_files
 
 class ServiceConfigTests(unittest.TestCase):
     def setUp(self):
@@ -153,6 +155,87 @@ class ServiceConfigTests(unittest.TestCase):
                         '    recovery: true,\n'
                         '    srcs: ["Fastboot.cpp", "main.cpp"],\n}\n')
         return path, vendor
+
+    def ta_fixture(self):
+        config = self.base / 'etc/ssg/ta_config.json'
+        config.parent.mkdir(parents=True)
+        config.write_text('{\n  "ta_paths": [\n    {"path":"/vendor/firmware_mnt/image"}\n  ]\n}\n')
+        source = self.base / 'firmware_mnt/image'
+        source.mkdir(parents=True)
+        for i in range(4):
+            stem = f'0000000{i}-1111-2222-3333-444444444444'
+            for suffix in ['mdt'] + ['b' + str(j).zfill(2) for j in range(9)]:
+                (source / (stem + '.' + suffix)).write_bytes((stem + suffix).encode())
+        (source / 'haptic.bin').write_bytes(b'unrelated peripheral firmware')
+        return config, source
+
+    def test_ta_files_survive_vendor_overlay_byte_for_byte(self):
+        config, source = self.ta_fixture()
+        before = {p.name: p.read_bytes() for p in source.iterdir()}
+        report = preserve_ssg_ta_files(self.device)
+        paths = json.loads(config.read_text())['ta_paths']
+        self.assertEqual(paths[0]['path'], TA_RECOVERY_PATH)
+        self.assertEqual(paths[1]['path'], '/vendor/firmware_mnt/image')
+        destination = self.device / 'recovery/root' / paths[0]['path'].lstrip('/')
+        self.assertEqual(len(list(destination.iterdir())), 40)
+        self.assertFalse((destination / 'haptic.bin').exists())
+        self.assertEqual(before, {p.name: p.read_bytes() for p in source.iterdir()})
+        # Hide the old vendor tree, as the stock vendor mount does at runtime.
+        self.base.rename(self.device / 'hidden-ramdisk-vendor')
+        for name, digest in report['files_sha256'].items():
+            self.assertEqual((destination / name).read_bytes(), before[name])
+            self.assertEqual(hashlib.sha256((destination / name).read_bytes()).hexdigest(), digest)
+
+    def test_incomplete_ta_package_rejected_before_config_change(self):
+        config, source = self.ta_fixture()
+        original = config.read_bytes()
+        next(source.glob('*.b08')).unlink()
+        with self.assertRaisesRegex(ValueError, 'Incomplete pinned SSG TA'):
+            preserve_ssg_ta_files(self.device)
+        self.assertEqual(config.read_bytes(), original)
+        self.assertFalse((self.device / 'recovery/root' / TA_RECOVERY_PATH.lstrip('/')).exists())
+
+    def test_packaged_ta_copies_checked(self):
+        self.ta_fixture()
+        report = preserve_ssg_ta_files(self.device)
+        entries = {}
+        for root in (self.device / 'prebuilt', self.device / 'recovery/root'):
+            for path in root.rglob('*'):
+                if path.is_file():
+                    entries[str(path.relative_to(root))] = {
+                        'mode': stat.S_IFREG | 0o644, 'data': path.read_bytes()}
+        self.assertEqual(inspect_ssg_ta_files(entries)['files_sha256'], report['files_sha256'])
+        name = TA_RECOVERY_PATH.lstrip('/') + '/' + next(iter(report['files_sha256']))
+        for replacement in (None, {'mode': stat.S_IFREG | 0o644, 'data': b'corrupt'},
+                            {'mode': stat.S_IFLNK | 0o777, 'data': b'/vendor/firmware_mnt/image/ta'}):
+            broken = dict(entries)
+            if replacement is None:
+                del broken[name]
+            else:
+                broken[name] = replacement
+            with self.subTest(replacement=replacement), self.assertRaises(ValueError):
+                inspect_ssg_ta_files(broken)
+        del entries['vendor/etc/ssg/ta_config.json']
+        with self.assertRaisesRegex(ValueError, 'Missing SSG TA configuration'):
+            inspect_ssg_ta_files(entries)
+
+    def test_unexpected_ta_config_not_modified(self):
+        config, _ = self.ta_fixture()
+        config.write_text('{}')
+        with self.assertRaisesRegex(ValueError, 'Unexpected pinned SSG TA search paths'):
+            preserve_ssg_ta_files(self.device)
+        self.assertEqual(config.read_text(), '{}')
+
+    def test_existing_ta_destination_not_overwritten(self):
+        config, _ = self.ta_fixture()
+        before = config.read_bytes()
+        dest = self.device / 'recovery/root' / TA_RECOVERY_PATH.lstrip('/')
+        dest.mkdir(parents=True)
+        (dest / 'existing').write_bytes(b'keep')
+        with self.assertRaisesRegex(ValueError, 'Refusing to overwrite'):
+            preserve_ssg_ta_files(self.device)
+        self.assertEqual(config.read_bytes(), before)
+        self.assertEqual((dest / 'existing').read_bytes(), b'keep')
 
     def qseecomd_fixture(self):
         path = self.base / 'etc/init/qseecomd.rc'

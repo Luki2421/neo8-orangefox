@@ -8,9 +8,46 @@ import shutil
 import xml.etree.ElementTree as ET
 
 REQUIRED_PROFILES = {'SCHED_SP_BACKGROUND', 'BlkIOBackground', 'NormalIoPriority'}
+TA_RECOVERY_PATH = '/system/etc/firmware/neo8-ta'
 
 def profile_names(config):
     return {p['Name'] for group in ('Profiles', 'AggregateProfiles') for p in config.get(group, [])}
+
+def preserve_ssg_ta_files(device):
+    """Keep the donor's signed TA files accessible when stock vendor is mounted."""
+    config_path = device / 'prebuilt/vendor/etc/ssg/ta_config.json'
+    original = config_path.read_text()
+    marker = '  "ta_paths": [\n'
+    if original.count(marker) != 1 or TA_RECOVERY_PATH in original:
+        raise ValueError('Unexpected pinned SSG TA search paths')
+    source = device / 'prebuilt/vendor/firmware_mnt/image'
+    destination = device / 'recovery/root' / TA_RECOVERY_PATH.lstrip('/')
+    # Only the existing UUID-named split TA packages, not peripheral firmware.
+    pattern = r'[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}\.(?:mdt|b[0-9]{2})'
+    files = sorted(p for p in source.iterdir() if re.fullmatch(pattern, p.name))
+    stems = {p.stem for p in files}
+    if len(stems) != 4:
+        raise ValueError('Unexpected pinned SSG TA package count')
+    for stem in stems:
+        expected = {stem + '.mdt'} | {stem + '.b' + str(i).zfill(2) for i in range(9)}
+        if {p.name for p in files if p.stem == stem} != expected:
+            raise ValueError('Incomplete pinned SSG TA package: ' + stem)
+    if any(p.is_symlink() or not p.is_file() for p in files):
+        raise ValueError('SSG TA source must be a regular file')
+    if destination.exists():
+        raise ValueError('Refusing to overwrite existing recovery TA directory')
+    hashes = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in files}
+    destination.mkdir(parents=True)
+    for path in files:
+        shutil.copyfile(path, destination / path.name)
+        (destination / path.name).chmod(0o644)
+    # ssgtzd starts from the ramdisk and reads this configuration before the
+    # stock /vendor mount. Its later TA opens must use the persistent path.
+    config_path.write_text(original.replace(marker, marker +
+                           '    { "path": "' + TA_RECOVERY_PATH + '"},\n', 1))
+    return {'recovery_search_path': TA_RECOVERY_PATH, 'files_sha256': hashes,
+            'copied_bytes': sum(p.stat().st_size for p in files),
+            'source_files_modified': False}
 
 def configure_qseecomd(device):
     """Run the pinned listener daemon in the existing recovery domain.

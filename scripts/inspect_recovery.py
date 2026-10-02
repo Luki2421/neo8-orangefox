@@ -12,7 +12,8 @@ import subprocess
 import tempfile
 import xml.etree.ElementTree as ET
 
-from neo8_service_config import REQUIRED_PROFILES, profile_names, check_device_aidl_manifests
+from neo8_service_config import (REQUIRED_PROFILES, profile_names,
+                                 check_device_aidl_manifests, TA_RECOVERY_PATH)
 
 from boot_ramdisk import read_recovery
 
@@ -103,6 +104,36 @@ def inspect_service_config(entries):
             'device_manifests_checked': sorted(visited),
             'unique_device_aidl_instances': len(instances)}
 
+def inspect_ssg_ta_files(entries):
+    """Verify TA copies and their search path in the actual packaged ramdisk."""
+    _, config = resolve(entries, 'vendor/etc/ssg/ta_config.json')
+    if not config or not stat.S_ISREG(config['mode']):
+        raise ValueError('Missing SSG TA configuration')
+    # The donor configuration allows comments and trailing commas.
+    first_path = r'"ta_paths"\s*:\s*\[\s*\{\s*"path"\s*:\s*"' + re.escape(TA_RECOVERY_PATH) + '"'
+    if not re.search(first_path, config['data'].decode('utf-8')):
+        raise ValueError('Recovery TA path must be first in SSG configuration')
+    prefix = 'vendor/firmware_mnt/image/'
+    pattern = r'[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}\.(?:mdt|b[0-9]{2})'
+    names = sorted(path[len(prefix):] for path in entries
+                   if path.startswith(prefix) and re.fullmatch(pattern, path[len(prefix):]))
+    stems = {name.rsplit('.', 1)[0] for name in names}
+    expected = {stem + '.' + suffix for stem in stems
+                for suffix in ['mdt'] + ['b' + str(i).zfill(2) for i in range(9)]}
+    if len(stems) != 4 or set(names) != expected:
+        raise ValueError('Incomplete packaged SSG TA sources')
+    hashes = {}
+    for name in names:
+        _, source = resolve(entries, prefix + name)
+        # Do not accept a link that could lead back into the hidden vendor tree.
+        target = entries.get(TA_RECOVERY_PATH.lstrip('/') + '/' + name)
+        if not source or not stat.S_ISREG(source['mode']) or not target or not stat.S_ISREG(target['mode']):
+            raise ValueError('Missing regular recovery TA copy: ' + name)
+        if target['mode'] & 0o444 != 0o444 or target['data'] != source['data']:
+            raise ValueError('Unreadable or changed recovery TA copy: ' + name)
+        hashes[name] = hashlib.sha256(target['data']).hexdigest()
+    return {'recovery_search_path': TA_RECOVERY_PATH, 'files_sha256': hashes}
+
 def inspect(path):
     image, entries = read_recovery(path)
     if len(image) > PARTITION_SIZE:
@@ -111,6 +142,7 @@ def inspect(path):
     if not executable or not stat.S_ISREG(executable['mode']) or not executable['mode'] & 0o111:
         raise ValueError('Missing executable system/bin/recovery')
     service_config = inspect_service_config(entries)
+    ssg_ta_files = inspect_ssg_ta_files(entries)
     needed = elf_dependencies(executable['data'])
     candidates = ['system/lib64', 'system/lib64/bootstrap', 'lib64',
                   'vendor/lib64', 'vendor/odm/lib64']
@@ -136,6 +168,7 @@ def inspect(path):
     return {'image_sha256': hashlib.sha256(image).hexdigest(), 'image_bytes': len(image),
             'partition_bytes': PARTITION_SIZE, 'header_version': 4, 'kernel_included': False,
             'service_configuration': service_config,
+            'ssg_ta_files': ssg_ta_files,
             'ramdisk_entries': len(entries), 'recovery_executable': name,
             'recovery_direct_libraries': libraries,
             'unresolved_direct_libraries': [key for key, value in libraries.items() if value is None],
