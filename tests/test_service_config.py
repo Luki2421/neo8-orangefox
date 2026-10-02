@@ -4,12 +4,13 @@
 import json
 from pathlib import Path
 import stat
+import subprocess
 import sys
 import tempfile
 import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 from neo8_service_config import (configure_service_files, configure_fastboot_manifest,
-                                 remove_duplicate_device_fragments)
+                                 configure_omapi_manifest, remove_duplicate_device_fragments)
 from inspect_recovery import inspect_service_config
 
 class ServiceConfigTests(unittest.TestCase):
@@ -151,6 +152,50 @@ class ServiceConfigTests(unittest.TestCase):
                         '    recovery: true,\n'
                         '    srcs: ["Fastboot.cpp", "main.cpp"],\n}\n')
         return path, vendor
+
+    def omapi_fixture(self):
+        path = self.root / 'bootable/recovery/Android.mk'
+        path.parent.mkdir(parents=True)
+        path.write_text('ifeq ($(TW_INCLUDE_OMAPI), true)\n'
+                        '        LOCAL_CFLAGS += -DTW_INCLUDE_OMAPI\n'
+                        '        LOCAL_SHARED_LIBRARIES += android.se.omapi-V1-ndk\n'
+                        '        TWRP_REQUIRED_MODULES += \\\n'
+                        '            se_omapi \\\n'
+                        '            se_omapi.rc \\\n'
+                        '            se_omapi.xml\n'
+                        'endif\n'
+                        'all:\n\t@echo $(TWRP_REQUIRED_MODULES)\n')
+        return path
+
+    def test_make_keeps_omapi_binary_and_rc_without_duplicate_fragment(self):
+        path = self.omapi_fixture()
+        original_odm = self.odm.read_bytes()
+        def required_modules(enabled):
+            return subprocess.check_output(['make', '--no-print-directory', '-f', str(path),
+                                            'TW_INCLUDE_OMAPI=' + enabled], text=True).split()
+        self.assertEqual(required_modules('true'), ['se_omapi', 'se_omapi.rc', 'se_omapi.xml'])
+        configure_omapi_manifest(self.device, self.root)
+        self.assertEqual(required_modules('true'), ['se_omapi', 'se_omapi.rc'])
+        self.assertEqual(required_modules('false'), [])
+        self.assertIn('-DTW_INCLUDE_OMAPI', path.read_text())
+        self.assertIn('android.se.omapi-V1-ndk', path.read_text())
+        self.assertEqual(self.odm.read_bytes(), original_odm)
+
+    def test_omapi_make_fix_requires_retained_declaration(self):
+        path = self.omapi_fixture()
+        original = path.read_bytes()
+        self.odm.write_text('<manifest type="device"/>')
+        with self.assertRaisesRegex(ValueError, 'Missing ODM OMAPI'):
+            configure_omapi_manifest(self.device, self.root)
+        self.assertEqual(path.read_bytes(), original)
+
+    def test_unexpected_omapi_make_rule_rejected(self):
+        path = self.omapi_fixture()
+        path.write_text(path.read_text().replace('se_omapi.xml', 'different.xml'))
+        original = path.read_bytes()
+        with self.assertRaisesRegex(ValueError, 'Unexpected recovery OMAPI'):
+            configure_omapi_manifest(self.device, self.root)
+        self.assertEqual(path.read_bytes(), original)
 
     def test_soong_fragment_source_fixed_without_removing_service(self):
         path, vendor = self.fastboot_fixture()

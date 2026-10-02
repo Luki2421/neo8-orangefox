@@ -46,3 +46,18 @@ The log also reports a missing NFC library and CryptoEng TA load failures;
 those remain separate runtime findings, not claimed fixed by this change.
 Full image build and a phone test are required before claiming decryption
 works. Raw phone logs are not included in this repository.
+
+## Follow-up: recovery's Make-installed OMAPI fragment
+
+Build 36972545258 compiled successfully, but final image inspection caught
+the OMAPI duplicate again. `bootable/recovery/Android.mk` explicitly requires
+`se_omapi.xml`, whose prebuilt module installs into vendor independently of
+the donor copy. Removing only the donor fragment was insufficient.
+
+Device preparation now removes that one required-module entry after verifying
+the retained ODM declaration. It preserves the `se_omapi` binary, init rc,
+linked libraries and `TW_INCLUDE_OMAPI` flag. The image collision check stays
+enabled. All 18 service configuration tests pass, including GNU Make
+evaluation with OMAPI enabled/disabled and refusal to modify unexpected
+source or a missing ODM declaration. The modified block was also evaluated
+from the actual pinned recovery Android.mk. A new full build is required.

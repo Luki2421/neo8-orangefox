@@ -114,6 +114,30 @@ def configure_fastboot_manifest(device, android):
             'framework_fragment_generation_disabled': True,
             'vendor_fragment': str(vendor.relative_to(device))}
 
+def configure_omapi_manifest(device, android):
+    # recovery's required modules install a second copy even after the donor
+    # vendor fragment is removed. Keep the binary/rc and the ODM declaration.
+    odm = device / 'prebuilt/vendor/odm/etc/vintf/manifest/secure_element_omapi_service.xml'
+    instances = check_device_aidl_manifests([(str(odm), ET.parse(odm).getroot())])
+    if set(instances) != {'android.se.omapi.ISecureElementService/default'}:
+        raise ValueError('Missing ODM OMAPI declaration')
+    path = android / 'bootable/recovery/Android.mk'
+    source = path.read_text()
+    original = ('        TWRP_REQUIRED_MODULES += \\\n'
+                '            se_omapi \\\n'
+                '            se_omapi.rc \\\n'
+                '            se_omapi.xml\n')
+    if source.count(original) != 1:
+        raise ValueError('Unexpected recovery OMAPI required modules')
+    replacement = ('        # Neo8 retains the single OMAPI declaration in ODM.\n'
+                   '        TWRP_REQUIRED_MODULES += \\\n'
+                   '            se_omapi \\\n'
+                   '            se_omapi.rc\n')
+    path.write_text(source.replace(original, replacement, 1))
+    return {'make_source_sha256': hashlib.sha256(source.encode()).hexdigest(),
+            'duplicate_vendor_fragment_installation_disabled': True,
+            'retained_odm_fragment': str(odm.relative_to(device))}
+
 def configure_service_files(device, android):
     source = android / 'system/core/libprocessgroup/profiles/task_profiles.json'
     config = json.loads(source.read_text())
