@@ -8,7 +8,8 @@ import sys
 import tempfile
 import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-from neo8_service_config import configure_service_files, configure_fastboot_manifest
+from neo8_service_config import (configure_service_files, configure_fastboot_manifest,
+                                 remove_duplicate_device_fragments)
 from inspect_recovery import inspect_service_config
 
 class ServiceConfigTests(unittest.TestCase):
@@ -34,6 +35,28 @@ class ServiceConfigTests(unittest.TestCase):
         self.vendor = self.device / 'prebuilt/vendor/etc/vintf/manifest/android.hardware.health-service.qti.xml'
         self.vendor.parent.mkdir(parents=True)
         self.vendor.write_text('<manifest version="8.0" type="device"/>')
+        self.base = self.device / 'prebuilt/vendor'
+        self.main = self.base / 'etc/vintf/manifest.xml'
+        self.gatekeeper = self.vendor.parent / 'android.hardware.gatekeeper-service-qti.xml'
+        gatekeeper = ('<hal format="aidl"><name>android.hardware.gatekeeper</name>'
+                      '<fqname>IGatekeeper/default</fqname></hal>')
+        self.main.write_text('<manifest version="8.0" type="device" target-level="202404">' +
+                             gatekeeper + '<sepolicy><version>202404</version></sepolicy></manifest>')
+        self.gatekeeper.write_text('<manifest version="9.0" type="device">' + gatekeeper + '</manifest>')
+        self.omapi = self.vendor.parent / 'se_omapi.xml'
+        self.omapi.write_text('<manifest type="device"><hal format="aidl"><name>android.se.omapi</name>'
+                              '<fqname>ISecureElementService/default</fqname></hal></manifest>')
+        self.odm = self.base / 'odm/etc/vintf/manifest/secure_element_omapi_service.xml'
+        self.odm.parent.mkdir(parents=True)
+        self.odm.write_text('<manifest type="device"><hal format="aidl"><name>android.se.omapi</name>'
+                            '<version>1</version><interface><name>ISecureElementService</name>'
+                            '<instance>default</instance></interface></hal></manifest>')
+
+    def add_manifests(self, entries):
+        for path in self.base.rglob('*.xml'):
+            entries['vendor/' + str(path.relative_to(self.base))] = {
+                'mode': stat.S_IFREG | 0o644, 'data': path.read_bytes()}
+        return entries
 
     def entries(self):
         content = (self.device / 'recovery/root/system/etc/task_profiles.json').read_bytes()
@@ -42,7 +65,13 @@ class ServiceConfigTests(unittest.TestCase):
                 'system/etc/vintf/manifest.xml': {'mode': stat.S_IFREG | 0o644, 'data': b'<manifest type="framework"/>'}}
 
     def test_stage_profiles_and_device_fragments(self):
+        main, odm = self.main.read_bytes(), self.odm.read_bytes()
         report = configure_service_files(self.device, self.root)
+        self.assertEqual(len(report['device_manifest_duplicates']['removed']), 2)
+        self.assertFalse(self.gatekeeper.exists())
+        self.assertFalse(self.omapi.exists())
+        self.assertEqual(self.main.read_bytes(), main)
+        self.assertEqual(self.odm.read_bytes(), odm)
         self.assertEqual(len(report['device_fragments_removed_from_framework']), 3)
         self.assertEqual(self.vendor.read_text(), '<manifest version="8.0" type="device"/>')
         for name in self.names:
@@ -58,6 +87,55 @@ class ServiceConfigTests(unittest.TestCase):
         # The /etc symlink may be created at runtime by init, not in the CPIO.
         del entries['etc']
         self.assertTrue(inspect_service_config(entries)['required_task_profiles_present'])
+
+    def test_phone_gatekeeper_collision_rejected_in_image(self):
+        duplicate = self.gatekeeper.read_bytes()
+        configure_service_files(self.device, self.root)
+        entries = self.add_manifests(self.entries())
+        entries['vendor/etc/vintf/manifest/gatekeeper.xml'] = {
+            'mode': stat.S_IFREG | 0o644, 'data': duplicate}
+        with self.assertRaisesRegex(ValueError, 'Conflicting AIDL instance android.hardware.gatekeeper'):
+            inspect_service_config(entries)
+
+    def test_cross_partition_omapi_collision_rejected_in_image(self):
+        duplicate = self.omapi.read_bytes()
+        configure_service_files(self.device, self.root)
+        entries = self.add_manifests(self.entries())
+        entries['vendor/etc/vintf/manifest/se_omapi.xml'] = {
+            'mode': stat.S_IFREG | 0o644, 'data': duplicate}
+        with self.assertRaisesRegex(ValueError, 'Conflicting AIDL instance android.se.omapi'):
+            inspect_service_config(entries)
+
+    def test_odm_alias_not_counted_twice(self):
+        configure_service_files(self.device, self.root)
+        entries = self.add_manifests(self.entries())
+        entries['odm'] = {'mode': stat.S_IFLNK | 0o777, 'data': b'/vendor/odm'}
+        self.assertEqual(inspect_service_config(entries)['unique_device_aidl_instances'], 2)
+
+    def test_aidl_version_difference_does_not_hide_collision(self):
+        configure_service_files(self.device, self.root)
+        entries = self.add_manifests(self.entries())
+        entries['vendor/etc/vintf/manifest/gatekeeper-v2.xml'] = {
+            'mode': stat.S_IFREG | 0o644,
+            'data': b'<manifest type="device"><hal format="aidl"><name>android.hardware.gatekeeper</name>'
+                    b'<version>2</version><interface><name>IGatekeeper</name><instance>default</instance>'
+                    b'</interface></hal></manifest>'}
+        with self.assertRaisesRegex(ValueError, 'Conflicting AIDL instance'):
+            inspect_service_config(entries)
+
+    def test_unique_interface_not_silently_removed(self):
+        self.omapi.write_text(self.omapi.read_text().replace('</hal>',
+                             '<fqname>ISecureElementService/other</fqname></hal>'))
+        with self.assertRaisesRegex(ValueError, 'Unexpected duplicate HAL declarations'):
+            remove_duplicate_device_fragments(self.device)
+        self.assertTrue(self.gatekeeper.exists())
+        self.assertTrue(self.omapi.exists())
+
+    def test_unexpected_retained_version_rejected(self):
+        self.odm.write_text(self.odm.read_text().replace('<version>1', '<version>2'))
+        with self.assertRaisesRegex(ValueError, 'Unexpected duplicate HAL declarations'):
+            remove_duplicate_device_fragments(self.device)
+        self.assertTrue(self.gatekeeper.exists())
 
     def fastboot_fixture(self):
         vendor = self.vendor.parent / 'android.hardware.fastboot-service.example.xml'

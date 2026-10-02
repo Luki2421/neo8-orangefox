@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 import xml.etree.ElementTree as ET
 
-from neo8_service_config import REQUIRED_PROFILES, profile_names
+from neo8_service_config import REQUIRED_PROFILES, profile_names, check_device_aidl_manifests
 
 from boot_ramdisk import read_recovery
 
@@ -82,8 +82,26 @@ def inspect_service_config(entries):
             if manifest.tag == 'manifest' and manifest.get('type') != 'framework':
                 raise ValueError('Device manifest in framework directory: ' + path)
             checked.append(path)
+    device_manifests = []
+    # /odm can be an init-created symlink to /vendor/odm. Resolve/deduplicate
+    # archive paths so the same file is never counted twice.
+    visited = set()
+    for partition in ('vendor', 'odm'):
+        directory, _ = resolve(entries, partition + '/etc/vintf')
+        if partition == 'odm' and not any(p.startswith(directory + '/') for p in entries):
+            directory, _ = resolve(entries, 'vendor/odm/etc/vintf')
+        for path, entry in sorted(entries.items()):
+            if path in visited or not stat.S_ISREG(entry['mode']):
+                continue
+            if path == directory + '/manifest.xml' or (
+                    path.startswith(directory + '/manifest/') and path.endswith('.xml')):
+                visited.add(path)
+                device_manifests.append((path, ET.fromstring(entry['data'])))
+    instances = check_device_aidl_manifests(device_manifests)
     return {'task_profiles_path': name, 'required_task_profiles_present': True,
-            'framework_manifests_checked': checked}
+            'framework_manifests_checked': checked,
+            'device_manifests_checked': sorted(visited),
+            'unique_device_aidl_instances': len(instances)}
 
 def inspect(path):
     image, entries = read_recovery(path)

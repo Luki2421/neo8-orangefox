@@ -3,6 +3,7 @@
 """Stage recovery service configuration without changing firmware or crypto keys."""
 import hashlib
 import json
+import re
 import shutil
 import xml.etree.ElementTree as ET
 
@@ -10,6 +11,80 @@ REQUIRED_PROFILES = {'SCHED_SP_BACKGROUND', 'BlkIOBackground', 'NormalIoPriority
 
 def profile_names(config):
     return {p['Name'] for group in ('Profiles', 'AggregateProfiles') for p in config.get(group, [])}
+
+def aidl_instances(hal):
+    """Normalize the two instance syntaxes present in the pinned device tree."""
+    instances = [(fq.text or '').strip() for fq in hal.findall('fqname')]
+    for interface in hal.findall('interface'):
+        name = interface.findtext('name', '').strip()
+        instances.extend(name + '/' + (item.text or '').strip()
+                         for item in interface.findall('instance'))
+    if not instances or any(not re.fullmatch(r'\w+/[\w./-]+', value) for value in instances):
+        raise ValueError('Unsupported AIDL instance declaration')
+    return instances
+
+def check_device_aidl_manifests(manifests):
+    """Check AIDL instance collisions in the Neo8 vendor + ODM manifest set.
+
+    This is not a replacement for libvintf. Overrides/SKU selection require
+    explicit review. AIDL versions share one service identity in libvintf.
+    """
+    seen = {}
+    for path, root in manifests:
+        if root.tag != 'manifest' or root.get('type') != 'device':
+            raise ValueError('Unexpected device manifest: ' + path)
+        for hal in root.findall('hal'):
+            if hal.get('format') != 'aidl':
+                continue
+            if hal.get('override', 'false') != 'false':
+                raise ValueError('AIDL override needs explicit review: ' + path)
+            package = hal.findtext('name', '').strip()
+            for instance in aidl_instances(hal):
+                key = package + '.' + instance
+                if key in seen:
+                    raise ValueError('Conflicting AIDL instance ' + key + ': ' + seen[key] + ' vs ' + path)
+                seen[key] = path
+    return seen
+
+def remove_duplicate_device_fragments(device):
+    # Remove only the two verified redundant fragments. Never discard unique
+    # interfaces, change service versions, or alter manifest target/sepolicy.
+    base = device / 'prebuilt/vendor'
+    pairs = (
+        ('etc/vintf/manifest/android.hardware.gatekeeper-service-qti.xml',
+         'etc/vintf/manifest.xml', 'android.hardware.gatekeeper', 'IGatekeeper/default'),
+        ('etc/vintf/manifest/se_omapi.xml',
+         'odm/etc/vintf/manifest/secure_element_omapi_service.xml',
+         'android.se.omapi', 'ISecureElementService/default'),
+    )
+    def matches(hal, package, instance):
+        return (hal.attrib == {'format': 'aidl'} and
+                all(child.tag in ('name', 'version', 'fqname', 'interface') for child in hal) and
+                hal.findtext('name') == package and
+                [v.text for v in hal.findall('version')] in ([], ['1']) and
+                aidl_instances(hal) == [instance])
+    pending = []
+    for duplicate, retained, package, instance in pairs:
+        fragment = ET.parse(base / duplicate).getroot()
+        keeper = ET.parse(base / retained).getroot()
+        if (fragment.get('type') != 'device' or keeper.get('type') != 'device' or
+                len(fragment) != 1 or fragment[0].tag != 'hal' or
+                not matches(fragment[0], package, instance) or
+                not any(matches(hal, package, instance) for hal in keeper.findall('hal'))):
+            raise ValueError('Unexpected duplicate HAL declarations: ' + duplicate)
+        pending.append(base / duplicate)
+    # Validate the resulting combined manifest before changing any source file.
+    manifests = []
+    for directory in (base / 'etc/vintf', base / 'odm/etc/vintf'):
+        paths = [directory / 'manifest.xml'] + sorted((directory / 'manifest').glob('*.xml'))
+        for path in paths:
+            if path.is_file() and path not in pending:
+                manifests.append((str(path.relative_to(base)), ET.parse(path).getroot()))
+    instances = check_device_aidl_manifests(manifests)
+    for path in pending:
+        path.unlink()
+    return {'removed': [str(path.relative_to(base)) for path in pending],
+            'unique_aidl_instances': len(instances)}
 
 def configure_fastboot_manifest(device, android):
     # This recovery-only Soong module regenerates the system-side fragment
@@ -86,4 +161,5 @@ def configure_service_files(device, android):
     return {'task_profiles_source_sha256': hashlib.sha256(source.read_bytes()).hexdigest(),
             'task_profiles_installed': 'system/etc/task_profiles.json',
             'blkio_background_profile_present': True,
-            'device_fragments_removed_from_framework': removed}
+            'device_fragments_removed_from_framework': removed,
+            'device_manifest_duplicates': remove_duplicate_device_fragments(device)}
