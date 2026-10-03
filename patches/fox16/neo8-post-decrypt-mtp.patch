@@ -1,0 +1,41 @@
+--- a/partitionmanager.cpp
++++ b/partitionmanager.cpp
+@@ -2312,6 +2312,30 @@
+ 	return;
+ }
+ 
++static void Neo8_Refresh_MTP_After_Decrypt(TWPartition* dat) {
++#if defined(TW_NO_AUTO_DECRYPT) && defined(TW_HAS_MTP)
++	if (!android::base::GetBoolProperty("twrp.recovery.refresh_mtp_after_decrypt", false) ||
++		!dat || !dat->Is_Decrypted || !dat->Has_Data_Media || !dat->Is_Mounted() ||
++		!TWFunc::Path_Exists(dat->Storage_Path) ||
++		DataManager::GetIntValue("tw_mtp_enabled") != 1 ||
++		(DataManager::GetIntValue("fox_use_pass") == 1 && DataManager::GetIntValue("pass_open") != 1))
++		return;
++
++	// Startup defers MTP while data is encrypted, but leaves the user's setting
++	// enabled. Start it now, or refresh an existing server after the media path changes.
++	if (PartitionManager.is_MTP_Enabled() && !PartitionManager.Disable_MTP()) {
++		LOGERR("Unable to stop MTP for decrypted storage refresh\n");
++		return;
++	}
++	if (!PartitionManager.Enable_MTP()) {
++		LOGERR("Unable to enable MTP after decryption; storage remains unlocked\n");
++		PartitionManager.Disable_MTP();
++	} else {
++		LOGINFO("MTP enabled with decrypted storage\n");
++	}
++#endif
++}
++
+ void TWPartitionManager::Post_Decrypt(const string& Block_Device) {
+ 	TWPartition* dat = Find_Partition_By_Path("/data");
+ 
+@@ -2372,6 +2396,7 @@
+ 		if (!dat->Bind_Mount(false))
+ 			LOGERR("Unable to bind mount /sdcard to %s\n", dat->Storage_Path.c_str());
+ 		}
++		Neo8_Refresh_MTP_After_Decrypt(dat);
+ 	} else
+ 		LOGERR("Unable to locate data partition.\n");
+ }
