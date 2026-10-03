@@ -67,6 +67,8 @@ jobs:
           git -C /tmp/neo8-port-sources/recovery apply "$GITHUB_WORKSPACE/patches/fox16/neo8-runtime.patch"
           git -C /tmp/neo8-port-sources/recovery apply --check "$GITHUB_WORKSPACE/patches/fox16/neo8-storage-init.patch"
           git -C /tmp/neo8-port-sources/recovery apply "$GITHUB_WORKSPACE/patches/fox16/neo8-storage-init.patch"
+          git -C /tmp/neo8-port-sources/recovery apply --check "$GITHUB_WORKSPACE/patches/fox16/neo8-auto-startup.patch"
+          git -C /tmp/neo8-port-sources/recovery apply "$GITHUB_WORKSPACE/patches/fox16/neo8-auto-startup.patch"
           git -C /tmp/neo8-port-sources/recovery diff --check
 
       - name: Test deferred storage initialization from the real startup path

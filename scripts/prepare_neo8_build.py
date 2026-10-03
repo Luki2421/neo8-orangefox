@@ -67,7 +67,8 @@ def main():
     if device.exists():
         raise RuntimeError('Refusing to overwrite an existing device tree')
     recovery = android / 'bootable/recovery'
-    for name in ('neo8-manual-menu.patch', 'neo8-runtime.patch', 'neo8-storage-init.patch'):
+    for name in ('neo8-manual-menu.patch', 'neo8-runtime.patch', 'neo8-storage-init.patch',
+                 'neo8-auto-startup.patch'):
         patch = PROJECT / 'patches/fox16' / name
         subprocess.run(['git', 'apply', '--check', str(patch)], cwd=recovery, check=True)
         subprocess.run(['git', 'apply', str(patch)], cwd=recovery, check=True)

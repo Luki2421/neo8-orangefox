@@ -113,7 +113,7 @@
  					<icon res="key"/>
 --- a/gui/theme/portrait_hdpi/pages/main.xml
 +++ b/gui/theme/portrait_hdpi/pages/main.xml
-@@ -82,6 +82,18 @@
+@@ -82,6 +82,19 @@
  				<action function="set">tw_clear_destination=navbar</action>
  				<action function="page">clear_vars</action>
  			</action>
@@ -125,8 +125,9 @@
 +				<condition var1="fox_use_pass" op="!=" var2="1"/>
 +				<condition var1="neo8_manual_decrypt" var2="1"/>
 +				<condition var1="tw_is_encrypted" var2="1"/>
-+				<condition var1="neo8_auto_prompt_done" op="!=" var2="1"/>
-+				<action function="set">neo8_auto_prompt_done=1</action>
++				<condition var1="property.twrp.neo8.auto_prompt_ready" var2="1"/>
++				<condition var1="property.twrp.neo8.auto_prompt_done" op="!=" var2="1"/>
++				<action function="set">property.twrp.neo8.auto_prompt_done=1</action>
 +				<action function="page">neo8_prepare_decrypt</action>
 +			</action>
  		</page>
