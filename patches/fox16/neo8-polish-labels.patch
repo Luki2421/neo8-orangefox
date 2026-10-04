@@ -1,0 +1,29 @@
+--- a/gui/theme/common/languages/pl_PL.xml
++++ b/gui/theme/common/languages/pl_PL.xml
+@@ -36,7 +36,7 @@
+ 		<string name="sort_by_size_desc">Rozmiar</string>
+ 		<string name="install_btn">Instaluj</string>
+ 		<string name="wipe_btn">Wyczyść</string>
+-		<string name="backup_btn">Niepowodzenie wykonywania kopii zapasowej.</string>
++		<string name="backup_btn">Kopie</string>
+ 		<string name="restore_btn">Przywróć</string>
+ 		<string name="mount_btn">Zamontuj</string>
+ 		<string name="file_manager_btn">Pliki</string>
+@@ -156,7 +156,7 @@
+ 		<string name="partitions">Partycje:</string>
+ 		<string name="progress">Postęp:</string>
+ 		<string name="backup_complete">Kopia zapasowa wykonana</string>
+-		<string name="restore_hdr">Niepowodzenie wykonywania kopii zapasowej.</string>
++		<string name="restore_hdr">Kopie zapasowe</string>
+ 		<string name="restore_backup_hdr">Przywróć kopię</string>
+ 		<string name="sel_backup_hdr">Wybierz kopię zapasową</string>
+ 		<string name="restore_dec_fail">Hasło nieprawidłowe, spróbuj ponownie!</string>
+@@ -831,7 +831,7 @@
+ 		<string name="repack">Przepakuj</string>
+ 
+ 		<string name="fox_save_load_aromafm_config_chk">Zapisz/Wczytaj konfigurację AromaFM</string>
+-		<string name="search_help">Wyszukiwarka plików i folderów...</string>
++		<string name="search_help">Szukaj plików…</string>
+ 		
+ 		<string name="reboot_to_take_effect">Zrestartuj by zastosować zmiany</string>
+ 		<string name="fox_modules_hdr">Dodatki Fox</string>

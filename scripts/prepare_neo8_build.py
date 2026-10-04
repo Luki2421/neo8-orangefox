@@ -68,7 +68,8 @@ def main():
         raise RuntimeError('Refusing to overwrite an existing device tree')
     recovery = android / 'bootable/recovery'
     for name in ('neo8-manual-menu.patch', 'neo8-runtime.patch', 'neo8-storage-init.patch',
-                 'neo8-auto-startup.patch', 'neo8-post-decrypt-mtp.patch', 'neo8-usb-switch.patch'):
+                 'neo8-auto-startup.patch', 'neo8-post-decrypt-mtp.patch', 'neo8-usb-switch.patch',
+                 'neo8-polish-labels.patch'):
         patch = PROJECT / 'patches/fox16' / name
         subprocess.run(['git', 'apply', '--check', str(patch)], cwd=recovery, check=True)
         subprocess.run(['git', 'apply', str(patch)], cwd=recovery, check=True)
@@ -84,6 +85,15 @@ def main():
     text = board.read_text().replace('soong-libguitwrp_defaults', 'soong-libfoxui_defaults')
     text = text.replace('TW_DEFAULT_LANGUAGE := zh_CN', 'TW_DEFAULT_LANGUAGE := en')
     text = text.replace('TW_DEFAULT_TIMEZONE := "Asia/Shanghai"', 'TW_DEFAULT_TIMEZONE := "Europe/Warsaw"')
+    # OrangeFox's statusbar uses OF_* geometry, not the donor's TW_CUSTOM_* positions.
+    # Reserve space for rounded corners in the 1080-wide theme coordinate system.
+    if text.count('TW_THEME := portrait_hdpi') != 1 or 'OF_STATUS_' in text:
+        raise RuntimeError('Unexpected statusbar configuration in pinned device tree')
+    text = text.replace('TW_THEME := portrait_hdpi',
+                        'TW_THEME := portrait_hdpi\n'
+                        'OF_STATUS_H := 120\n'
+                        'OF_STATUS_INDENT_LEFT := 96\n'
+                        'OF_STATUS_INDENT_RIGHT := 96', 1)
     board.write_text(text)
     props = device / 'system.prop'
     text = props.read_text().replace('ro.crypto.metadata_init_delete_all_keys.enabled=true',

@@ -73,6 +73,8 @@ jobs:
           git -C /tmp/neo8-port-sources/recovery apply "$GITHUB_WORKSPACE/patches/fox16/neo8-post-decrypt-mtp.patch"
           git -C /tmp/neo8-port-sources/recovery apply --check "$GITHUB_WORKSPACE/patches/fox16/neo8-usb-switch.patch"
           git -C /tmp/neo8-port-sources/recovery apply "$GITHUB_WORKSPACE/patches/fox16/neo8-usb-switch.patch"
+          git -C /tmp/neo8-port-sources/recovery apply --check "$GITHUB_WORKSPACE/patches/fox16/neo8-polish-labels.patch"
+          git -C /tmp/neo8-port-sources/recovery apply "$GITHUB_WORKSPACE/patches/fox16/neo8-polish-labels.patch"
           git -C /tmp/neo8-port-sources/recovery diff --check
 
       - name: Test deferred storage initialization from the real startup path
