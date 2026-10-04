@@ -1,14 +1,13 @@
 --- a/partitionmanager.cpp
 +++ b/partitionmanager.cpp
-@@ -2312,6 +2312,30 @@
+@@ -2312,6 +2312,29 @@
  	return;
  }
  
-+static void Neo8_Refresh_MTP_After_Decrypt(TWPartition* dat) {
++static void Neo8_Refresh_MTP_After_Decrypt(bool storage_ready) {
 +#if defined(TW_NO_AUTO_DECRYPT) && defined(TW_HAS_MTP)
 +	if (!android::base::GetBoolProperty("twrp.recovery.refresh_mtp_after_decrypt", false) ||
-+		!dat || !dat->Is_Decrypted || !dat->Has_Data_Media || !dat->Is_Mounted() ||
-+		!TWFunc::Path_Exists(dat->Storage_Path) ||
++		!storage_ready ||
 +		DataManager::GetIntValue("tw_mtp_enabled") != 1 ||
 +		(DataManager::GetIntValue("fox_use_pass") == 1 && DataManager::GetIntValue("pass_open") != 1))
 +		return;
@@ -31,11 +30,13 @@
  void TWPartitionManager::Post_Decrypt(const string& Block_Device) {
  	TWPartition* dat = Find_Partition_By_Path("/data");
  
-@@ -2372,6 +2396,7 @@
+@@ -2372,6 +2395,9 @@
  		if (!dat->Bind_Mount(false))
  			LOGERR("Unable to bind mount /sdcard to %s\n", dat->Storage_Path.c_str());
  		}
-+		Neo8_Refresh_MTP_After_Decrypt(dat);
++		// Partition state is private: read it inside its friend manager.
++		Neo8_Refresh_MTP_After_Decrypt(dat->Is_Decrypted && dat->Has_Data_Media &&
++			dat->Is_Mounted() && TWFunc::Path_Exists(dat->Storage_Path));
  	} else
  		LOGERR("Unable to locate data partition.\n");
  }
