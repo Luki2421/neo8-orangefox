@@ -1,0 +1,234 @@
+--- a/Decrypt.cpp
++++ b/Decrypt.cpp
+@@ -344,52 +344,40 @@
+ /* C++ replacement for
+  * https://android.googlesource.com/platform/frameworks/base/+/android-8.0.0_r23/services/core/java/com/android/server/locksettings/SyntheticPasswordManager.java#764 */
+ bool Get_Password_Data(const std::string& spblob_path, const std::string& handle_str, password_data_struct *pwd) {
+-	std::string pwd_data;
+-	if (!Get_Spblob_Data(spblob_path, handle_str, ".pwd", "password", &pwd_data))
+-		return false;
+-	// output_hex(pwd_data.data(), pwd_data.size());printf("\n");
+-	const int* intptr = (const int*)pwd_data.data();
+-	pwd->password_type = *intptr;
+-	endianswap(&pwd->password_type);
+-	//printf("password type %i\n", pwd->password_type); // 2 was PIN, 1 for pattern, 2 also for password, -1 for default password
+-	const unsigned char* byteptr = (const unsigned char*)pwd_data.data() + sizeof(int);
+-	pwd->scryptN = *byteptr;
+-	byteptr++;
+-	pwd->scryptR = *byteptr;
+-	byteptr++;
+-	pwd->scryptP = *byteptr;
+-	byteptr++;
+-	intptr = (const int*)byteptr;
+-	pwd->salt_len = *intptr;
+-	endianswap(&pwd->salt_len);
+-	if (pwd->salt_len != 0) {
+-		pwd->salt = malloc(pwd->salt_len);
+-		if (!pwd->salt) {
+-			printf("Get_Password_Data malloc salt\n");
++	*pwd = {};
++	std::string data;
++	if (!Get_Spblob_Data(spblob_path, handle_str, ".pwd", "password", &data) || data.size() < 15)
++		return false;
++	auto read32 = [&data](size_t offset) -> uint32_t {
++		const auto* p = reinterpret_cast<const unsigned char*>(data.data() + offset);
++		return (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) | (uint32_t(p[2]) << 8) | p[3];
++	};
++	const uint32_t salt_len = read32(7);
++	if (salt_len == 0 || salt_len > data.size() - 15 || salt_len > INT32_MAX)
++		return false;
++	const size_t handle_offset = 11 + salt_len;
++	const uint32_t handle_len = read32(handle_offset);
++	if (handle_len > data.size() - handle_offset - 4 || handle_len > INT32_MAX)
++		return false;
++	pwd->password_type = static_cast<int32_t>(read32(0));
++	pwd->scryptN = data[4];
++	pwd->scryptR = data[5];
++	pwd->scryptP = data[6];
++	pwd->salt = malloc(salt_len);
++	if (!pwd->salt)
++		return false;
++	pwd->salt_len = salt_len;
++	memcpy(pwd->salt, data.data() + 11, salt_len);
++	if (handle_len > 0) {
++		pwd->password_handle = malloc(handle_len);
++		if (!pwd->password_handle) {
++			free(pwd->salt);
++			pwd->salt = nullptr;
+ 			return false;
+ 		}
+-		memcpy(pwd->salt, intptr + 1, pwd->salt_len);
+-		intptr++;
+-		byteptr = (const unsigned char*)intptr;
+-		byteptr += pwd->salt_len;
+-	} else {
+-		printf("Get_Password_Data salt_len is 0\n");
+-		return false;
+-	}
+-	intptr = (const int*)byteptr;
+-	pwd->handle_len = *intptr;
+-	endianswap(&pwd->handle_len);
+-	if (pwd->handle_len != 0) {
+-		pwd->password_handle = malloc(pwd->handle_len);
+-		if (!pwd->password_handle) {
+-			printf("Get_Password_Data malloc password_handle\n");
+-			return false;
+-		}
+-		memcpy(pwd->password_handle, intptr + 1, pwd->handle_len);
+-	} else {
+-		printf("Get_Password_Data handle_len is 0\n");
+-		// Not an error if using weaver
+-	}
++		memcpy(pwd->password_handle, data.data() + handle_offset + 4, handle_len);
++	}
++	pwd->handle_len = handle_len;
+ 	return true;
+ }
+ 
+@@ -515,11 +503,13 @@
+ 		return found_file;
+ 	} else {
+ 		// output_hex(weaver_data.data(), weaver_data.size());printf("\n");
++		if (weaver_data.size() != 5 || weaver_data[0] != 1)
++			return false;
+ 		const unsigned char* byteptr = (const unsigned char*)weaver_data.data();
+-		wd->version = *byteptr;
+-		// printf("weaver version %i\n", wd->version);
+-		const int* intptr = (const int*)weaver_data.data() + sizeof(unsigned char);
+-		wd->slot = *intptr;
++		wd->version = byteptr[0];
++		wd->slot = (static_cast<uint32_t>(byteptr[1]) << 24) |
++			(static_cast<uint32_t>(byteptr[2]) << 16) |
++			(static_cast<uint32_t>(byteptr[3]) << 8) | byteptr[4];
+ 		//endianswap(&wd->slot); not needed
+ 		// printf("weaver slot %i\n", wd->slot);
+ 	}
+@@ -1015,6 +1005,48 @@
+ 
+ // /* Decrypt_User_Synth_Pass is the TWRP C++ equivalent to spBasedDoVerifyCredential
+ //  * https://android.googlesource.com/platform/frameworks/base/+/android-8.0.0_r23/services/core/java/com/android/server/locksettings/LockSettingsService.java#1998 */
++// Android 16: an empty LSKF has an active protector but no PasswordData file.
++// Missing DE storage, an unreadable file, or an invalid handle is not proof of this.
++static bool Neo8_Default_Protector(const std::string& directory, const std::string& handle) {
++	if (handle.empty() || handle.size() > 16 ||
++			handle.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos ||
++			handle.find_first_not_of('0') == std::string::npos)
++		return false;
++	struct stat st = {};
++	if (lstat(directory.c_str(), &st) != 0 || !S_ISDIR(st.st_mode))
++		return false;
++	std::vector<std::string> prefixes = {directory + handle, directory + "0" + handle,
++		directory + "00" + handle};
++	std::string active;
++	for (const auto& prefix : prefixes) {
++		if (lstat((prefix + ".pwd").c_str(), &st) == 0 || errno != ENOENT)
++			return false;
++		if (lstat((prefix + ".spblob").c_str(), &st) == 0) {
++			if (!active.empty() || !S_ISREG(st.st_mode))
++				return false;
++			active = prefix;
++		} else if (errno != ENOENT) {
++			return false;
++		}
++	}
++	if (active.empty())
++		return false;
++	std::string blob;
++	if (!android::base::ReadFileToString(active + ".spblob", &blob) || blob.size() < 30 ||
++			static_cast<unsigned char>(blob[0]) < 1 || static_cast<unsigned char>(blob[0]) > 3 ||
++			blob[1] != 0)
++		return false;
++	// Require the matching protector's auxiliary metadata; never select another handle.
++	std::string auxiliary;
++	if (lstat((active + ".weaver").c_str(), &st) == 0) {
++		return S_ISREG(st.st_mode) && android::base::ReadFileToString(active + ".weaver", &auxiliary) &&
++			auxiliary.size() == 5 && auxiliary[0] == 1;
++	}
++	if (errno != ENOENT || lstat((active + ".secdis").c_str(), &st) != 0 || !S_ISREG(st.st_mode))
++		return false;
++	return android::base::ReadFileToString(active + ".secdis", &auxiliary) && auxiliary.size() == 16384;
++}
++
+ bool Decrypt_User_Synth_Pass(const userid_t user_id, const std::string& Password) {
+ 	printf("Attempting to decrypt user's synthetic password\n");
+ 	bool retval = false;
+@@ -1047,7 +1079,7 @@
+ 	// printf("pwd N %i R %i P %i salt ", pwd.scryptN, pwd.scryptR, pwd.scryptP); output_hex((char*)pwd.salt, pwd.salt_len); printf("\n");
+ 	// printf("Password: '%s'\n", Password.c_str());
+ 	// The password token is the password scrypted with the parameters from the password data file
+-	unsigned char password_token[PASSWORD_TOKEN_SIZE];
++	unsigned char password_token[PASSWORD_TOKEN_SIZE] = {};
+ 	if (Password != "!") {
+ 		if (!Get_Password_Data(spblob_path, handle_str, &pwd)) {
+ 			printf("Failed to Get_Password_Data\n");
+@@ -1059,7 +1091,11 @@
+ 			return Free_Return(retval, weaver_key, &pwd);
+ 		}
+ 	} else {
+-		android::keystore::copySqliteDb(); // early copy db for keystore
++		if (!Neo8_Default_Protector(spblob_path, handle_str)) {
++			printf("Default credential protector is not verified; refusing automatic unlock\n");
++			return Free_Return(false, weaver_key, &pwd);
++		}
++		// unwrapSyntheticPasswordBlob performs the guarded SQLite/WAL snapshot.
+ 		std::string defpassword = "default-password";
+ 		memcpy(password_token, defpassword.data(), defpassword.length());
+ 	}
+@@ -1330,11 +1366,17 @@
+ 		KeystoreInfo keystore_info;
+ 		std::string handle_str = keystore_info.getHandle(user_id);
+ 		printf("Handle is '%s'\n", handle_str.c_str());
+-		password_data_struct pwd;
++		if (Neo8_Default_Protector(spblob_path, handle_str)) {
++			printf("Active protector has no lockscreen credential\n");
++			return 0;
++		}
++		password_data_struct pwd = {};
+ 			if (!Get_Password_Data(spblob_path, handle_str, &pwd)) {
+ 				printf("Failed to Get_Password_Data\n");
+ 				goto fallback_gatekeeper;
+ 			}
++			free(pwd.salt);
++			free(pwd.password_handle);
+ 			printf("raw Android password type: %i\n", pwd.password_type);
+ 			// In Android type 1 is pattern
+ 		// In Android <11 type 2 is PIN or password
+@@ -1352,8 +1394,8 @@
+ 			printf("password type: PIN\n");
+ 			return 3; // In TWRP this means PIN
+ 		}
+-		printf("using default password\n");
+-		return 0; // We'll try the default password
++		printf("Unsupported password metadata; not an empty credential\n");
++		return -1;
+ 	}
+ 
+ fallback_gatekeeper:
+@@ -1388,7 +1430,7 @@
+ 	}
+ 	printf("Unable to locate gatekeeper password file for user '%i'\n", user_id);
+ 	filename = "";
+-	return 0;
++	return -1;
+ }
+ 
+ extern "C" bool Decrypt_User(const userid_t user_id, const std::string& Password) {
+@@ -1413,14 +1455,11 @@
+ 	}
+ 
+ 	if (Default_Password) {
+-		if (!Decrypt_CE_storage(user_id, "!")) {
+-			if (Decrypt_CE_storage(user_id, Password)) {
+-			return true;
+-		}
+-		printf("CE storage failed, falling back to synthetic password\n");
++		if (Get_Password_Type(user_id, filename) != 0) {
++			printf("No verified empty credential; refusing default unlock\n");
++			return false;
++		}
+ 		return Decrypt_User_Synth_Pass(user_id, Password);
+-		}
+-		return true;
+ 	}
+ 	if (stat("/data/system_de/0/spblob", &st) == 0) {
+ 		printf("Using synthetic password method directly for credential-protected user\n");

@@ -95,6 +95,8 @@ jobs:
           python3 tests/test_metadata_environment.py --recovery-root "$ANDROID_ROOT/bootable/recovery"
           python3 tests/test_storage_init.py --recovery-root "$ANDROID_ROOT/bootable/recovery"
           python3 tests/test_usb_switch.py --recovery-root "$ANDROID_ROOT/bootable/recovery"
+          python3 tests/test_no_lock.py --vold-root "$ANDROID_ROOT/system/vold"
+          python3 tests/test_manual_prepare.py --recovery-root "$ANDROID_ROOT/bootable/recovery"
           python3 tests/test_soong_flags.py --recovery-root "$ANDROID_ROOT/bootable/recovery" --vendor-root "$ANDROID_ROOT/vendor/twrp"
 
       # A terminated runner cannot execute even an always() upload at job end.

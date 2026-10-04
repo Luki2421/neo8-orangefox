@@ -69,7 +69,7 @@ def main():
     recovery = android / 'bootable/recovery'
     for name in ('neo8-manual-menu.patch', 'neo8-runtime.patch', 'neo8-storage-init.patch',
                  'neo8-auto-startup.patch', 'neo8-post-decrypt-mtp.patch', 'neo8-usb-switch.patch',
-                 'neo8-polish-labels.patch'):
+                 'neo8-polish-labels.patch', 'neo8-no-lock-recovery.patch'):
         patch = PROJECT / 'patches/fox16' / name
         subprocess.run(['git', 'apply', '--check', str(patch)], cwd=recovery, check=True)
         subprocess.run(['git', 'apply', str(patch)], cwd=recovery, check=True)

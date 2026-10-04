@@ -1,0 +1,66 @@
+--- a/gui/action.cpp
++++ b/gui/action.cpp
+@@ -2095,7 +2095,7 @@
+ 		status = 0;
+ 	} else {
+ #ifdef TW_NO_AUTO_DECRYPT
+-		// Startup or manual preparation. Never submit a credential or default password here.
++		// Prepare DE metadata before selecting credential or verified no-lock unlock.
+ 		TWPartition* data = PartitionManager.Find_Partition_By_Path("/data");
+ 		DataManager::SetValue(TW_CRYPTO_PWTYPE, -1);
+ 		DataManager::SetValue("tw_crypto_pwtype_0", -1);
+@@ -2110,6 +2110,17 @@
+ 			if (data->Is_Mounted() && DataManager::GetIntValue(TW_IS_FBE) == 1 &&
+ 					(type == 1 || type == 2 || type == 3)) {
+ 				status = 0;
++			} else if (data->Is_Mounted() && DataManager::GetIntValue(TW_IS_FBE) == 1 && type == 0) {
++				// vold revalidates the active empty-credential protector before unwrapping it.
++				if (PartitionManager.Decrypt_Device("!", 0) == 0 &&
++						DataManager::GetIntValue(TW_IS_DECRYPTED) == 1 &&
++						TWFunc::Path_Exists("/data/media/0")) {
++					DataManager::SetValue(TW_IS_ENCRYPTED, 0);
++					DataManager::SetValue("of_decrypt_from_menu", 0);
++					status = 0;
++				} else {
++					gui_err("unable_to_decrypt=Unable to decrypt with default password.");
++				}
+ 			} else {
+ 				gui_err("neo8_prepare_failed=Unable to prepare credential metadata. No password was submitted.");
+ 			}
+--- a/gui/theme/portrait_hdpi/pages/mount.xml
++++ b/gui/theme/portrait_hdpi/pages/mount.xml
+@@ -237,12 +237,19 @@
+ 			<action>
+ 				<condition var1="tw_operation_state" var2="1"/>
+ 				<condition var1="tw_operation_status" var2="0"/>
++				<condition var1="tw_is_encrypted" var2="1"/>
+ 				<action function="page">decrypt</action>
+ 			</action>
+ 			<action>
+ 				<condition var1="tw_operation_state" var2="1"/>
+ 				<condition var1="tw_operation_status" op="!=" var2="0"/>
+ 				<action function="page">fox_other_additions</action>
++			</action>
++			<action>
++				<condition var1="tw_operation_state" var2="1"/>
++				<condition var1="tw_operation_status" var2="0"/>
++				<condition var1="tw_is_encrypted" var2="0"/>
++				<action function="page">main</action>
+ 			</action>
+ 		</page>
+ 
+--- a/partition.cpp
++++ b/partition.cpp
+@@ -852,8 +852,12 @@
+ 		string filename;
+ 		int pwd_type = android::keystore::Get_Password_Type(0, filename);
+ 		if (pwd_type < 0) {
++#ifdef TW_NO_AUTO_DECRYPT
++			LOGERR("Credential metadata is unavailable; keeping password type unknown\n");
++#else
+ 			LOGERR("This build does not have synthetic password decrypt support\n");
+ 			pwd_type = 0;  // default password
++#endif
+ 		}
+ 		PartitionManager.Parse_Users();  // after load_all_de_keys() to parse_users
+ 		std::vector<users_struct>::iterator iter;

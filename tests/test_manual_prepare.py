@@ -133,6 +133,8 @@ using std::string;
 #define TW_NO_AUTO_DECRYPT
 #define TW_CRYPTO_PWTYPE "tw_crypto_pwtype"
 #define TW_IS_FBE "tw_is_fbe"
+#define TW_IS_DECRYPTED "tw_is_decrypted"
+#define TW_IS_ENCRYPTED "tw_is_encrypted"
 struct DataManager {
     static std::map<string, int> vars;
     static void SetValue(string k, int v) { vars[k]=v; }
@@ -148,6 +150,13 @@ struct TWPartition {
 struct Manager {
     bool present=true;
     int calls=0, password_type=3, fbe=1;
+    int unlock_calls=0, unlock_result=0, decrypted=1;
+    int Decrypt_Device(const char* credential, int user) {
+        assert(std::string(credential) == "!" && user == 0);
+        ++unlock_calls;
+        DataManager::vars[TW_IS_DECRYPTED]=decrypted;
+        return unlock_result;
+    }
     TWPartition* Find_Partition_By_Path(string) { return present ? &data : nullptr; }
     void Decrypt_Data() {
         calls++;
@@ -155,6 +164,10 @@ struct Manager {
         DataManager::vars[TW_IS_FBE]=fbe;
     }
 } PartitionManager;
+static bool media_exists=true;
+struct TWFunc { static bool Path_Exists(const char* path) {
+    assert(std::string(path) == "/data/media/0"); return media_exists;
+}};
 static int errors=0;
 void gui_err(const char*) { errors++; }
 struct GUIAction {
@@ -173,6 +186,8 @@ void reset() {
     PartitionManager=Manager{};
     data=TWPartition{};
     errors=0;
+    media_exists=true;
+    DataManager::vars[TW_IS_ENCRYPTED]=1;
 }
 int main() {
     for (int type: {1,2,3}) {
@@ -180,18 +195,32 @@ int main() {
         GUIAction action; action.neo8preparedecrypt("");
         assert(action.result==0 && action.starts==1 && PartitionManager.calls==1);
         assert(DataManager::GetIntValue(TW_CRYPTO_PWTYPE)==type && errors==0);
+        assert(PartitionManager.unlock_calls==0);
     }
     for (int scenario=0; scenario<6; scenario++) {
         reset();
         if (scenario==0) PartitionManager.present=false;
         if (scenario==1) data.Key_Directory="";
         if (scenario==2) PartitionManager.password_type=-1;
-        if (scenario==3) PartitionManager.password_type=0;
+        if (scenario==3) PartitionManager.password_type=9;
         if (scenario==4) data.mounted=false;
         if (scenario==5) PartitionManager.fbe=0;
         GUIAction action; action.neo8preparedecrypt("");
         assert(action.result==1 && errors==1);
         if (scenario<2) assert(PartitionManager.calls==0);
+        assert(PartitionManager.unlock_calls==0);
+    }
+    for (int scenario=0; scenario<6; ++scenario) {
+        reset(); PartitionManager.password_type=0;
+        if (scenario==1) PartitionManager.unlock_result=-1;
+        if (scenario==2) PartitionManager.decrypted=0;
+        if (scenario==3) media_exists=false;
+        if (scenario==4) data.mounted=false;
+        if (scenario==5) PartitionManager.fbe=0;
+        GUIAction action; action.neo8preparedecrypt("");
+        assert(action.result==(scenario==0 ? 0 : 1));
+        assert(PartitionManager.unlock_calls==(scenario<4 ? 1 : 0));
+        assert(DataManager::vars[TW_IS_ENCRYPTED]==(scenario==0 ? 0 : 1));
     }
     reset(); GUIAction simulated; simulated.simulate=true;
     simulated.neo8preparedecrypt("");
@@ -216,7 +245,13 @@ def main():
         subprocess.run(['g++', '-std=c++17', '-Wall', '-Wextra', '-Wno-unused-parameter',
                         str(source), '-o', str(binary)], check=True)
         subprocess.run([str(binary)], check=True)
-    print('PASS: 3 credential types, 6 preparation failures and simulation. No credential submission API is available to this handler.')
+    page = ET.parse(args.recovery_root / 'gui/theme/portrait_hdpi/pages/mount.xml').find(".//page[@name='neo8_prepare_decrypt']")
+    for target, encrypted in [('main', '0'), ('decrypt', '1')]:
+        actions = [a for a in page.findall('action') if any(c.get('function') == 'page' and c.text == target for c in a.findall('action'))]
+        assert len(actions) == 1
+        conditions = {c.get('var1'): c.get('var2') for c in actions[0].findall('condition')}
+        assert conditions['tw_is_encrypted'] == encrypted and conditions['tw_operation_status'] == '0'
+    print('PASS: PIN/pattern/password never auto-submit; verified type 0 unlocks only mounted FBE, requires CE and media success, and returns directly to main.')
     print('PASS: automatic prompt eligibility, welcome/password guards, and no repeated prompt after returning to main.')
     print('PASS: no prompt during startup theme loading; one prompt after completion; reuse mounted metadata on retry.')
 

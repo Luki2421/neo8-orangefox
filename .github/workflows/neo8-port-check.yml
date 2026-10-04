@@ -75,6 +75,8 @@ jobs:
           git -C /tmp/neo8-port-sources/recovery apply "$GITHUB_WORKSPACE/patches/fox16/neo8-usb-switch.patch"
           git -C /tmp/neo8-port-sources/recovery apply --check "$GITHUB_WORKSPACE/patches/fox16/neo8-polish-labels.patch"
           git -C /tmp/neo8-port-sources/recovery apply "$GITHUB_WORKSPACE/patches/fox16/neo8-polish-labels.patch"
+          git -C /tmp/neo8-port-sources/recovery apply --check "$GITHUB_WORKSPACE/patches/fox16/neo8-no-lock-recovery.patch"
+          git -C /tmp/neo8-port-sources/recovery apply "$GITHUB_WORKSPACE/patches/fox16/neo8-no-lock-recovery.patch"
           git -C /tmp/neo8-port-sources/recovery diff --check
 
       - name: Test deferred storage initialization from the real startup path
@@ -109,6 +111,9 @@ jobs:
 
       - name: Test ordered USB mode switching
         run: python3 tests/test_usb_switch.py --recovery-root /tmp/neo8-port-sources/recovery
+
+      - name: Test empty-credential protector detection
+        run: python3 tests/test_no_lock.py --vold-root /tmp/neo8-port-sources/vold
 
       - name: Display scope of this check
         if: always()
