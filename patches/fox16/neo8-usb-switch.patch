@@ -1,0 +1,104 @@
+--- a/gui/action.cpp
++++ b/gui/action.cpp
+@@ -38,6 +38,7 @@
+ #include <private/android_filesystem_config.h>
+ #include <android-base/properties.h>
+ 
++#include <chrono>
+ #include <string>
+ #include <sstream>
+ #include <fstream>
+@@ -3046,16 +3047,57 @@
+   return 0;
+ }
+ 
++static bool Neo8_Switch_USB_Mode(const char* mode) {
++	using namespace android::base;
++	const bool ordered = GetBoolProperty("twrp.recovery.ordered_usb_switch", false);
++	auto wait = [](const char* name, const char* value) {
++		if (android::base::WaitForProperty(name, value, std::chrono::seconds(3)))
++			return true;
++		LOGERR("USB switch timed out: %s expected %s, got %s\n", name, value,
++			android::base::GetProperty(name, "<unset>").c_str());
++		return false;
++	};
++	if (!SetProperty("sys.usb.config", "none"))
++		return false;
++	// Property writes acknowledge the request, not completion of init actions.
++	// Stop and reap the previous FunctionFS owner before starting the next one.
++	if (ordered && (!wait("sys.usb.state", "none") ||
++			!wait("init.svc.fastbootd", "stopped") ||
++			!wait("init.svc.adbd", "stopped") ||
++			!wait("sys.usb.ffs.ready", "0")))
++		return false;
++	if (!SetProperty("sys.usb.config", mode))
++		return false;
++	if (ordered && (!wait(strcmp(mode, "adb") == 0 ? "init.svc.adbd" : "init.svc.fastbootd", "running") ||
++			!wait("sys.usb.ffs.ready", "1") || !wait("sys.usb.state", mode)))
++		return false;
++	return true;
++}
++
+ int GUIAction::enableadb(std::string arg __unused) {
+-	android::base::SetProperty("sys.usb.config", "none");
+-	android::base::SetProperty("sys.usb.config", "adb");
+-	return 0;
++	operation_start("ADB");
++	const bool success = simulate || Neo8_Switch_USB_Mode("adb");
++	if (success) {
++		DataManager::SetValue("tw_enable_adb", 1);
++		DataManager::SetValue("tw_enable_fastboot", 0);
++	} else {
++		gui_err("neo8_usb_switch_failed=USB mode switch failed. Try again or reboot recovery.");
++	}
++	operation_end(success ? 0 : 1);
++	return success ? 0 : 1;
+ }
+ 
+ int GUIAction::enablefastboot(std::string arg __unused) {
+-	android::base::SetProperty("sys.usb.config", "none");
+-	android::base::SetProperty("sys.usb.config", "fastboot");
+-	return 0;
++	operation_start("Fastboot");
++	const bool success = simulate || Neo8_Switch_USB_Mode("fastboot");
++	if (success) {
++		DataManager::SetValue("tw_enable_fastboot", 1);
++		DataManager::SetValue("tw_enable_adb", 0);
++	} else {
++		gui_err("neo8_usb_switch_failed=USB mode switch failed. Try again or reboot recovery.");
++	}
++	operation_end(success ? 0 : 1);
++	return success ? 0 : 1;
+ }
+ 
+ 
+--- a/gui/theme/portrait_hdpi/pages/main.xml
++++ b/gui/theme/portrait_hdpi/pages/main.xml
+@@ -240,8 +240,6 @@
+ 				<placement x="%btn_raised_right_x%" y="%row_btn1_y%" placement="1"/>
+ 				<text>{@enable_fastboot}</text>
+ 				<action function="enablefastboot"/>
+-				<action function="set">tw_enable_fastboot=1</action>
+-				<action function="set">tw_enable_adb=0</action>
+ 			</button>
+ 
+ 			<button style="btn_raised_hl">
+@@ -249,8 +247,6 @@
+ 				<placement x="%btn_raised_right_x%" y="%row_btn1_y%" placement="1"/>
+ 				<text>{@enable_adb}</text>
+ 				<action function="enableadb"/>
+-				<action function="set">tw_enable_adb=1</action>
+-				<action function="set">tw_enable_fastboot=0</action>
+ 			</button>
+ 		</page>
+ 	</pages>
+--- a/gui/theme/common/languages/en.xml
++++ b/gui/theme/common/languages/en.xml
+@@ -1268,5 +1268,6 @@
+ 		<string name="partitions_management">Partitions Management</string>
+ 		
+ 		<string name="neo8_prepare_failed">Unable to prepare credential metadata. No password was submitted.</string>
+-	</resources>
++		<string name="neo8_usb_switch_failed">USB mode switch failed. Try again or reboot recovery.</string>
++</resources>
+ </language>

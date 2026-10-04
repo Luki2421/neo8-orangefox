@@ -94,6 +94,7 @@ jobs:
           python3 scripts/prepare_neo8_build.py --android-root "$ANDROID_ROOT" --neo8-root /tmp/neo8-device-source
           python3 tests/test_metadata_environment.py --recovery-root "$ANDROID_ROOT/bootable/recovery"
           python3 tests/test_storage_init.py --recovery-root "$ANDROID_ROOT/bootable/recovery"
+          python3 tests/test_usb_switch.py --recovery-root "$ANDROID_ROOT/bootable/recovery"
           python3 tests/test_soong_flags.py --recovery-root "$ANDROID_ROOT/bootable/recovery" --vendor-root "$ANDROID_ROOT/vendor/twrp"
 
       # A terminated runner cannot execute even an always() upload at job end.

@@ -71,6 +71,8 @@ jobs:
           git -C /tmp/neo8-port-sources/recovery apply "$GITHUB_WORKSPACE/patches/fox16/neo8-auto-startup.patch"
           git -C /tmp/neo8-port-sources/recovery apply --check "$GITHUB_WORKSPACE/patches/fox16/neo8-post-decrypt-mtp.patch"
           git -C /tmp/neo8-port-sources/recovery apply "$GITHUB_WORKSPACE/patches/fox16/neo8-post-decrypt-mtp.patch"
+          git -C /tmp/neo8-port-sources/recovery apply --check "$GITHUB_WORKSPACE/patches/fox16/neo8-usb-switch.patch"
+          git -C /tmp/neo8-port-sources/recovery apply "$GITHUB_WORKSPACE/patches/fox16/neo8-usb-switch.patch"
           git -C /tmp/neo8-port-sources/recovery diff --check
 
       - name: Test deferred storage initialization from the real startup path
@@ -102,6 +104,9 @@ jobs:
 
       - name: Test MTP after decryption
         run: python3 tests/test_post_decrypt_mtp.py --recovery-root /tmp/neo8-port-sources/recovery
+
+      - name: Test ordered USB mode switching
+        run: python3 tests/test_usb_switch.py --recovery-root /tmp/neo8-port-sources/recovery
 
       - name: Display scope of this check
         if: always()

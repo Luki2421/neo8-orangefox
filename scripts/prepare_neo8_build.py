@@ -68,7 +68,7 @@ def main():
         raise RuntimeError('Refusing to overwrite an existing device tree')
     recovery = android / 'bootable/recovery'
     for name in ('neo8-manual-menu.patch', 'neo8-runtime.patch', 'neo8-storage-init.patch',
-                 'neo8-auto-startup.patch', 'neo8-post-decrypt-mtp.patch'):
+                 'neo8-auto-startup.patch', 'neo8-post-decrypt-mtp.patch', 'neo8-usb-switch.patch'):
         patch = PROJECT / 'patches/fox16' / name
         subprocess.run(['git', 'apply', '--check', str(patch)], cwd=recovery, check=True)
         subprocess.run(['git', 'apply', str(patch)], cwd=recovery, check=True)
@@ -91,7 +91,8 @@ def main():
     props.write_text(text)
     with props.open('a') as stream:
         stream.write('\n# Start configured MTP after the media path is decrypted.\n'
-                     'twrp.recovery.refresh_mtp_after_decrypt=true\n')
+                     'twrp.recovery.refresh_mtp_after_decrypt=true\n'
+                     'twrp.recovery.ordered_usb_switch=true\n')
     rc = device / 'recovery/root/init.recovery.qcom.rc'
     lines = rc.read_text().splitlines()
     # Bound otherwise indefinite waits; do not change service startup order here.
