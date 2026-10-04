@@ -15,7 +15,7 @@ from neo8_service_config import (configure_service_files, configure_fastboot_man
                                  configure_omapi_manifest, configure_qseecomd,
                                  remove_duplicate_device_fragments, preserve_ssg_ta_files,
                                  TA_RECOVERY_PATH)
-from inspect_recovery import inspect_service_config, inspect_ssg_ta_files
+from inspect_recovery import inspect_service_config, inspect_ssg_ta_files, inspect_fastboot_service
 
 class ServiceConfigTests(unittest.TestCase):
     def test_identity_restore_allowlist_and_failures(self):
@@ -206,6 +206,11 @@ else:
                         '    vintf_fragments: ["android.hardware.fastboot-service.example.xml"],\n'
                         '    recovery: true,\n'
                         '    srcs: ["Fastboot.cpp", "main.cpp"],\n}\n')
+        (path.parent / 'android.hardware.fastboot-service.example_recovery.rc').write_text(
+            'service vendor.fastboot-default /system/bin/hw/android.hardware.fastboot-service.example_recovery\n'
+            '    class hal\n    seclabel u:r:hal_fastboot_default:s0\n'
+            '    user system\n    group system\n'
+            '    interface aidl android.hardware.fastboot.IFastboot/default\n')
         return path, vendor
 
     def ta_fixture(self):
@@ -374,12 +379,42 @@ else:
     def test_soong_fragment_source_fixed_without_removing_service(self):
         path, vendor = self.fastboot_fixture()
         original_vendor = vendor.read_bytes()
+        rc = path.parent / 'android.hardware.fastboot-service.example_recovery.rc'
+        original_rc = rc.read_text()
         configure_fastboot_manifest(self.device, self.root)
+        self.assertEqual(rc.read_text(), original_rc.replace('u:r:hal_fastboot_default:s0', 'u:r:recovery:s0'))
         self.assertNotIn('vintf_fragments:', path.read_text())
         self.assertIn('init_rc:', path.read_text())
         self.assertIn('recovery: true,', path.read_text())
         self.assertIn('"Fastboot.cpp", "main.cpp"', path.read_text())
         self.assertEqual(vendor.read_bytes(), original_vendor)
+
+    def test_packaged_fastboot_service(self):
+        path, _ = self.fastboot_fixture()
+        configure_fastboot_manifest(self.device, self.root)
+        data = (path.parent / 'android.hardware.fastboot-service.example_recovery.rc').read_bytes()
+        name = 'system/etc/init/android.hardware.fastboot-service.example_recovery.rc'
+        entry = {'mode': stat.S_IFREG | 0o644, 'data': data}
+        self.assertTrue(inspect_fastboot_service({name: entry})['unique_service'])
+        invalid = [
+            {},
+            {name: entry, 'vendor/etc/init/duplicate.rc': entry},
+            {name: dict(entry, data=data + b'\n' + data)},
+            {name: dict(entry, data=data.replace(b'u:r:recovery:s0', b'u:r:hal_fastboot_default:s0'))},
+            {name: dict(entry, data=data.replace(b'user system', b'user root'))},
+        ]
+        for entries in invalid:
+            with self.subTest(entries=entries), self.assertRaises(ValueError):
+                inspect_fastboot_service(entries)
+
+    def test_fastboot_unexpected_rc_does_not_change_build_or_service(self):
+        path, _ = self.fastboot_fixture()
+        rc = path.parent / 'android.hardware.fastboot-service.example_recovery.rc'
+        rc.write_text(rc.read_text().replace('    user system', '    user root'))
+        before = path.read_bytes(), rc.read_bytes()
+        with self.assertRaisesRegex(ValueError, 'Unexpected recovery fastboot init service'):
+            configure_fastboot_manifest(self.device, self.root)
+        self.assertEqual((path.read_bytes(), rc.read_bytes()), before)
 
     def test_soong_fix_requires_vendor_declaration(self):
         path, vendor = self.fastboot_fixture()

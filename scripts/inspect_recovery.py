@@ -104,6 +104,37 @@ def inspect_service_config(entries):
             'device_manifests_checked': sorted(visited),
             'unique_device_aidl_instances': len(instances)}
 
+def inspect_fastboot_service(entries):
+    """Check the installed rc, including duplicate definitions across files."""
+    services = []
+    for path, entry in sorted(entries.items()):
+        if not path.endswith('.rc') or not stat.S_ISREG(entry['mode']):
+            continue
+        current = None
+        for line in entry['data'].decode('utf-8').splitlines():
+            words = line.split('#', 1)[0].split()
+            if not words:
+                continue
+            if not line[0].isspace():
+                current = None
+                if words[:2] == ['service', 'vendor.fastboot-default']:
+                    current = [words]
+                    services.append((path, current))
+            elif current is not None:
+                current.append(words)
+    if len(services) != 1:
+        raise ValueError('Expected exactly one recovery fastboot HAL init service')
+    path, lines = services[0]
+    expected = [
+        ['service', 'vendor.fastboot-default', '/system/bin/hw/android.hardware.fastboot-service.example_recovery'],
+        ['class', 'hal'], ['seclabel', 'u:r:recovery:s0'],
+        ['user', 'system'], ['group', 'system'],
+        ['interface', 'aidl', 'android.hardware.fastboot.IFastboot/default'],
+    ]
+    if lines != expected:
+        raise ValueError('Unexpected packaged recovery fastboot HAL init service: ' + path)
+    return {'init_path': path, 'domain': 'u:r:recovery:s0', 'unique_service': True}
+
 def inspect_ssg_ta_files(entries):
     """Verify TA copies and their search path in the actual packaged ramdisk."""
     _, config = resolve(entries, 'vendor/etc/ssg/ta_config.json')
@@ -142,6 +173,7 @@ def inspect(path):
     if not executable or not stat.S_ISREG(executable['mode']) or not executable['mode'] & 0o111:
         raise ValueError('Missing executable system/bin/recovery')
     service_config = inspect_service_config(entries)
+    fastboot_service = inspect_fastboot_service(entries)
     ssg_ta_files = inspect_ssg_ta_files(entries)
     needed = elf_dependencies(executable['data'])
     candidates = ['system/lib64', 'system/lib64/bootstrap', 'lib64',
@@ -168,6 +200,7 @@ def inspect(path):
     return {'image_sha256': hashlib.sha256(image).hexdigest(), 'image_bytes': len(image),
             'partition_bytes': PARTITION_SIZE, 'header_version': 4, 'kernel_included': False,
             'service_configuration': service_config,
+            'fastboot_hal_service': fastboot_service,
             'ssg_ta_files': ssg_ta_files,
             'ramdisk_entries': len(entries), 'recovery_executable': name,
             'recovery_direct_libraries': libraries,

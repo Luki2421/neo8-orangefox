@@ -23,7 +23,7 @@ permissions:
 
 concurrency:
   group: neo8-full-build-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.ref == 'refs/heads/fix/neo8-build-integration' }}
 
 jobs:
   recovery-build:

@@ -164,11 +164,27 @@ def configure_fastboot_manifest(device, android):
     ])
     if source.count(original) != 1:
         raise ValueError('Unexpected recovery fastboot Soong module')
+    rc_path = path.parent / 'android.hardware.fastboot-service.example_recovery.rc'
+    rc_source = rc_path.read_text()
+    expected_rc = ('service vendor.fastboot-default /system/bin/hw/android.hardware.fastboot-service.example_recovery\n'
+                   '    class hal\n'
+                   '    seclabel u:r:hal_fastboot_default:s0\n'
+                   '    user system\n'
+                   '    group system\n'
+                   '    interface aidl android.hardware.fastboot.IFastboot/default\n')
+    if rc_source.rstrip() != expected_rc.rstrip():
+        raise ValueError('Unexpected recovery fastboot init service')
     replacement = original.replace(
         '    vintf_fragments: ["android.hardware.fastboot-service.example.xml"],',
         '    // Neo8 installs the device VINTF fragment in vendor, not system.')
     path.write_text(source.replace(original, replacement, 1))
+    # Neo8's recovery service manager runs in the recovery domain. Use the
+    # same explicit domain as its other ramdisk HALs for this recovery-only HAL.
+    rc_path.write_text(rc_source.replace('seclabel u:r:hal_fastboot_default:s0',
+                                        'seclabel u:r:recovery:s0', 1))
     return {'soong_source_sha256': hashlib.sha256(source.encode()).hexdigest(),
+            'init_source_sha256': hashlib.sha256(rc_source.encode()).hexdigest(),
+            'recovery_hal_domain': 'u:r:recovery:s0',
             'framework_fragment_generation_disabled': True,
             'vendor_fragment': str(vendor.relative_to(device))}
 
