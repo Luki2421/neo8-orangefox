@@ -94,6 +94,11 @@ def main():
                         'OF_STATUS_H := 120\n'
                         'OF_STATUS_INDENT_LEFT := 96\n'
                         'OF_STATUS_INDENT_RIGHT := 96', 1)
+    # The pinned Neo8 kernel exposes cpu-0-0-0 here; zone0 is shell_front.
+    # data.cpp is built by Android.mk, which exports this path to its C++ flags.
+    if 'TW_CUSTOM_CPU_TEMP_PATH' in text or 'TW_NO_CPU_TEMP' in text:
+        raise RuntimeError('Unexpected CPU temperature configuration in pinned device tree')
+    text += '\nTW_CUSTOM_CPU_TEMP_PATH := /sys/class/thermal/thermal_zone19/temp\n'
     board.write_text(text)
     props = device / 'system.prop'
     text = props.read_text().replace('ro.crypto.metadata_init_delete_all_keys.enabled=true',
