@@ -1,0 +1,148 @@
+{
+  "manifest": {
+    "url": "https://github.com/AERA-Recovery/android_manifest.git",
+    "commit": "250b38eed4b7bb663a945deb3c4f12e4ff2339dd"
+  },
+  "projects": {
+    "bootable/recovery": {
+      "name": "android_bootable_recovery",
+      "commit": "92813466db89cc7450a708a4acc0010087028f8f"
+    },
+    "external/lvgl": {
+      "name": "android_external_lvgl",
+      "commit": "212fd3a25187f9876356ae66aa13103b002bc322"
+    },
+    "vendor/recovery": {
+      "name": "android_vendor_recovery",
+      "commit": "5f3ef3d5b1e6ab6ab773a8d93a9144d3105359a8"
+    },
+    "system/core": {
+      "name": "android_system_core",
+      "commit": "081c119b3e2182831f0d5b03e8b003279c9a7f13"
+    },
+    "packages/modules/adb": {
+      "name": "android_packages_modules_adb",
+      "commit": "4a449e9803a41735728de2f04292e97120dc8c0b"
+    },
+    "packages/modules/Connectivity": {
+      "name": "android_packages_modules_Connectivity",
+      "commit": "3f1120bc84f0d88620cabed67a49f3d939b736d7"
+    },
+    "external/libuv": {
+      "name": "android_external_libuv",
+      "commit": "7c3aedb62ef4b369d41b91d8a6712ebb8fe427a2"
+    },
+    "external/json-c": {
+      "name": "android_external_json-c",
+      "commit": "79a8ff67c9ec24770b0aacf22ed779a94b1937c9"
+    },
+    "external/ttyd": {
+      "name": "android_external_ttyd",
+      "commit": "30aa1f9fc7d8500244d125ae0b3338aeb63eb498"
+    },
+    "external/libwebsockets": {
+      "name": "android_external_libwebsockets",
+      "commit": "54fcad4800229f4d75cc74a3254fdb62e2a4b4c8"
+    },
+    "external/rclone": {
+      "name": "android_external_rclone",
+      "commit": "de5ab07087a9132f3f027bedcf698856a1d37d29"
+    },
+    "external/libfuse": {
+      "name": "android_external_libfuse",
+      "commit": "5705a51c5b2971ba56d8e1a145abf530b49de93d"
+    },
+    "external/libvterm": {
+      "name": "android_external_libvterm",
+      "commit": "19d04214c6f276f5eae6f7bcdc1794b7dccf84bd"
+    },
+    "build/make": {
+      "name": "android_build_make",
+      "commit": "9ea39bac95207bb4e50ead258a64244977f31cf7"
+    },
+    "build/soong": {
+      "name": "android_build_soong",
+      "commit": "6dc77879464584ef3f178cae622134ed0bf19e1e"
+    },
+    "bionic": {
+      "name": "android_bionic",
+      "commit": "33fcbd9974be3b3b2899a484f8c0cb8dfa2d5e82"
+    },
+    "cts": {
+      "name": "android_cts",
+      "commit": "b0dca6045d7b3d794699cea10a49ef1fa0358cfb"
+    },
+    "external/icu": {
+      "name": "android_external_icu",
+      "commit": "6fefff4e125c1b1a332fbce6d0d2da323b203865"
+    },
+    "external/libxml2": {
+      "name": "android_external_libxml2",
+      "commit": "4d33dd4f7f03568c09c7886a6a6d07512daa8374"
+    },
+    "external/sqlite": {
+      "name": "android_external_sqlite",
+      "commit": "28e3f5878182658a5c34d3ce0859e950f2885aba"
+    },
+    "external/libchrome": {
+      "name": "android_external_libchrome",
+      "commit": "ea5e82b2c1b9e741903be0dcdaf66af60b23c951"
+    },
+    "external/zstd": {
+      "name": "android_external_zstd",
+      "commit": "a375e4fc85612babf34c8221f825a86036175ac0"
+    },
+    "frameworks/hardware/interfaces": {
+      "name": "android_frameworks_hardware_interfaces",
+      "commit": "51d97a046f77b7dc3531cc6bb99407539d4e29b6"
+    },
+    "hardware/interfaces": {
+      "name": "android_hardware_interfaces",
+      "commit": "bdefb2a8bce20dc15882d4ab668fb628c427e26b"
+    },
+    "system/libhidl": {
+      "name": "android_system_libhidl",
+      "commit": "9bb79519173ff86773dfd144172bcd789fc88e01"
+    },
+    "system/sepolicy": {
+      "name": "android_system_sepolicy",
+      "commit": "9641d92817ae79b2d4cd02dfe5c24de7de2014b4"
+    },
+    "system/security": {
+      "name": "android_system_security",
+      "commit": "d614e274b585a67e80d3d3fbc3a6e9f695998f78"
+    },
+    "system/update_engine": {
+      "name": "android_system_update_engine",
+      "commit": "fc3665ca6ffdfba5f470e40d9f102fb908c23e61"
+    },
+    "system/vold": {
+      "name": "android_system_vold",
+      "commit": "36bb8ce4fbbb4615f3d87638347c59eface0853b"
+    },
+    "system/extras": {
+      "name": "android_system_extras",
+      "commit": "6698de71dc02d8b25c379ab51f074cf79aa50e92"
+    },
+    "external/xz-embedded": {
+      "name": "android_external_xz-embedded",
+      "commit": "53e09b39b4afde91edee232bba912609692f41e0"
+    },
+    "vendor/twrp": {
+      "name": "android_vendor_twrp",
+      "commit": "f2833af6d4bc986865979b2e7bd2da874bb9f0c1"
+    },
+    "external/se_omapi": {
+      "name": "android_external_se_omapi",
+      "commit": "34ba4880a85c935cf311eaf03180a2069408856e"
+    },
+    "external/aeracli": {
+      "name": "android_external_aeracli",
+      "commit": "7ad3df32d2ac3bf25853448c80bb3d8a241a68e1"
+    },
+    "device/qcom/twrp-common": {
+      "name": "android_device_qcom_twrp-common",
+      "commit": "98506f7919102378c8d52ee7d6a94a867f1b4c55"
+    }
+  }
+}
