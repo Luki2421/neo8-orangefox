@@ -99,6 +99,11 @@ def main():
     if 'TW_CUSTOM_CPU_TEMP_PATH' in text or 'TW_NO_CPU_TEMP' in text:
         raise RuntimeError('Unexpected CPU temperature configuration in pinned device tree')
     text += '\nTW_CUSTOM_CPU_TEMP_PATH := /sys/class/thermal/thermal_zone19/temp\n'
+    # Preserve the flashlight path from koaaN's u9 fox_u9.mk (6a17319b).
+    # The TWRP donor has no OrangeFox LED paths; its default torch_0 is absent.
+    if 'OF_FL_PATH' in text:
+        raise RuntimeError('Unexpected flashlight configuration in pinned device tree')
+    text += 'OF_FL_PATH1 := /sys/class/leds/white:flash-1\n'
     board.write_text(text)
     props = device / 'system.prop'
     text = props.read_text().replace('ro.crypto.metadata_init_delete_all_keys.enabled=true',
