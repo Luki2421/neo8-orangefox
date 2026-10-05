@@ -1,0 +1,12 @@
+diff --git a/core/config.mk b/core/config.mk
+--- a/core/config.mk
++++ b/core/config.mk
+@@ -791,7 +791,7 @@ else
+   AERA_VENDOR := vendor/recovery/AERA_A16.sh
+   BASH := bash
+   # broken plugins global support
+-  BUILD_BROKEN_PLUGIN_VALIDATION := soong-libaosprecovery_defaults soong-libguitwrp_defaults soong-libminuitwrp_defaults soong-vold_defaults
++  BUILD_BROKEN_PLUGIN_VALIDATION := soong-libaosprecovery_defaults soong-aera_host_defaults soong-libminuitwrp_defaults soong-vold_defaults
+ endif
+ # Darth9
+ 

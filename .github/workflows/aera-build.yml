@@ -6,11 +6,13 @@ on:
     paths:
       - .github/workflows/aera-build.yml
       - aera-sources.json
-      - scripts/prepare_aera_manifest.py
-      - scripts/prepare_neo8_aera.py
+      - port-sources.json
+      - scripts/**
+      - files/**
       - patches/aera16/**
-      - patches/fox16/neo8-*vold.patch
-      - tests/test_aera_metadata.py
+      - patches/fox16/neo8-*.patch
+      - patches/build-soong/**
+      - tests/**
   workflow_dispatch:
 
 permissions:
@@ -76,6 +78,7 @@ jobs:
           git -C /tmp/neo8-device-source fetch --depth=1 --no-tags --filter=blob:none origin d4b65c0e964942cf1b09ead3ee5f6d5e8649d17e
           git -C /tmp/neo8-device-source checkout --detach FETCH_HEAD
           python3 scripts/prepare_neo8_aera.py --android-root "$ANDROID_ROOT" --neo8-root /tmp/neo8-device-source --report artifacts/neo8-build/source-integration.json
+          python3 tests/test_aera_build_config.py --android-root "$ANDROID_ROOT"
           python3 tests/test_no_lock.py --vold-root "$ANDROID_ROOT/system/vold"
           python3 tests/test_keystore_snapshot.py --vold-root "$ANDROID_ROOT/system/vold"
           python3 tests/test_keystore_service_stop.py --vold-root "$ANDROID_ROOT/system/vold"

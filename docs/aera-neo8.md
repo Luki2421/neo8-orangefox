@@ -26,6 +26,13 @@ wait, vold protector parsing and service-stop failure handling. The existing
 firmware-copy tests use synthetic files; CI validates the full donor firmware.
 The WAL snapshot regression also runs in CI with SQLite development headers.
 
+The second source review corrected the upstream build's obsolete GUI plugin
+allowlist and switched the language settings to the native AERA variables,
+including extra translations. A make-based integration check verifies the
+actual crypto, fastboot, temperature and UI flags after alias translation.
+Workflow path filters also cover the shared adapter, device files and crypto
+patches so changes to those dependencies trigger a new AERA build.
+
 This is a first bring-up, not a phone-validated release. Compilation, image
 inspection and phone tests are separate gates. Check startup, native UI/touch,
 PIN and empty-credential decryption, MTP, backup, normal system reboot and USB

@@ -42,7 +42,8 @@ def configure_device(android, donor):
                 'TW_CUSTOM_CLOCK_POS', 'TW_CUSTOM_BATTERY_POS', 'TW_STATUS_ICONS_ALIGN'}
     text = '\n'.join(line for line in text.splitlines()
                      if line.split(':=')[0].strip() not in obsolete) + '\n'
-    text = text.replace('TW_DEFAULT_LANGUAGE := zh_CN', 'TW_DEFAULT_LANGUAGE := en')
+    text = text.replace('TW_DEFAULT_LANGUAGE := zh_CN', 'AERA_DEFAULT_LANGUAGE := en')
+    text = text.replace('TW_EXTRA_LANGUAGES := true', 'AERA_EXTRA_LANGUAGES := true')
     # AERA's public switches map to the inherited TWRP backend in aera_config.mk.
     config = (android / 'bootable/recovery/aera_config.mk').read_text()
     aliases = dict((legacy, public) for public, legacy in
@@ -102,7 +103,7 @@ def main():
     android, donor = args.android_root.resolve(), args.neo8_root.resolve()
     pins = json.loads((PROJECT / 'aera-sources.json').read_text())
     neo8 = json.loads((PROJECT / 'port-sources.json').read_text())['neo8']
-    for path in ('bootable/recovery', 'system/vold', 'hardware/interfaces', 'system/core'):
+    for path in ('bootable/recovery', 'system/vold', 'hardware/interfaces', 'system/core', 'build/make'):
         if git(android / path, 'rev-parse', 'HEAD') != pins['projects'][path]['commit']:
             raise RuntimeError('Unexpected source revision: ' + path)
         if git(android / path, 'status', '--porcelain', '--untracked-files=no'):
@@ -122,8 +123,9 @@ def main():
     for name in ('neo8-keystore-stop.patch', 'neo8-stock-properties.patch', 'neo8-no-lock-vold.patch'):
         apply(vold, PROJECT / 'patches/fox16' / name)
     apply(android / 'bootable/recovery', PROJECT / 'patches/aera16/neo8-recovery.patch')
+    apply(android / 'build/make', PROJECT / 'patches/aera16/neo8-build-plugins.patch')
     report = configure_device(android, donor)
-    for path in ('bootable/recovery', 'system/vold', 'hardware/interfaces'):
+    for path in ('bootable/recovery', 'system/vold', 'hardware/interfaces', 'build/make'):
         git(android / path, 'diff', '--check')
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps({'sources': pins, 'runtime': report,
