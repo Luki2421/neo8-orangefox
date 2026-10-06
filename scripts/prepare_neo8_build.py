@@ -14,6 +14,38 @@ from neo8_service_config import (configure_service_files, configure_fastboot_man
 
 PROJECT = Path(__file__).resolve().parents[1]
 
+def configure_keymint_bootstrap(device, script):
+    """Gate both KeyMint HALs until prepdecrypt has published stock properties."""
+    keymint = device / 'prebuilt/vendor/etc/init/android.hardware.security.onekeymint-service-qti.rc'
+    strongbox = device / 'prebuilt/vendor/odm/etc/init/android.hardware.security.keymint-service-strongbox-tms-qcom.rc'
+    qcom = device / 'recovery/root/init.recovery.qcom.rc'
+    km, sb, init = keymint.read_text(), strongbox.read_text(), qcom.read_text()
+    trigger = 'on init\n    start vendor.keymint\n'
+    early = '    class early_hal\n'
+    start_sb = '    start vendor.keymint-strongbox\n'
+    wait = '\twait_for_crypto_services\n'
+    if (km.count(trigger) != 1 or km.count(early) != 1 or
+            sb.count(early) != 1 or init.count(start_sb) != 1 or
+            script.count(wait) != 1 or '    disabled\n' in km or '    disabled\n' in sb):
+        raise RuntimeError('Unexpected pinned KeyMint startup configuration')
+    keymint.write_text(km.replace(trigger, 'on property:twrp.keymint.bootstrap_ready=1\n    start vendor.keymint\n', 1)
+                      .replace(early, early + '    disabled\n', 1))
+    strongbox.write_text(sb.replace(early, early + '    disabled\n', 1))
+    init = init.replace(start_sb, '', 1)
+    init += ('\n# Do not configure StrongBox before stock version properties are ready.\n'
+             'on property:vendor.sys.listeners.registered=true && property:twrp.keymint.bootstrap_ready=1\n'
+             '    start vendor.keymint-strongbox\n')
+    qcom.write_text(init)
+    helper = device / 'recovery/root/system/bin/neo8-keymint-bootstrap.sh'
+    helper.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(PROJECT / 'files/neo8-keymint-bootstrap.sh', helper)
+    helper.chmod(0o755)
+    return script.replace(wait,
+        '\tif ! /system/bin/sh /system/bin/neo8-keymint-bootstrap.sh >> "$LOGFILE" 2>&1; then\n'
+        '\t\tlog_print 0 "KeyMint bootstrap failed; HALs remain gated."\n'
+        '\t\tfinish_error\n'
+        '\tfi\n' + wait, 1)
+
 def configure_runtime(device):
     touch = device / 'prebuilt/vendor/odm/etc/init/vendor-oplus-hardware-touch-V2-service.rc'
     text = touch.read_text()
@@ -35,6 +67,7 @@ def configure_runtime(device):
     original = 'service prepdecrypt.vendor /vendor/bin/prepdecrypt.sh'
     if rc.count(original) != 1:
         raise RuntimeError('Unexpected stock property reader service')
+    script = configure_keymint_bootstrap(device, script)
     # Keep this recovery helper accessible when stock /vendor is mounted.
     destination = device / 'recovery/root/system/bin/neo8-prepdecrypt.sh'
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -50,6 +83,7 @@ def configure_runtime(device):
             'touch_program': 'pinned Neo8 native service; differs from u9/v3',
             'touch_phone_test_required': True,
             'stock_reader_preserved_in_recovery_system': True,
+            'keymint_start_requires_stock_bootstrap': True,
             'stock_reader_sha256': hashlib.sha256(destination.read_bytes()).hexdigest()}
 
 def main():
