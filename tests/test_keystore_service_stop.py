@@ -22,6 +22,7 @@ static std::map<std::string,std::string> props;
 static bool stop_ks = true, stop_km = true, source_ready = true;
 static bool snapshot_ok = true, binder_ks = true, binder_km = true;
 static int backups = 0, unlinks = 0, commands = 0, sleeps = 0;
+static std::vector<std::string> command_log;
 static int property_set(const char* key, const char* value) {
     std::string k(key), v(value);
     if (k == "ctl.stop") {
@@ -54,7 +55,7 @@ static int fake_usleep(unsigned int value) { assert(value == 100000); ++sleeps; 
 static int fake_system(const char* command) {
     assert(states["keystore2"] == "stopped" && states["vendor.keymint"] == "stopped");
     assert(std::string(command).rfind("/system/bin/resetprop ",0) == 0);
-    ++commands; return 0;
+    command_log.emplace_back(command); ++commands; return 0;
 }
 static void* AServiceManager_checkService(const char* name) {
     bool available = std::string(name).find("keystore2") != std::string::npos ? binder_ks : binder_km;
@@ -89,6 +90,7 @@ static void reset() {
              {"twrp.keymint.venpatch","2026-08-01"}};
     stop_ks = stop_km = source_ready = snapshot_ok = binder_ks = binder_km = true;
     backups = unlinks = commands = sleeps = 0;
+    command_log.clear();
 }
 '''
 
@@ -104,9 +106,30 @@ int main() {
     assert(backups == 1 && states["keystore2"] == "running");
     reset(); binder_ks = false; assert(!syncKeystore2DbForDecrypt());
     assert(backups == 1 && sleeps == 100);
-    for (bool stock : {false, true}) {
-        reset(); assert(setRecoveryKeyMintEnvironment(stock));
-        assert(commands == 4 && props["twrp.keymint.ready"] == "1");
+    for (const char* version : {"16", "16.0", "16.0.0", "17", "17.0", "17.0.0"}) {
+        for (bool stock : {false, true}) {
+            for (bool from_file : {false, true}) {
+                reset();
+                if (from_file) {
+                    props = {{"stock-file:ro.build.version.release", version},
+                             {"stock-file:ro.build.version.security_patch", "2026-09-01"},
+                             {"stock-file:ro.vendor.build.security_patch", "2026-08-05"}};
+                } else {
+                    props["twrp.keymint.osver"] = version;
+                    props["twrp.keymint.ospatch"] = "2026-09-01";
+                    props["twrp.keymint.venpatch"] = "2026-08-05";
+                }
+                assert(setRecoveryKeyMintEnvironment(stock));
+                assert(commands == 4 && props["twrp.keymint.ready"] == "1");
+                assert(props["twrp.keymint.os_version"] == version);
+                assert(props["twrp.keymint.os_patch"] == "2026-09-01");
+                assert(props["twrp.keymint.vendor_patch"] == "2026-08-05");
+                assert(command_log[0] == std::string("/system/bin/resetprop ro.build.version.release ") + version);
+                assert(command_log[1] == std::string("/system/bin/resetprop ro.build.version.release_or_codename ") + version);
+                assert(command_log[2] == "/system/bin/resetprop ro.build.version.security_patch 2026-09-01");
+                assert(command_log[3] == "/system/bin/resetprop ro.vendor.build.security_patch 2026-08-05");
+            }
+        }
     }
     for (int blocked : {0,1,2}) {
         reset(); stop_ks = blocked == 1; stop_km = blocked == 0;
@@ -119,7 +142,7 @@ int main() {
     reset(); props = {{"ro.bootimage.build.version.release", "99.87.36"},
                      {"ro.bootimage.build.version.security_patch", "2099-12-31"}};
     assert(!setRecoveryKeyMintEnvironment(true)); assert(commands == 0 && sleeps == 0);
-    for (const char* version : {"99.87.36", "15", "16;echo invalid"}) {
+    for (const char* version : {"", "99.87.36", "15", "18", "170", "17.1", "17.0.0.0", "16;echo invalid", "17;echo invalid"}) {
         reset(); props["twrp.keymint.osver"] = version;
         assert(!setRecoveryKeyMintEnvironment(true)); assert(commands == 0 && sleeps == 0);
     }
@@ -153,7 +176,7 @@ def main():
         binary = Path(directory) / 'stop'
         subprocess.run(['g++', '-std=c++17', '-Wall', '-Wextra', str(source), '-o', str(binary)], check=True)
         subprocess.run([str(binary)], check=True, timeout=5)
-    print('PASS: 30 actual-function cases for service stops and stock-property validation.')
+    print('PASS: service-stop guards, Android 16/17 stock values from hints/files, unchanged OS/vendor patch levels and invalid-property rejection.')
     print('Host stubs do not verify Android or phone decryption.')
 
 if __name__ == '__main__':

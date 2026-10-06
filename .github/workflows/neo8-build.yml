@@ -7,6 +7,7 @@ on:
       - port-sources.json
       - patches/fox16/**
       - files/neo8-restore-identity.sh
+      - files/neo8-keymint-bootstrap.sh
       - patches/build-soong/**
       - scripts/neo8_service_config.py
       - scripts/prepare_neo8_build.py
@@ -54,7 +55,9 @@ jobs:
           chmod +x "$HOME/bin/repo"
 
       - name: Test recovery service configuration
-        run: python3 tests/test_service_config.py
+        run: |
+          python3 tests/test_service_config.py
+          python3 tests/test_keymint_bootstrap.py
 
       - name: Fetch pinned Android 16 manifest and source code
         run: |

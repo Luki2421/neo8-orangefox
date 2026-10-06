@@ -7,6 +7,7 @@ on:
       - port-sources.json
       - patches/fox16/**
       - files/neo8-restore-identity.sh
+      - files/neo8-keymint-bootstrap.sh
       - scripts/fetch_port_sources.py
       - scripts/prepare_neo8_port.py
       - scripts/boot_ramdisk.py
@@ -41,6 +42,9 @@ jobs:
 
       - name: Test ramdisk reader against malformed archives and links
         run: python3 tests/test_ramdisk_reader.py
+
+      - name: Test stock property publication and independent HAL startup
+        run: python3 tests/test_keymint_bootstrap.py
 
       - name: Test swap sizing without modifying the host
         run: python3 tests/test_ci_swap.py

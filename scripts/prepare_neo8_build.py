@@ -14,6 +14,25 @@ from neo8_service_config import (configure_service_files, configure_fastboot_man
 
 PROJECT = Path(__file__).resolve().parents[1]
 
+def configure_keymint_bootstrap(device, script):
+    """Publish complete stock inputs without gating early Binder HAL discovery.
+
+    Recovery/keystore can request KeyMint before prepdecrypt completes. The
+    original init starts must remain reachable independently of this helper.
+    """
+    wait = '\twait_for_crypto_services\n'
+    if script.count(wait) != 1:
+        raise RuntimeError('Unexpected pinned prepdecrypt service wait')
+    helper = device / 'recovery/root/system/bin/neo8-keymint-bootstrap.sh'
+    helper.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(PROJECT / 'files/neo8-keymint-bootstrap.sh', helper)
+    helper.chmod(0o755)
+    return script.replace(wait,
+        '\tif ! /system/bin/sh /system/bin/neo8-keymint-bootstrap.sh >> "$LOGFILE" 2>&1; then\n'
+        '\t\tlog_print 0 "KeyMint stock property setup failed; keeping normal service startup."\n'
+        '\t\tfinish_error\n'
+        '\tfi\n' + wait, 1)
+
 def configure_runtime(device):
     touch = device / 'prebuilt/vendor/odm/etc/init/vendor-oplus-hardware-touch-V2-service.rc'
     text = touch.read_text()
@@ -35,6 +54,7 @@ def configure_runtime(device):
     original = 'service prepdecrypt.vendor /vendor/bin/prepdecrypt.sh'
     if rc.count(original) != 1:
         raise RuntimeError('Unexpected stock property reader service')
+    script = configure_keymint_bootstrap(device, script)
     # Keep this recovery helper accessible when stock /vendor is mounted.
     destination = device / 'recovery/root/system/bin/neo8-prepdecrypt.sh'
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -50,6 +70,8 @@ def configure_runtime(device):
             'touch_program': 'pinned Neo8 native service; differs from u9/v3',
             'touch_phone_test_required': True,
             'stock_reader_preserved_in_recovery_system': True,
+            'keymint_start_requires_stock_bootstrap': False,
+            'stock_release_or_codename_published': True,
             'stock_reader_sha256': hashlib.sha256(destination.read_bytes()).hexdigest()}
 
 def main():
