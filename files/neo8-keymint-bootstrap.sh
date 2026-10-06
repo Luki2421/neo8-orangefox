@@ -1,5 +1,6 @@
 #!/system/bin/sh
-# Publish all stock version inputs before either KeyMint HAL may start.
+# Publish all stock version inputs before prepdecrypt reports crypto.ready.
+# This status is diagnostic only; early HAL startup must not depend on it.
 RP=/system/bin/resetprop
 setprop twrp.keymint.bootstrap_ready 0 || exit 1
 [ -x "$RP" ] || exit 1
@@ -50,5 +51,5 @@ publish ro.build.version.release_or_codename "$os" || exit 1
 publish ro.build.version.security_patch "$ospatch" || exit 1
 publish ro.vendor.build.security_patch "$venpatch" || exit 1
 echo "Neo8 KeyMint bootstrap: stock os=$os patch=$ospatch vendor=$venpatch"
-# Separate from crypto.ready: prepdecrypt still has to wait for the HALs.
+# Separate from crypto.ready: prepdecrypt still has to wait for running HALs.
 setprop twrp.keymint.bootstrap_ready 1 || exit 1

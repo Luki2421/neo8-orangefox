@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the production bootstrap with a property store and a simulated init gate."""
+"""Run the production bootstrap with a property store and a property publication check."""
 import json
 import os
 from pathlib import Path
@@ -35,7 +35,7 @@ else:
     if a[0] != os.environ.get('TEST_IGNORE_PROP'):
         d[a[0]] = a[1]
     if a == ['twrp.keymint.bootstrap_ready', '1']:
-        # A HAL launched by init must see the entire stock tuple, never 16/17 mixed.
+        # A completed publication must contain the entire stock tuple.
         assert d['ro.build.version.release'] == d['twrp.keymint.osver']
         assert d['ro.build.version.release_or_codename'] == d['twrp.keymint.osver']
         assert d['ro.build.version.security_patch'] == d['twrp.keymint.ospatch']
@@ -64,7 +64,7 @@ else:
         result = subprocess.run(['sh', str(self.script)], env=env, capture_output=True, timeout=15)
         return result.returncode, json.loads(self.db.read_text())
 
-    def test_initial_hal_receives_stock_values(self):
+    def test_complete_stock_values_are_published(self):
         for version in ('16', '16.0', '16.0.0', '17', '17.0', '17.0.0'):
             with self.subTest(version=version):
                 code, props = self.run_helper(dict(self.initial, **{'twrp.keymint.osver': version}))
@@ -98,7 +98,7 @@ else:
         self.assertEqual(code, 0)
         self.assertEqual(props['twrp.keymint.bootstrap_ready'], '1')
 
-    def test_init_and_reader_have_no_start_before_bootstrap(self):
+    def test_early_hal_start_does_not_depend_on_prepdecrypt(self):
         device = self.root / 'device'
         km = device / 'prebuilt/vendor/etc/init/android.hardware.security.onekeymint-service-qti.rc'
         sb = device / 'prebuilt/vendor/odm/etc/init/android.hardware.security.keymint-service-strongbox-tms-qcom.rc'
@@ -108,13 +108,16 @@ else:
         km.write_text('on init\n    start vendor.keymint\n\nservice vendor.keymint /vendor/bin/hw/keymint\n    class early_hal\n')
         sb.write_text('service vendor.keymint-strongbox /odm/bin/hw/strongbox\n    class early_hal\n')
         qcom.write_text('on property:vendor.sys.listeners.registered=true\n    start vendor.ssgtzd\n    start vendor.keymint-strongbox\n')
+        original = {p: p.read_bytes() for p in (km, sb, qcom)}
         result = configure_keymint_bootstrap(device, 'finish() {\n\twait_for_crypto_services\n\tsetprop crypto.ready 1\n}\n')
-        self.assertIn('on property:twrp.keymint.bootstrap_ready=1\n    start vendor.keymint', km.read_text())
-        self.assertNotIn('on init', km.read_text())
-        for path in (km, sb):
-            self.assertIn('    disabled\n', path.read_text())
-        self.assertIn('on property:vendor.sys.listeners.registered=true && property:twrp.keymint.bootstrap_ready=1\n    start vendor.keymint-strongbox', qcom.read_text())
-        self.assertEqual(qcom.read_text().count('start vendor.keymint-strongbox'), 1)
+        # Model recovery waiting for Binder before prepdecrypt has run. No
+        # property callback can break that wait if the HAL is gated by it.
+        for path in (km, sb, qcom):
+            self.assertEqual(path.read_bytes(), original[path])
+            self.assertNotIn('bootstrap_ready', path.read_text())
+            self.assertNotIn('    disabled\n', path.read_text())
+        self.assertIn('on init\n    start vendor.keymint', km.read_text())
+        self.assertIn('    class early_hal\n', sb.read_text())
         self.assertLess(result.index('neo8-keymint-bootstrap.sh'), result.index('\twait_for_crypto_services'))
         self.assertIn('finish_error', result)
 
