@@ -165,6 +165,42 @@ def inspect_ssg_ta_files(entries):
         hashes[name] = hashlib.sha256(target['data']).hexdigest()
     return {'recovery_search_path': TA_RECOVERY_PATH, 'files_sha256': hashes}
 
+def inspect_partition_tools(entries):
+    """Require the ELF dependency closure of the partition tools in the ramdisk.
+
+    This checks packaged files, not ABI/symbol compatibility or runtime Binder
+    registration. Do not resolve against stock /vendor or a host filesystem.
+    """
+    roots = ('system/bin/lpdump', 'system/bin/lpdumpd', 'system/bin/fastbootd')
+    directories = ('system/lib64', 'system/lib64/bootstrap', 'lib64')
+    checked = {}
+
+    def visit(path):
+        name, entry = resolve(entries, path)
+        if name in checked:
+            return
+        if not entry or not stat.S_ISREG(entry['mode']):
+            raise ValueError('Missing partition tool or library: ' + path)
+        needed = elf_dependencies(entry['data'])
+        checked[name] = needed
+        for library in needed:
+            for directory in directories:
+                target, dependency = resolve(entries, directory + '/' + library)
+                if dependency and stat.S_ISREG(dependency['mode']):
+                    visit(target)
+                    break
+            else:
+                raise ValueError('Missing ramdisk dependency: ' + name + ' needs ' + library)
+
+    for path in roots:
+        _, entry = resolve(entries, path)
+        if not entry or not entry['mode'] & 0o111:
+            raise ValueError('Missing executable partition tool: ' + path)
+        visit(path)
+    return {'executables': list(roots), 'elf_dependencies': checked,
+            'runtime_verified': False}
+
+
 def inspect(path):
     image, entries = read_recovery(path)
     if len(image) > PARTITION_SIZE:
@@ -175,6 +211,7 @@ def inspect(path):
     service_config = inspect_service_config(entries)
     fastboot_service = inspect_fastboot_service(entries)
     ssg_ta_files = inspect_ssg_ta_files(entries)
+    partition_tools = inspect_partition_tools(entries)
     needed = elf_dependencies(executable['data'])
     candidates = ['system/lib64', 'system/lib64/bootstrap', 'lib64',
                   'vendor/lib64', 'vendor/odm/lib64']
@@ -202,6 +239,7 @@ def inspect(path):
             'service_configuration': service_config,
             'fastboot_hal_service': fastboot_service,
             'ssg_ta_files': ssg_ta_files,
+            'partition_tools': partition_tools,
             'ramdisk_entries': len(entries), 'recovery_executable': name,
             'recovery_direct_libraries': libraries,
             'unresolved_direct_libraries': [key for key, value in libraries.items() if value is None],

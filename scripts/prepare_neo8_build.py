@@ -104,6 +104,11 @@ def main():
     if 'OF_FL_PATH' in text:
         raise RuntimeError('Unexpected flashlight configuration in pinned device tree')
     text += 'OF_FL_PATH1 := /sys/class/leds/white:flash-1\n'
+    # lpdumpd is relinked from the platform output. Its Binder-enabled fs_mgr
+    # dependency is distinct from libfs_mgr.so already in the recovery ramdisk.
+    text += ('\n# Keep the platform lpdumpd dependency in the recovery image.\n'
+             'TARGET_RECOVERY_DEVICE_MODULES += libfs_mgr_binder\n'
+             'TW_RECOVERY_ADDITIONAL_RELINK_LIBRARY_FILES += $(TARGET_OUT_SHARED_LIBRARIES)/libfs_mgr_binder.so\n')
     board.write_text(text)
     props = device / 'system.prop'
     text = props.read_text().replace('ro.crypto.metadata_init_delete_all_keys.enabled=true',
