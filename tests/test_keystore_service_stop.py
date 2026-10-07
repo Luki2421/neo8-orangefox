@@ -54,6 +54,9 @@ static int fake_usleep(unsigned int value) { assert(value == 100000); ++sleeps; 
 static int fake_system(const char* command) {
     assert(states["keystore2"] == "stopped" && states["vendor.keymint"] == "stopped");
     assert(std::string(command).rfind("/system/bin/resetprop ",0) == 0);
+    std::string cmd(command);
+    if (cmd.rfind("/system/bin/resetprop ro.build.version.release ", 0) == 0)
+        assert(cmd == "/system/bin/resetprop ro.build.version.release " + props["twrp.keymint.os_version"]);
     ++commands; return 0;
 }
 static void* AServiceManager_checkService(const char* name) {
@@ -108,6 +111,20 @@ int main() {
         reset(); assert(setRecoveryKeyMintEnvironment(stock));
         assert(commands == 4 && props["twrp.keymint.ready"] == "1");
     }
+    // Exercise the actual guard through both property sources and both callers.
+    // Keep the installed version; never coerce Android 17 to recovery's Android 16.
+    for (const char* version : {"16", "16.0", "16.0.0", "17", "17.0", "17.0.0"}) {
+        for (bool from_file : {false, true}) for (bool stock : {false, true}) {
+            reset();
+            if (from_file) {
+                props.erase("twrp.keymint.osver");
+                props["stock-file:ro.build.version.release"] = version;
+            } else props["twrp.keymint.osver"] = version;
+            assert(setRecoveryKeyMintEnvironment(stock));
+            assert(commands == 4 && props["twrp.keymint.ready"] == "1");
+            assert(props["twrp.keymint.os_version"] == version);
+        }
+    }
     for (int blocked : {0,1,2}) {
         reset(); stop_ks = blocked == 1; stop_km = blocked == 0;
         assert(!setRecoveryKeyMintEnvironment(true));
@@ -119,7 +136,7 @@ int main() {
     reset(); props = {{"ro.bootimage.build.version.release", "99.87.36"},
                      {"ro.bootimage.build.version.security_patch", "2099-12-31"}};
     assert(!setRecoveryKeyMintEnvironment(true)); assert(commands == 0 && sleeps == 0);
-    for (const char* version : {"99.87.36", "15", "16;echo invalid"}) {
+    for (const char* version : {"", "99.87.36", "15", "18", "17beta", "17.0.0.0", "17\n", "16;echo invalid", "17;echo invalid"}) {
         reset(); props["twrp.keymint.osver"] = version;
         assert(!setRecoveryKeyMintEnvironment(true)); assert(commands == 0 && sleeps == 0);
     }
@@ -153,7 +170,7 @@ def main():
         binary = Path(directory) / 'stop'
         subprocess.run(['g++', '-std=c++17', '-Wall', '-Wextra', str(source), '-o', str(binary)], check=True)
         subprocess.run([str(binary)], check=True, timeout=5)
-    print('PASS: 30 actual-function cases for service stops and stock-property validation.')
+    print('PASS: service-stop and stock-property guards, including 24 Android 16/17 source/caller combinations.')
     print('Host stubs do not verify Android or phone decryption.')
 
 if __name__ == '__main__':

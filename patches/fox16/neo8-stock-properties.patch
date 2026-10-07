@@ -31,7 +31,7 @@
  		if (os_patch.empty()) {
  			printf("KeyMint environment: stock OS patch level is unavailable\n");
  			ALOGE("Neo8 KeyMint: stock OS patch level is unavailable");
-@@ -680,11 +672,27 @@
+@@ -680,11 +672,33 @@
  		if (vendor_patch.empty())
  			vendor_patch = readRecoveryBuildProperty(
  				vendor_props, "ro.vendor.build.security_patch");
@@ -56,9 +56,15 @@
 +			if (month == 2 && (year % 400 == 0 || (year % 4 == 0 && year % 100 != 0))) ++limit;
 +			return day >= 1 && day <= limit;
 +		};
-+		if ((os_version != "16" && os_version != "16.0" && os_version != "16.0.0") ||
++		// Use the installed Android release, independently of ColorOS branding.
++		const bool valid_os = os_version == "16" || os_version == "16.0" ||
++		    os_version == "16.0.0" || os_version == "17" ||
++		    os_version == "17.0" || os_version == "17.0.0";
++		if (!valid_os ||
 +		    !valid_patch(os_patch) || !valid_patch(vendor_patch)) {
-+			printf("Neo8 KeyMint: valid Android 16 stock OS/vendor values are required\n");
++			printf("Neo8 KeyMint: invalid or unsupported stock values "
++			       "(os='%s' patch='%s' vendor='%s'; supported Android: 16/17)\n",
++			       os_version.c_str(), os_patch.c_str(), vendor_patch.c_str());
 +			return false;
 +		}
  		char command[256];
