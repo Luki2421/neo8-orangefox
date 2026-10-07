@@ -10,6 +10,34 @@ import xml.etree.ElementTree as ET
 REQUIRED_PROFILES = {'SCHED_SP_BACKGROUND', 'BlkIOBackground', 'NormalIoPriority'}
 TA_RECOVERY_PATH = '/system/etc/firmware/neo8-ta'
 
+# These donor blobs overwrite the recovery variants built for fastbootd/vold.
+# Hashes are from the pinned device tree and confirmed in OrangeFox CI build 26.
+DONOR_PARTITION_LIBRARIES = {
+    'liblp.so': '8f7947f66a75d836787ab495e17b0aef284e67bb8ed507db5f304ae90c093d25',
+    'libfs_mgr.so': '42c4003a4fdf10053f3635e6accdf816c141e4affc54c80e171a5b2589a595f2',
+}
+
+def use_source_partition_libraries(device):
+    """Remove only verified donor overrides in the disposable build tree.
+
+    fastbootd is recovery:true and depends on both modules, so Soong installs
+    their matching recovery variants. Do not substitute a platform/vendor blob.
+    """
+    paths = []
+    for name, expected in DONOR_PARTITION_LIBRARIES.items():
+        path = device / 'prebuilt/system/lib64' / name
+        if path.is_symlink() or not path.is_file():
+            raise ValueError('Missing regular donor partition library: ' + name)
+        if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+            raise ValueError('Unexpected donor partition library: ' + name)
+        paths.append(path)
+    # Validate the complete set before removing any overrides.
+    for path in paths:
+        path.unlink()
+    return {'removed_prebuilt_overrides': dict(DONOR_PARTITION_LIBRARIES),
+            'provider': 'system/core recovery variants built with fastbootd',
+            'phone_flash_and_decryption_verified': False}
+
 def profile_names(config):
     return {p['Name'] for group in ('Profiles', 'AggregateProfiles') for p in config.get(group, [])}
 

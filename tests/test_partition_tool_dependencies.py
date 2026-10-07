@@ -2,13 +2,16 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Regress the lpdumpd linker failure reported from the phone."""
 from pathlib import Path
+import hashlib
 import stat
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 from inspect_recovery import inspect_partition_tools
+from neo8_service_config import DONOR_PARTITION_LIBRARIES, use_source_partition_libraries
 
 
 class PartitionToolDependenciesTests(unittest.TestCase):
@@ -57,6 +60,45 @@ class PartitionToolDependenciesTests(unittest.TestCase):
         self.entries['system/bin/fastbootd']['mode'] = stat.S_IFREG | 0o644
         with self.assertRaisesRegex(ValueError, 'Missing executable partition tool'):
             inspect_partition_tools(self.entries)
+
+    def test_image_gate_rejects_donor_override(self):
+        self.add('system/lib64/liblp.so')
+        digest = hashlib.sha256(self.entries['system/lib64/liblp.so']['data']).hexdigest()
+        with patch.dict(DONOR_PARTITION_LIBRARIES, {'liblp.so': digest}):
+            with self.assertRaisesRegex(ValueError, 'Donor partition library overrides'):
+                inspect_partition_tools(self.entries)
+
+
+class SourceLibrarySelectionTests(unittest.TestCase):
+    def test_remove_only_verified_overrides(self):
+        with tempfile.TemporaryDirectory() as directory:
+            device = Path(directory)
+            libs = device / 'prebuilt/system/lib64'
+            libs.mkdir(parents=True)
+            expected = {}
+            for name in DONOR_PARTITION_LIBRARIES:
+                data = name.encode()
+                (libs / name).write_bytes(data)
+                expected[name] = hashlib.sha256(data).hexdigest()
+            (libs / 'libcrypto.so').write_bytes(b'preserve')
+            with patch.dict(DONOR_PARTITION_LIBRARIES, expected):
+                report = use_source_partition_libraries(device)
+            self.assertEqual(list(libs.iterdir()), [libs / 'libcrypto.so'])
+            self.assertFalse(report['phone_flash_and_decryption_verified'])
+
+    def test_changed_blob_rejected_before_any_removal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            device = Path(directory)
+            libs = device / 'prebuilt/system/lib64'
+            libs.mkdir(parents=True)
+            for name in DONOR_PARTITION_LIBRARIES:
+                (libs / name).write_bytes(b'fixture')
+            expected = {'liblp.so': hashlib.sha256(b'fixture').hexdigest(),
+                        'libfs_mgr.so': hashlib.sha256(b'different').hexdigest()}
+            with patch.dict(DONOR_PARTITION_LIBRARIES, expected):
+                with self.assertRaisesRegex(ValueError, 'Unexpected donor partition library'):
+                    use_source_partition_libraries(device)
+            self.assertTrue(all((libs / name).is_file() for name in expected))
 
 
 if __name__ == '__main__':

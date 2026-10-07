@@ -10,7 +10,7 @@ import subprocess
 
 from neo8_service_config import (configure_service_files, configure_fastboot_manifest,
                                  configure_omapi_manifest, configure_qseecomd,
-                                 preserve_ssg_ta_files)
+                                 preserve_ssg_ta_files, use_source_partition_libraries)
 
 PROJECT = Path(__file__).resolve().parents[1]
 
@@ -76,6 +76,7 @@ def main():
     subprocess.run(['git', 'diff', '--check'], cwd=recovery, check=True)
     shutil.copytree(donor / 'device/realme/RE6402L1', device)
     runtime = configure_runtime(device)
+    runtime["partition_libraries"] = use_source_partition_libraries(device)
     runtime["service_files"] = configure_service_files(device, android)
     runtime["fastboot_manifest"] = configure_fastboot_manifest(device, android)
     runtime["omapi_manifest"] = configure_omapi_manifest(device, android)
@@ -104,11 +105,11 @@ def main():
     if 'OF_FL_PATH' in text:
         raise RuntimeError('Unexpected flashlight configuration in pinned device tree')
     text += 'OF_FL_PATH1 := /sys/class/leds/white:flash-1\n'
-    # lpdumpd is relinked from the platform output. Its Binder-enabled fs_mgr
-    # dependency is distinct from libfs_mgr.so already in the recovery ramdisk.
-    text += ('\n# Keep the platform lpdumpd dependency in the recovery image.\n'
-             'TARGET_RECOVERY_DEVICE_MODULES += libfs_mgr_binder\n'
-             'TW_RECOVERY_ADDITIONAL_RELINK_LIBRARY_FILES += $(TARGET_OUT_SHARED_LIBRARIES)/libfs_mgr_binder.so\n')
+    # lpdumpd/liblpdump are relinked from the platform output. Keep their
+    # Binder-enabled fs_mgr and snapshot dependencies in the ramdisk too.
+    text += ('\n# Keep the platform lpdump dependencies in the recovery image.\n'
+             'TARGET_RECOVERY_DEVICE_MODULES += libfs_mgr_binder libsnapshot\n'
+             'TW_RECOVERY_ADDITIONAL_RELINK_LIBRARY_FILES += $(TARGET_OUT_SHARED_LIBRARIES)/libfs_mgr_binder.so $(TARGET_OUT_SHARED_LIBRARIES)/libsnapshot.so\n')
     board.write_text(text)
     props = device / 'system.prop'
     text = props.read_text().replace('ro.crypto.metadata_init_delete_all_keys.enabled=true',

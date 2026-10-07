@@ -6,7 +6,10 @@ The phone log reports that `/system/bin/lpdumpd` exits before startup because
 is a different library and must not be renamed to substitute for it.
 
 The Neo8 build now explicitly builds and relinks the matching platform
-`libfs_mgr_binder.so`. Image inspection checks the recursive ARM64 ELF dependency
+`libfs_mgr_binder.so` and `libsnapshot.so`. The first inspection-gated build
+(run 37587049561) compiled successfully but rejected the image because
+`liblpdump.so` also required the missing `libsnapshot.so`; that image was not
+uploaded for phone testing. Image inspection checks the recursive ARM64 ELF dependency
 closure of lpdump, lpdumpd, and fastbootd in the packaged system library paths.
 A missing tool or dependency fails inspection before the image upload step.
 This is a file/dependency check, not a runtime linker or Binder test.

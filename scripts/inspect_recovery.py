@@ -13,7 +13,8 @@ import tempfile
 import xml.etree.ElementTree as ET
 
 from neo8_service_config import (REQUIRED_PROFILES, profile_names,
-                                 check_device_aidl_manifests, TA_RECOVERY_PATH)
+                                 check_device_aidl_manifests, TA_RECOVERY_PATH,
+                                 DONOR_PARTITION_LIBRARIES)
 
 from boot_ramdisk import read_recovery
 
@@ -174,6 +175,10 @@ def inspect_partition_tools(entries):
     roots = ('system/bin/lpdump', 'system/bin/lpdumpd', 'system/bin/fastbootd')
     directories = ('system/lib64', 'system/lib64/bootstrap', 'lib64')
     checked = {}
+    for library, rejected_hash in DONOR_PARTITION_LIBRARIES.items():
+        _, entry = resolve(entries, 'system/lib64/' + library)
+        if entry and hashlib.sha256(entry['data']).hexdigest() == rejected_hash:
+            raise ValueError('Donor partition library overrides source build: ' + library)
 
     def visit(path):
         name, entry = resolve(entries, path)
