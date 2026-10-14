@@ -1,0 +1,26 @@
+{
+  "MissMyTime/twrp_device_sm8850": {
+    "tag": "1.1",
+    "commit": "2b2981897893068276cef8040dca9171f53e9c9a"
+  },
+  "AERA-Recovery/android_manifest": {
+    "branch": "aera-16.0",
+    "commit": "250b38eed4b7bb663a945deb3c4f12e4ff2339dd",
+    "tree": "a69a4d5599a2d9c307312c75f68d8e732e8c82c8"
+  },
+  "AERA-Recovery/android_bootable_recovery": {
+    "branch": "aera-16.0",
+    "commit": "f2ce8f70a39c8a8de33a5768696688015795b516",
+    "tree": "5946926187f0ff91f7cbb01d88054c3835c2fed1"
+  },
+  "AERA-Recovery/android_system_vold": {
+    "branch": "aera-16.0",
+    "commit": "36bb8ce4fbbb4615f3d87638347c59eface0853b",
+    "tree": "fbb2c07bd71487b867d92c2a8f21952590b0a14b"
+  },
+  "AERA-Recovery/android_vendor_recovery": {
+    "branch": "aera-16.0",
+    "commit": "7b4e41362938ee3498fc0e8a4f3e0528bf320efd",
+    "tree": "f770e939d83898dc8c4f19deff014d61913c232d"
+  }
+}

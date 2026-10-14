@@ -1,0 +1,124 @@
+name: AERA Neo8 - experimental compilation
+
+on:
+  push:
+    branches: [aera-neo8-experimental]
+    paths: ['aera/**', '.github/workflows/aera-build.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aera-neo8-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  recovery-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    env:
+      ANDROID_ROOT: /home/runner/android
+      USE_CCACHE: '0'
+      BUILD_NUMBER: neo8-ci-${{ github.run_number }}
+    steps:
+      - name: Read port project
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Free space on the disposable runner
+        run: python3 scripts/neo8_preflight.py --cleanup --output artifacts/aera-build/resources
+
+      - name: Install Android build dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends bc bison build-essential ca-certificates curl flex git git-lfs gnupg gperf lib32z1-dev libelf-dev libncurses-dev libsdl2-dev libssl-dev libsqlite3-dev libxml2-utils lz4 python3 rsync unzip zip zlib1g-dev
+          git config --global user.name 'Neo8 build'
+          git config --global user.email 'aera-build@users.noreply.github.com'
+          mkdir -p "$ANDROID_ROOT" "$HOME/bin" artifacts/aera-build
+          curl --fail --location --retry 3 https://storage.googleapis.com/git-repo-downloads/repo -o "$HOME/bin/repo"
+          chmod +x "$HOME/bin/repo"
+
+      - name: Fetch and verify the working TWRP reference
+        run: |
+          curl --fail --location --retry 3 https://github.com/MissMyTime/twrp_device_sm8850/releases/download/1.1/TWRP_Neo8_Fix.img -o /tmp/twrp-1.1.img
+          echo 'b99a36d62c1d4e17b88ed979acdd87e58e6325b62e5ff4dc3dd116c0e5f92c9d  /tmp/twrp-1.1.img' | sha256sum -c -
+          python3 aera/build_reference_nullguard.py /tmp/twrp-1.1.img /tmp/twrp-nullguard.img
+          echo '80b0cbb97a969b4df1ec4c9e51056c4a6433e3536364e987666186f3c5fd7573  /tmp/twrp-nullguard.img' | sha256sum -c -
+
+      - name: Fetch AERA Android 16 sources
+        run: |
+          set -o pipefail
+          git config --global url.https://github.com/.insteadOf ssh://git@github.com/
+          cd "$ANDROID_ROOT"
+          "$HOME/bin/repo" init -u https://github.com/AERA-Recovery/android_manifest.git -b 250b38eed4b7bb663a945deb3c4f12e4ff2339dd --depth=1 --no-clone-bundle
+          mkdir -p .repo/local_manifests
+          cat > .repo/local_manifests/neo8.xml <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <manifest>
+            <extend-project name="android_bootable_recovery" path="bootable/recovery" revision="f2ce8f70a39c8a8de33a5768696688015795b516" />
+            <extend-project name="android_system_vold" path="system/vold" revision="36bb8ce4fbbb4615f3d87638347c59eface0853b" />
+            <extend-project name="android_vendor_recovery" path="vendor/recovery" revision="7b4e41362938ee3498fc0e8a4f3e0528bf320efd" />
+          </manifest>
+          EOF
+          "$HOME/bin/repo" sync -c -j4 --no-tags --no-clone-bundle --fail-fast 2>&1 | tee "$GITHUB_WORKSPACE/artifacts/aera-build/sync.log"
+          "$HOME/bin/repo" manifest -r -o "$GITHUB_WORKSPACE/artifacts/aera-build/resolved-manifest.xml"
+
+      - name: Integrate Neo8 TWRP 1.1 hardware and decryption
+        run: |
+          git clone --depth=1 --branch 1.1 --filter=blob:none --sparse https://github.com/MissMyTime/twrp_device_sm8850.git /tmp/neo8-device-source
+          git -C /tmp/neo8-device-source sparse-checkout set device/realme/RE6402L1 patches/neo8 patches/common/files/system/vold
+          python3 aera/prepare.py --android-root "$ANDROID_ROOT" --donor /tmp/neo8-device-source --reference /tmp/twrp-nullguard.img --report artifacts/aera-build/source-integration.json
+          python3 tests/test_keystore_snapshot.py --vold-root "$ANDROID_ROOT/system/vold"
+          python3 aera/test_service_stop.py --vold-root "$ANDROID_ROOT/system/vold"
+
+      - name: Compile recovery image
+        run: |
+          set -o pipefail
+          cd "$ANDROID_ROOT"
+          export AERA_BUILD_DEVICE=RE6402L1
+          source build/envsetup.sh
+          # lunch exports the selected product/release into this shell. A pipeline loses them.
+          lunch twrp_RE6402L1-bp2a-eng > >(tee "$GITHUB_WORKSPACE/artifacts/aera-build/lunch.log") 2>&1
+          test "$TARGET_PRODUCT" = twrp_RE6402L1
+          test "$TARGET_RELEASE" = bp2a
+          test "$TARGET_BUILD_VARIANT" = eng
+          m recoveryimage -j2 2>&1 | tee "$GITHUB_WORKSPACE/artifacts/aera-build/build.log"
+          sha256sum out/target/product/RE6402L1/recovery.img > "$GITHUB_WORKSPACE/artifacts/aera-build/recovery-image.sha256"
+          stat --printf='%s bytes\n' out/target/product/RE6402L1/recovery.img > "$GITHUB_WORKSPACE/artifacts/aera-build/recovery-image-size.txt"
+
+      - name: Inspect boot header, ramdisk and AVB
+        run: |
+          set -o pipefail
+          image="$ANDROID_ROOT/out/target/product/RE6402L1/recovery.img"
+          python3 scripts/inspect_recovery.py --image "$image" --report artifacts/aera-build/image-inventory.json
+          python3 "$ANDROID_ROOT/external/avb/avbtool.py" verify_image --image "$image" 2>&1 | tee artifacts/aera-build/avb-verification.txt
+          mkdir -p artifacts/aera-development-image
+          cp "$image" artifacts/aera-development-image/AERA-Neo8-experimental.img
+          cp artifacts/aera-build/image-inventory.json artifacts/aera-development-image/
+          cp artifacts/aera-build/recovery-image.sha256 artifacts/aera-development-image/
+          printf '%s\n' 'Development image for review. Startup, touch and phone decryption have not been tested.' > artifacts/aera-development-image/README.txt
+
+      - name: Retain development image for review
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: aera-development-image-unreviewed
+          path: artifacts/aera-development-image/
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Record result and disk space
+        if: always()
+        run: |
+          df -h > artifacts/aera-build/disk-final.txt
+          echo 'Development build. A successful compilation retains an image and static inventory for review; phone touch and decryption remain unverified.' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Save build logs and manifest
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: aera-neo8-diagnostics
+          path: artifacts/aera-build/
+          retention-days: 7
+          if-no-files-found: warn

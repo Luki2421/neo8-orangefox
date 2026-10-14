@@ -1,0 +1,19 @@
+--- a/etc/init.rc
++++ b/etc/init.rc
+@@ -83,6 +83,8 @@
+ 
+     class_start default
+     class_start hal
++    wait /dev/dri/card0 5
++    start recovery
+ 
+ on firmware_mounts_complete
+     rm /dev/.booting
+@@ -128,6 +130,7 @@
+     user root
+ 
+ service recovery /system/bin/recovery
++    disabled
+     socket recovery stream 422 system system
+     seclabel u:r:recovery:s0
+     user root
