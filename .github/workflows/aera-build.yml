@@ -11,7 +11,7 @@ permissions:
 
 concurrency:
   group: aera-neo8-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   recovery-build:
@@ -21,6 +21,9 @@ jobs:
       ANDROID_ROOT: /home/runner/android
       USE_CCACHE: '0'
       BUILD_NUMBER: neo8-ci-${{ github.run_number }}
+      # Leave headroom for the runner while Soong constructs the build graph.
+      GOMEMLIMIT: 10GiB
+      GOGC: '50'
     steps:
       - name: Read port project
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -73,9 +76,31 @@ jobs:
           python3 tests/test_keystore_snapshot.py --vold-root "$ANDROID_ROOT/system/vold"
           python3 aera/test_service_stop.py --vold-root "$ANDROID_ROOT/system/vold"
 
+      - name: Preserve source integration diagnostics before compilation
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: aera-source-integration-attempt-${{ github.run_attempt }}
+          path: artifacts/aera-build/
+          retention-days: 7
+          if-no-files-found: error
+
       - name: Compile recovery image
+        timeout-minutes: 240
         run: |
           set -o pipefail
+          # Print resource samples to the live log, as well as the artifact file.
+          # A hard runner shutdown can prevent all subsequent upload steps.
+          (
+            while true; do
+              date -u
+              free -m
+              df -h "$ANDROID_ROOT"
+              ps -eo comm,rss --sort=-rss | head -n 8 || true
+              sleep 30
+            done
+          ) > >(tee "$GITHUB_WORKSPACE/artifacts/aera-build/resources-live.log") 2>&1 &
+          resource_monitor=$!
+          trap 'kill "$resource_monitor" 2>/dev/null || true' EXIT
           cd "$ANDROID_ROOT"
           export AERA_BUILD_DEVICE=RE6402L1
           source build/envsetup.sh
@@ -84,7 +109,7 @@ jobs:
           test "$TARGET_PRODUCT" = twrp_RE6402L1
           test "$TARGET_RELEASE" = bp2a
           test "$TARGET_BUILD_VARIANT" = eng
-          m recoveryimage -j2 2>&1 | tee "$GITHUB_WORKSPACE/artifacts/aera-build/build.log"
+          m recoveryimage -j1 2>&1 | tee "$GITHUB_WORKSPACE/artifacts/aera-build/build.log"
           sha256sum out/target/product/RE6402L1/recovery.img > "$GITHUB_WORKSPACE/artifacts/aera-build/recovery-image.sha256"
           stat --printf='%s bytes\n' out/target/product/RE6402L1/recovery.img > "$GITHUB_WORKSPACE/artifacts/aera-build/recovery-image-size.txt"
 

@@ -59,6 +59,21 @@ Do sprawdzenia na dalszych etapach: zgodność API całego Androida podczas
 kompilacji, kolejność inicjalizacji AERA i KeyMint, dostępność właściwości
 zainstalowanego systemu, wszystkie zależności HAL oraz dotyk i PIN na Neo8.
 
+## Stan prób z 14 października 2026
+
+Pierwsza próba zakończyła się sygnałem wyłączenia runnera i kodem 143.
+Druga przeszła przygotowanie źródeł i testy, ale etap kompilacji zakończył
+się niepowodzeniem o 15:14 UTC. Zadanie utknęło w `Complete job`, a GitHub
+nie udostępnił końcowego logu podczas sprawdzania o 15:36 UTC. Nie ustalono
+przyczyny tej drugiej awarii; nie ma zweryfikowanego obrazu AERA.
+
+Kolejna konfiguracja zapisuje diagnostykę źródeł przed kompilacją oraz
+próbkuje RAM i miejsce na dysku w logu na żywo. Używa jednego zadania
+kompilatora i ogranicza cel pamięci GC Go do 10 GiB (to nie twardy limit RAM).
+Zmiany mają zmniejszyć obciążenie i zapewnić dane do diagnozy; nie dowodzą,
+że wcześniejszą przyczyną był brak pamięci. Nowe uruchomienie zastępuje
+poprzednią aktywną próbę na tej samej gałęzi.
+
 Źródła:
 
 - https://github.com/MissMyTime/twrp_device_sm8850/releases/tag/1.1
