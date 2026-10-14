@@ -24,6 +24,7 @@ jobs:
       # Leave headroom for the runner while Soong constructs the build graph.
       GOMEMLIMIT: 10GiB
       GOGC: '50'
+      GOMAXPROCS: '2'
     steps:
       - name: Read port project
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -76,6 +77,59 @@ jobs:
           python3 tests/test_keystore_snapshot.py --vold-root "$ANDROID_ROOT/system/vold"
           python3 aera/test_service_stop.py --vold-root "$ANDROID_ROOT/system/vold"
 
+      - name: Pass Go memory controls to the isolated Soong builder
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          path = Path(os.environ["ANDROID_ROOT"]) / "build/soong/ui/build/soong.go"
+          source = path.read_text()
+          anchor = "\tinvocationEnv := make(map[string]string)\n"
+          marker = "// AERA CI: pass Go runtime controls through the isolated environment."
+          if marker in source or source.count(anchor) != 1:
+              raise SystemExit("Unexpected Soong source; refusing to apply memory patch")
+          patch = (
+              "\t" + marker + "\n"
+              '\tfor _, key := range []string{"GOMEMLIMIT", "GOGC", "GOMAXPROCS"} {\n'
+              '\t\tif value, ok := pb.config.Environment().Get(key); ok && value != "" {\n'
+              "\t\t\tinvocationEnv[key] = value\n"
+              "\t\t}\n"
+              "\t}\n"
+          )
+          path.write_text(source.replace(anchor, anchor + patch, 1))
+          print("Patched Soong to forward GOMEMLIMIT, GOGC and GOMAXPROCS")
+          PY
+          git -C "$ANDROID_ROOT/build/soong" diff --check
+          git -C "$ANDROID_ROOT/build/soong" diff -- ui/build/soong.go > artifacts/aera-build/soong-memory.patch
+
+      - name: Add swap on the disposable runner
+        run: |
+          set -euo pipefail
+          test "$GITHUB_ACTIONS" = true
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test "$(uname -s)" = Linux
+          swap_path=/swapfile-aera-ci
+          test ! -e "$swap_path"
+          test ! -L "$swap_path"
+          # Sources are already downloaded. Keep at least 16 GiB for build output.
+          swap_bytes=$((8 * 1024 * 1024 * 1024))
+          reserve_bytes=$((16 * 1024 * 1024 * 1024))
+          free_bytes=$(df -B1 --output=avail / | tail -n 1 | tr -d ' ')
+          if (( free_bytes < swap_bytes + reserve_bytes )); then
+            echo "::error::Not enough disk space for 8 GiB extra swap and 16 GiB build reserve"
+            exit 1
+          fi
+          sudo fallocate -l "$swap_bytes" "$swap_path"
+          sudo chmod 600 "$swap_path"
+          sudo mkswap "$swap_path"
+          sudo swapon "$swap_path"
+          # Preserve the runner's existing swap.
+          {
+            free -m
+            swapon --show
+            df -h "$ANDROID_ROOT"
+          } | tee artifacts/aera-build/memory-prebuild.txt
+
       - name: Preserve source integration diagnostics before compilation
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -96,6 +150,11 @@ jobs:
               free -m
               df -h "$ANDROID_ROOT"
               ps -eo comm,rss --sort=-rss | head -n 8 || true
+              for soong_pid in $(pgrep -x soong_build || true); do
+                echo "Go runtime environment for soong_build PID $soong_pid:"
+                # Only expose these three non-secret settings.
+                tr '\0' '\n' < "/proc/$soong_pid/environ" | grep -E '^(GOMEMLIMIT|GOGC|GOMAXPROCS)=' || true
+              done
               sleep 30
             done
           ) > >(tee "$GITHUB_WORKSPACE/artifacts/aera-build/resources-live.log") 2>&1 &
