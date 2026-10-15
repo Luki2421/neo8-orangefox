@@ -30,7 +30,8 @@ Nie stanowi to gwarancji braku innych błędów startu.
 - `prepare.py` porównuje rzeczywiste miejsca docelowe plików urządzenia z
   działającym ramdiskiem i odtwarza różniące się pliki obecne w obu bazach.
   Lokalnie odtworzył 107 plików, a także pobrał fstab z wzorca.
-  Pliki drzewa nieobecne we wzorcu są raportowane i pozostają w drzewie;
+  Pliki drzewa nieobecne we wzorcu są raportowane i pozostają w drzewie,
+  z wyjątkiem aktywnych manifestów VINTF opisanych poniżej;
   wynik nie jest wierną kopią całego ramdisku TWRP.
 - Decrypt.cpp, KeyStorage.cpp i Weaver1.cpp pochodzą z bazy Neo8.
   Dodano brakujące API kopii SQLite do AERA oraz kontrolę zatrzymania usług.
@@ -79,3 +80,35 @@ poprzednią aktywną próbę na tej samej gałęzi.
 - https://github.com/MissMyTime/twrp_device_sm8850/releases/tag/1.1
 - https://github.com/AERA-Recovery/android_bootable_recovery
 - https://github.com/AERA-Recovery/android_device_realme_lafa-AERA
+
+## Poprawki po próbie na telefonie z 15 października 2026
+
+Kompilacja 38605341457 zakończyła się powodzeniem, ale na telefonie recovery
+pozostawało na ekranie startowym, a restart z menu nie kończył się restartem.
+Dotyk i ADB działały. Logi i spakowany obraz potwierdziły następujące problemy:
+
+- Konflikty aktywnych manifestów VINTF (m.in. Gatekeeper) i deklaracja urządzenia
+  w przestrzeni framework. Przygotowanie przywraca manifesty z obrazu TWRP 1.1
+  nullguard o sprawdzonym SHA, usuwa dodatkowe aktywne fragmenty i przenosi
+  deklarację fastboot do vendor. AERA nadal generuje własny fragment keystore2.
+- Brak plików task_profiles wymaganych przez logd. Konfiguracja cgroups i profili
+  jest teraz odtwarzana z tego samego obrazu wzorcowego.
+- Kod APEX odczytywał rozmiar po zamknięciu deskryptora, co skutkowało błędem
+  przepełnienia. Patch pobiera rozmiar przez fstat przed zamknięciem, używa
+  przydzielonego numeru loop i sprząta deskryptory oraz loop po błędach.
+
+Dodano logi początku i końca konfiguracji partycji oraz wywołania Decrypt_Data.
+Nie dowiedziono jeszcze, że te poprawki usuwają całe zatrzymanie inicjalizacji.
+Odszyfrowanie, restart i pozostałe błędy usług wymagają ponownej próby na Neo8.
+
+Lokalnie przeszły przygotowanie przypiętych źródeł, testy konfiguracji (także
+celowo błędnych danych), 10 scenariuszy kodu APEX z atrapami wywołań systemowych
+oraz test zatrzymywania usług. Ponowne lokalne uruchomienie testu kopii SQLite
+było zablokowane brakiem nagłówka sqlite3.h; workflow instaluje libsqlite3-dev
+i nadal wymaga przejścia tego testu. Testy hosta nie zastępują kompilacji Androida
+ani próby na telefonie.
+
+Przed udostępnieniem obrazu workflow sprawdza również konfigurację w gotowym
+ramdisku i zapisuje runtime-validation.json. Walidator wykrywa brak profili,
+konflikty instancji HAL i niewłaściwe przestrzenie manifestów; nie zastępuje
+pełnej walidacji zgodności libvintf ani testu uruchomienia usług.

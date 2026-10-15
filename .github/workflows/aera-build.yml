@@ -76,6 +76,8 @@ jobs:
           python3 aera/prepare.py --android-root "$ANDROID_ROOT" --donor /tmp/neo8-device-source --reference /tmp/twrp-nullguard.img --report artifacts/aera-build/source-integration.json
           python3 tests/test_keystore_snapshot.py --vold-root "$ANDROID_ROOT/system/vold"
           python3 aera/test_service_stop.py --vold-root "$ANDROID_ROOT/system/vold"
+          python3 aera/test_runtime_config.py --donor /tmp/neo8-device-source --reference /tmp/twrp-nullguard.img
+          python3 aera/test_apex_loop.py --recovery-root "$ANDROID_ROOT/bootable/recovery"
 
       - name: Pass Go memory controls to the isolated Soong builder
         run: |
@@ -177,6 +179,7 @@ jobs:
           set -o pipefail
           image="$ANDROID_ROOT/out/target/product/RE6402L1/recovery.img"
           python3 scripts/inspect_recovery.py --image "$image" --report artifacts/aera-build/image-inventory.json
+          python3 aera/verify_runtime_image.py --image "$image" --report artifacts/aera-build/runtime-validation.json
           python3 "$ANDROID_ROOT/external/avb/avbtool.py" verify_image --image "$image" 2>&1 | tee artifacts/aera-build/avb-verification.txt
           mkdir -p artifacts/aera-development-image
           cp "$image" artifacts/aera-development-image/AERA-Neo8-experimental.img

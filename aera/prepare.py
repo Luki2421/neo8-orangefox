@@ -15,6 +15,7 @@ import sys
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / 'scripts'))
 from boot_ramdisk import read_recovery
+from runtime_config import restore_runtime_config
 
 REFERENCE_SHA = '80b0cbb97a969b4df1ec4c9e51056c4a6433e3536364e987666186f3c5fd7573'
 
@@ -68,6 +69,7 @@ def main():
                 path.chmod(entry['mode'] & 0o777)
                 report['overlaid'].append(target)
     (device / 'recovery.fstab').write_bytes(entries['system/etc/recovery.fstab']['data'])
+    report['runtime_configuration'] = restore_runtime_config(device, entries)
     prop = device / 'system.prop'
     text = prop.read_text().replace('ro.crypto.metadata_init_delete_all_keys.enabled=true',
                                     'ro.crypto.metadata_init_delete_all_keys.enabled=false')
@@ -89,7 +91,9 @@ def main():
     for patch, directory in [('0001-neo8-vold.patch', vold),
                              ('neo8-keystore-info.patch', vold),
                              ('neo8-keystore-stop.patch', vold),
-                             ('0002-neo8-display-start.patch', recovery)]:
+                             ('0002-neo8-display-start.patch', recovery),
+                             ('0003-apex-loop-lifetime.patch', recovery),
+                             ('0004-startup-diagnostics.patch', recovery)]:
         run('git', 'apply', '--check', str(HERE / 'patches' / patch), cwd=directory)
         run('git', 'apply', str(HERE / 'patches' / patch), cwd=directory)
     shutil.copy2(donor / 'patches/common/files/system/vold/Weaver1.cpp', vold / 'Weaver1.cpp')
