@@ -18,6 +18,10 @@
     "commit": "36bb8ce4fbbb4615f3d87638347c59eface0853b",
     "tree": "fbb2c07bd71487b867d92c2a8f21952590b0a14b"
   },
+  "AERA-Recovery/android_hardware_interfaces": {
+    "branch": "aera-16.0",
+    "commit": "bdefb2a8bce20dc15882d4ab668fb628c427e26b"
+  },
   "AERA-Recovery/android_vendor_recovery": {
     "branch": "aera-16.0",
     "commit": "7b4e41362938ee3498fc0e8a4f3e0528bf320efd",

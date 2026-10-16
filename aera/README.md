@@ -112,3 +112,13 @@ Przed udostępnieniem obrazu workflow sprawdza również konfigurację w gotowym
 ramdisku i zapisuje runtime-validation.json. Walidator wykrywa brak profili,
 konflikty instancji HAL i niewłaściwe przestrzenie manifestów; nie zastępuje
 pełnej walidacji zgodności libvintf ani testu uruchomienia usług.
+
+## Korekta po kompilacji 38777203358
+
+Pełna kompilacja i wszystkie testy źródeł (w tym SQLite/WAL) przeszły.
+Kontrola ramdisku zatrzymała publikację obrazu: moduł fastboot AERA dodawał
+ponownie swój fragment VINTF do system/etc, mimo przeniesienia kopii urządzenia
+do vendor/etc. Patch 0005 usuwa wyłącznie automatyczne dołączanie tego fragmentu;
+deklaracja urządzenia pozostaje w vendor, a binarium usługi i init_rc pozostają
+włączone. Przypięto rewizję hardware/interfaces, na której wystąpił błąd.
+Walidator gotowego obrazu pozostaje obowiązkowy.

@@ -1,0 +1,14 @@
+diff --git a/fastboot/aidl/default/Android.bp b/fastboot/aidl/default/Android.bp
+index cb38dcc..6083966 100644
+--- a/fastboot/aidl/default/Android.bp
++++ b/fastboot/aidl/default/Android.bp
+@@ -25,7 +25,8 @@ package {
+ cc_binary {
+     name: "android.hardware.fastboot-service.example_recovery",
+     init_rc: ["android.hardware.fastboot-service.example_recovery.rc"],
+-    vintf_fragments: ["android.hardware.fastboot-service.example.xml"],
++    // Neo8 installs this device HAL fragment in recovery/vendor/etc/vintf.
++    // recovery:true otherwise installs a second copy under system/etc.
+     recovery: true,
+     srcs: [
+         "Fastboot.cpp",

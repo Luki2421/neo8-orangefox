@@ -33,7 +33,8 @@ def main():
     locks = json.loads((HERE / 'sources.lock.json').read_text())
     for repo, directory in [('MissMyTime/twrp_device_sm8850', donor),
                             ('AERA-Recovery/android_bootable_recovery', root / 'bootable/recovery'),
-                            ('AERA-Recovery/android_system_vold', root / 'system/vold')]:
+                            ('AERA-Recovery/android_system_vold', root / 'system/vold'),
+                            ('AERA-Recovery/android_hardware_interfaces', root / 'hardware/interfaces')]:
         actual = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=directory, text=True).strip()
         if actual != locks[repo]['commit']:
             raise RuntimeError(f'Wrong revision for {repo}: {actual}')
@@ -93,7 +94,8 @@ def main():
                              ('neo8-keystore-stop.patch', vold),
                              ('0002-neo8-display-start.patch', recovery),
                              ('0003-apex-loop-lifetime.patch', recovery),
-                             ('0004-startup-diagnostics.patch', recovery)]:
+                             ('0004-startup-diagnostics.patch', recovery),
+                             ('0005-fastboot-manifest-owner.patch', root / 'hardware/interfaces')]:
         run('git', 'apply', '--check', str(HERE / 'patches' / patch), cwd=directory)
         run('git', 'apply', str(HERE / 'patches' / patch), cwd=directory)
     shutil.copy2(donor / 'patches/common/files/system/vold/Weaver1.cpp', vold / 'Weaver1.cpp')

@@ -16,6 +16,11 @@ from runtime_config import restore_runtime_config, validate_runtime_files, is_ma
 def rejected(files, reason):
     try:
         validate_runtime_files(files)
+        fastboot = 'vendor/etc/vintf/manifest/android.hardware.fastboot-service.example.xml'
+        assert fastboot in files
+        broken = copy.copy(files)
+        broken['system/etc/vintf/manifest/android.hardware.fastboot-service.example.xml'] = files[fastboot]
+        rejected(broken, 'Wrong VINTF namespace')
     except ValueError as exc:
         assert reason in str(exc), str(exc)
     else:
