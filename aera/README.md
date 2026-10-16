@@ -6,8 +6,10 @@ Bazą sprzętową jest **TWRP 1.1**, commit
 Rdzeń recovery i interfejs pochodzą z AERA Android 16.
 Nazwa repozytorium nie oznacza użycia rdzenia OrangeFox w tej kompilacji.
 
-**Nie jest to jeszcze recovery potwierdzone na telefonie.** Udana kompilacja
-nie potwierdza uruchamiania, dotyku ani odszyfrowania PIN-em.
+**Kompilacja neo8-ci-9 została sprawdzona na telefonie:** uruchamianie, dotyk,
+odszyfrowanie wzorem, dostęp do plików, restart do systemu i kopia DTBO B.
+Przywracanie kopii nie zostało potwierdzone. Kolejna zmiana Wi-Fi jest
+eksperymentalna i wymaga osobnego sprawdzenia na urządzeniu.
 
 ## Baza i poprawka uruchamiania
 
@@ -171,3 +173,39 @@ wyglądać jak zawieszenie trwające około 16 minut. Ta poprawka uzupełnia bra
 pliki; nie zmienia algorytmu odszyfrowania ani liczby prób uwierzytelnienia.
 Log klasyfikuje blokadę jako pattern (typ 1); typ blokady należy potwierdzić
 przy kolejnej próbie, jeżeli użytkownik rzeczywiście korzysta z PIN-u liczbowego.
+
+
+## Wi-Fi po sprawdzeniu neo8-ci-9
+
+W gotowym obrazie brakowało skompilowanego backendu WLAN, usługi init oraz
+programów wpa_supplicant/wpa_cli/dhcptool w ścieżkach AERA. Z telefonu otrzymano
+listę montowań bez vendor/odm/vendor_dlkm/system_dlkm oraz listę modułów bez
+cnss_plat_ipc_qmi_svc, icnss2 i qca_cld3_wcn7750. Sam komunikat „unavailable”
+wynikał z wyłączonej flagi kompilacji; brak modułów nie dowodzi awarii sprzętu.
+
+Zmiana włącza AERA_ENABLE_WLAN i backend nl80211. Usługa uruchamia się dopiero
+po żądaniu z UI; korzysta z loadera i klienta HAL z obrazu referencyjnego.
+Partycje zainstalowanego systemu montuje tylko do odczytu pod /tmp/aera-wifi.
+Nie zasłania całych /vendor ani /odm. Wyłącznie podkatalogi etc/wifi otrzymują
+powiązania z konfiguracją stock, a biblioteki stock są wskazywane przez
+LD_LIBRARY_PATH tylko procesom Wi-Fi. Istniejące montowanie persist pozostaje;
+przy jego braku skrypt próbuje montowania nazwanego persist tylko do odczytu.
+Nie ma zapisu obrazu partycji, formatowania ani kopiowania bazy sieci Androida.
+
+wpa_supplicant korzysta z konfiguracji i gniazd w /tmp/recovery. Cały loader
+ma limit 100 s (+5 s do wymuszenia zakończenia), a UI oczekuje do 120 s na
+odpowiedź gniazda. Przedwczesne zakończenie usługi kończy oczekiwanie błędem.
+Init zarządza grupą procesów usługi, w tym potomnymi HAL i CNSS. Firmware jest
+wyszukiwany dodatkowo w osobnych montowaniach; katalogi kryptograficzne i
+pakiet Secure Element z kompilacji 9 pozostają bez zmian.
+
+Testy hosta obejmują rzeczywiste funkcje powłoki z atrapą insmod: kolejność
+zależności, wpisy modules.dep z i bez ścieżek, brak zależności, błąd insmod,
+cykl, współdzielone zależności, zagnieżdżone pliki i nazwę modułu wlan przy ponownym włączeniu. Walidator gotowego obrazu sprawdza obecność
+backendu WLAN, wykonywalnych programów, dokładną konfigurację, helper HAL,
+ścieżki firmware oraz pojedynczą usługę supplicant. Te kontrole nie sprawdzają
+ABI bibliotek zainstalowanego systemu ani działania radia. Skanowanie,
+połączenie, DHCP i ponowne włączenie wymagają próby na Neo8.
+
+Logi nowej próby: /tmp/neo8-wifi-service.log, /tmp/neo8-wifi-loader.log,
+/tmp/neo8-wpa.log, /tmp/dhcptool.log oraz /tmp/recovery.log.

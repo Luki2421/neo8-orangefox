@@ -79,6 +79,7 @@ jobs:
           python3 aera/test_service_stop.py --vold-root "$ANDROID_ROOT/system/vold"
           python3 aera/test_runtime_config.py --donor /tmp/neo8-device-source --reference /tmp/twrp-nullguard.img
           python3 aera/test_secure_element_bundle.py --device "$ANDROID_ROOT/device/realme/RE6402L1" --reference /tmp/twrp-nullguard.img
+          python3 aera/test_wifi.py --device "$ANDROID_ROOT/device/realme/RE6402L1" --reference /tmp/twrp-nullguard.img
           python3 aera/test_apex_loop.py --recovery-root "$ANDROID_ROOT/bootable/recovery"
 
       - name: Pass Go memory controls to the isolated Soong builder

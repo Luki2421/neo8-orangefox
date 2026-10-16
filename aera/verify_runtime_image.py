@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'scripts'))
 from boot_ramdisk import read_recovery
 from runtime_config import validate_runtime_files
 from secure_element_bundle import verified_reference, validate_secure_element_bundle
+from wifi_config import validate_wifi_image
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
@@ -22,6 +23,7 @@ if __name__ == '__main__':
     report = validate_runtime_files(files)
     reference = verified_reference(*read_recovery(args.reference))
     report['secure_element_bundle'] = validate_secure_element_bundle(entries, reference)
+    report['wifi'] = validate_wifi_image(entries, reference)
     etc = entries.get('etc', {})
     if not stat.S_ISLNK(etc.get('mode', 0)) or etc['data'] != b'/system/etc':
         raise ValueError('Expected /etc -> /system/etc for logd profiles')

@@ -1,0 +1,12 @@
+# Wi-Fi is opt-in; do not run the hardware loader during recovery startup.
+on property:sys.aera.wlan.up=1
+    setprop sys.aera.wlan.up 0
+    start wpa_supplicant
+
+service wpa_supplicant /system/bin/sh /system/bin/neo8-wifi-service.sh
+    class main
+    user root
+    group root wifi inet net_admin net_raw
+    disabled
+    oneshot
+    seclabel u:r:recovery:s0

@@ -1,0 +1,24 @@
+--- a/wlan.cpp
++++ b/wlan.cpp
+@@ -64,7 +64,7 @@
+
+ static const char* WLAN_SUPP_SERVICE   = "wpa_supplicant";
+ static const char* WLAN_SUPP_SVC_PROP  = "init.svc.wpa_supplicant";
+-static constexpr int WLAN_SUPP_READY_TIMEOUT_MS = 60000;
++static constexpr int WLAN_SUPP_READY_TIMEOUT_MS = 120000;
+ /* Set to "1" to fire the `on property:sys.aera.wlan.up=1` block in
+  * init.recovery.wifi.rc, which brings up the QCA6490 driver on demand and then
+  * `start`s the wpa_supplicant service. The bring-up used to live in a shell
+@@ -1872,6 +1872,12 @@
+     const std::string socket = GetCtrlDir() + "/" + GetIface();
+
+     while (waited < timeout_ms) {
++        char service_state[PROPERTY_VALUE_MAX] = {};
++        property_get(WLAN_SUPP_SVC_PROP, service_state, "");
++        if (strcmp(service_state, "stopped") == 0) {
++            LOGERR("WLAN: Neo8 setup failed; see /tmp/neo8-wifi-loader.log\n");
++            return false;
++        }
+         if (FileExists(socket)) {
+             std::string reply;
+             if (SuppCmd("PING", reply) && Trim(reply) == "PONG") {

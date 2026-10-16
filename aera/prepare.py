@@ -17,6 +17,7 @@ sys.path.insert(0, str(HERE.parent / 'scripts'))
 from boot_ramdisk import read_recovery
 from runtime_config import restore_runtime_config
 from secure_element_bundle import restore_secure_element_bundle, verified_reference
+from wifi_config import configure_wifi
 
 REFERENCE_SHA = '80b0cbb97a969b4df1ec4c9e51056c4a6433e3536364e987666186f3c5fd7573'
 
@@ -74,6 +75,7 @@ def main():
     (device / 'recovery.fstab').write_bytes(entries['system/etc/recovery.fstab']['data'])
     report['runtime_configuration'] = restore_runtime_config(device, entries)
     report['secure_element_bundle'] = restore_secure_element_bundle(device, entries)
+    report['wifi'] = configure_wifi(device, entries)
     prop = device / 'system.prop'
     text = prop.read_text().replace('ro.crypto.metadata_init_delete_all_keys.enabled=true',
                                     'ro.crypto.metadata_init_delete_all_keys.enabled=false')
@@ -84,6 +86,8 @@ def main():
                 'AERA_INCLUDE_CRYPTO := true\nAERA_INCLUDE_CRYPTO_FBE := true\n'
                 'AERA_INCLUDE_FBE_METADATA_DECRYPT := true\nAERA_USE_FSCRYPT_POLICY := 2\n'
                 'AERA_INCLUDE_OMAPI := true\nAERA_UI_ADAPTIVE_RESOLUTION := true\n'
+                'AERA_ENABLE_WLAN := 1\nWPA_SUPPLICANT_VERSION := VER_0_8_X\n'
+                'BOARD_WPA_SUPPLICANT_DRIVER := NL80211\n'
                 'AERA_DEFAULT_LANGUAGE := en\nAERA_DEVICE_VERSION := Neo8-experimental\n')
     (device / 'vendorsetup.sh').write_text(
         'if [ "${AERA_BUILD_DEVICE:-}" = "RE6402L1" ]; then\n'
@@ -98,6 +102,7 @@ def main():
                              ('0002-neo8-display-start.patch', recovery),
                              ('0003-apex-loop-lifetime.patch', recovery),
                              ('0004-startup-diagnostics.patch', recovery),
+                             ('0007-neo8-wifi-startup.patch', recovery),
                              ('0005-fastboot-manifest-owner.patch', root / 'hardware/interfaces'),
                              ('0006-fastboot-recovery-domain.patch', root / 'hardware/interfaces')]:
         run('git', 'apply', '--check', str(HERE / 'patches' / patch), cwd=directory)
