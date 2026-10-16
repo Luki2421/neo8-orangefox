@@ -16,6 +16,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / 'scripts'))
 from boot_ramdisk import read_recovery
 from runtime_config import restore_runtime_config
+from secure_element_bundle import restore_secure_element_bundle, verified_reference
 
 REFERENCE_SHA = '80b0cbb97a969b4df1ec4c9e51056c4a6433e3536364e987666186f3c5fd7573'
 
@@ -41,6 +42,7 @@ def main():
     image, entries = read_recovery(args.reference)
     if hashlib.sha256(image).hexdigest() != REFERENCE_SHA:
         raise RuntimeError('Reference does not match the user-tested nullguard image')
+    verified_reference(image, entries)
     device = root / 'device/realme/RE6402L1'
     if device.exists():
         raise RuntimeError('Device destination must be empty')
@@ -71,6 +73,7 @@ def main():
                 report['overlaid'].append(target)
     (device / 'recovery.fstab').write_bytes(entries['system/etc/recovery.fstab']['data'])
     report['runtime_configuration'] = restore_runtime_config(device, entries)
+    report['secure_element_bundle'] = restore_secure_element_bundle(device, entries)
     prop = device / 'system.prop'
     text = prop.read_text().replace('ro.crypto.metadata_init_delete_all_keys.enabled=true',
                                     'ro.crypto.metadata_init_delete_all_keys.enabled=false')

@@ -142,3 +142,32 @@ usuwała tej odmowy. Działanie fastbootd wymaga ponownego testu na telefonie.
 Nie zmieniono nieograniczonych oczekiwań Binder ani ścieżki restartu w ciemno.
 Nowe logi startu mają rozróżnić powrót z odszyfrowania od dalszej blokady.
 Sukces kompilacji i kontroli ramdisku nadal nie potwierdza odszyfrowania PIN-em.
+
+## Zawieszenie po podaniu blokady w neo8-ci-8
+
+Nowe logi z telefonu potwierdzają powodzenie odszyfrowania metadanych i powrót
+z początkowego Decrypt_Data. Recovery działa po pominięciu blokady. Przy próbie
+odszyfrowania użytkownika Weaver zgłasza błąd getConfig, OMAPI czeka na
+android.hardware.secure_element.ISecureElement/eSE1, a transport nie ma usługi
+OMAPI. NFC dodatkowo kończy się błędem brakującego android.hardware.nfc-V1-ndk.so.
+
+Przygotowanie kopiowało z obrazu wzorcowego tylko pliki o nazwach obecnych już
+w drzewie dawcy. W efekcie odtwarzało init rc wskazujący na
+neo8-secure-element-launcher.sh, lecz pomijało sam skrypt, prywatny zestaw ABI,
+część bibliotek transportu i zestaw TA pod system/etc/neo8-firmware.
+secure_element_bundle.py dodaje teraz jawnie wybrane 61 plików z obrazu
+nullguard o sprawdzonym SHA: skrypt i rc, 11 prywatnych bibliotek, 7 bibliotek
+transportu, konfigurację TA i 40 fragmentów firmware czterech TA.
+Nie kopiuje ogólnych bibliotek systemowych ani binarium recovery z TWRP.
+
+Test odrzuca brak każdego składnika, złą zawartość biblioteki oraz błędny typ
+lub tryb pliku skryptu. Kontrola gotowego ramdisku porównuje ten sam zestaw
+z obrazem wzorcowym przed zachowaniem artefaktu. Nie jest to test działania
+linkera Androida, komunikacji z eSE ani poprawności odszyfrowania na telefonie.
+
+Oczekiwanie getConfig w kodzie dawcy ma 80 prób; na telefonie pojedyncza próba
+HAL wykonuje 12 ponowień po około sekundzie. Awaria transportu może więc
+wyglądać jak zawieszenie trwające około 16 minut. Ta poprawka uzupełnia brakujące
+pliki; nie zmienia algorytmu odszyfrowania ani liczby prób uwierzytelnienia.
+Log klasyfikuje blokadę jako pattern (typ 1); typ blokady należy potwierdzić
+przy kolejnej próbie, jeżeli użytkownik rzeczywiście korzysta z PIN-u liczbowego.
