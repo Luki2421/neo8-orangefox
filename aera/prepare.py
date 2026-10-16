@@ -95,7 +95,8 @@ def main():
                              ('0002-neo8-display-start.patch', recovery),
                              ('0003-apex-loop-lifetime.patch', recovery),
                              ('0004-startup-diagnostics.patch', recovery),
-                             ('0005-fastboot-manifest-owner.patch', root / 'hardware/interfaces')]:
+                             ('0005-fastboot-manifest-owner.patch', root / 'hardware/interfaces'),
+                             ('0006-fastboot-recovery-domain.patch', root / 'hardware/interfaces')]:
         run('git', 'apply', '--check', str(HERE / 'patches' / patch), cwd=directory)
         run('git', 'apply', str(HERE / 'patches' / patch), cwd=directory)
     shutil.copy2(donor / 'patches/common/files/system/vold/Weaver1.cpp', vold / 'Weaver1.cpp')

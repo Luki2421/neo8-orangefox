@@ -122,3 +122,23 @@ do vendor/etc. Patch 0005 usuwa wyłącznie automatyczne dołączanie tego fragm
 deklaracja urządzenia pozostaje w vendor, a binarium usługi i init_rc pozostają
 włączone. Przypięto rewizję hardware/interfaces, na której wystąpił błąd.
 Walidator gotowego obrazu pozostaje obowiązkowy.
+
+## Ponowny przegląd inicjalizacji i restartu
+
+Kod gui_init uruchamia StartAeraUiEarly w osobnym wątku przed synchronicznym
+Setup_Fstab_Partitions i Decrypt_Data. Konstruktor Keystore czeka bez limitu
+na usługę keystore2. Wynik wyboru restartu z wczesnego UI jest odbierany później
+przez główny wątek. Wyjaśnia to możliwość działającego dotyku i ekranu restartu
+przy zablokowanej inicjalizacji. Bez stosu wątków z telefonu nie potwierdzono
+dokładnego wywołania, na którym zatrzymał się stary obraz.
+
+Log kernela zawiera także odmowy binder z hal_fastboot_default do recovery
+przy permissive=0. Serwis fastboot z hardware/interfaces używał tej pierwszej
+domeny, a servicemanager i pozostałe HAL recovery używają recovery. Patch 0006
+dopasowuje seclabel wyłącznie tego serwisu recovery; nie zmienia globalnego
+trybu SELinux, UID, grup ani pliku wykonywalnego. Poprawka manifestu sama nie
+usuwała tej odmowy. Działanie fastbootd wymaga ponownego testu na telefonie.
+
+Nie zmieniono nieograniczonych oczekiwań Binder ani ścieżki restartu w ciemno.
+Nowe logi startu mają rozróżnić powrót z odszyfrowania od dalszej blokady.
+Sukces kompilacji i kontroli ramdisku nadal nie potwierdza odszyfrowania PIN-em.
