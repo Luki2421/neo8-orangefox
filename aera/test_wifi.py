@@ -64,6 +64,48 @@ insmod() {
     print('PASS: 7 shell dependency scenarios and qcacld loaded-name alias')
 
 
+def check_library_environments(loader):
+    """Run the generated launch functions with stand-in HAL/CNSS programs.
+
+    Verify the environment each child receives, not Android ABI compatibility.
+    """
+    begin = loader.index('start_cnss_daemon() {')
+    end = loader.index('\nstart_wifi_hal || exit 1', begin)
+    launches = loader[begin:end] + '\nstart_wifi_hal || exit 1\nwait\n'
+    assignments = '\n'.join(line for line in loader.splitlines()
+                            if line.startswith(('CNSS_LIBS=', 'WIFI_AIDL_LIBS=')))
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        paths = {
+            '/tmp/aera-wifi/vendor/bin/cnss-daemon': root / 'cnss',
+            '/tmp/aera-wifi/vendor/bin/hw/android.hardware.wifi-service': root / 'hal',
+            '/system/bin/neo8_wifi_hal_client': root / 'client',
+        }
+        for original, path in paths.items():
+            path.write_text('#!/bin/sh\nprintf "%s\\n" "$LD_LIBRARY_PATH" > "$0.env"\n')
+            path.chmod(0o755)
+            launches = launches.replace(original, str(path))
+        launches = launches.replace('/system/bin/toybox', 'mock_toybox')
+        mocks = '''
+mock_toybox() {
+    [ "$2" = cnss-daemon ] && [ -f "$TEST_ROOT/cnss.env" ]
+}
+sleep() { /bin/sleep 0.05; }
+'''
+        script = assignments + '\n' + mocks + launches
+        script += '\n[ "$LD_LIBRARY_PATH" = parent-sentinel ]\n'
+        subprocess.run(['sh', '-c', script], check=True, capture_output=True,
+                       env={'PATH': '/usr/bin:/bin', 'STOCK': '/tmp/aera-wifi',
+                            'TEST_ROOT': tmp, 'LOG': str(root / 'log'),
+                            'LD_LIBRARY_PATH': 'parent-sentinel'}, timeout=5)
+        for name in ('hal', 'client'):
+            search = (root / (name + '.env')).read_text().strip().split(':')
+            assert search[:2] == ['/system/lib64', '/system_ext/lib64'], (name, search)
+            assert search.index('/tmp/aera-wifi/vendor/lib64') > 1, (name, search)
+        assert (root / 'cnss.env').read_text().startswith('/tmp/aera-wifi/vendor/lib64:')
+    print('PASS: HAL/client system libraries first, CNSS vendor first, parent unchanged')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--device', required=True, type=Path)
@@ -85,6 +127,7 @@ def main():
     assert '/dev/block/sda2' not in loader
     assert 'chmod 0770 /data/vendor/wifi' not in loader
     check_module_traversal(loader)
+    check_library_environments(loader)
     fixture = {p: {'mode': 0o100755, 'data': data} for p, data in expected.items()}
     fixture['system/etc/ueventd.rc'] = {'mode': 0o100644, 'data': ' '.join(FIRMWARE_DIRS).encode()}
     fixture['system/bin/recovery'] = {'mode': 0o100755, 'data': b'WLAN: triggering supplicant bring-up'}

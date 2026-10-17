@@ -209,3 +209,16 @@ połączenie, DHCP i ponowne włączenie wymagają próby na Neo8.
 
 Logi nowej próby: /tmp/neo8-wifi-service.log, /tmp/neo8-wifi-loader.log,
 /tmp/neo8-wpa.log, /tmp/dhcptool.log oraz /tmp/recovery.log.
+## Wi-Fi: poprawka po teście kompilacji 10
+
+Logcat z telefonu z 2026-10-17 pokazał, że HAL i klient otwierają
+`/dev/vndbinder`, a HAL kończy się `SIGABRT` przy rejestracji
+(`Failed to register wifi HAL`, `result=-129`). Loader nadawał obu procesom
+taką samą kolejność bibliotek jak CNSS: stock vendor przed systemem recovery.
+
+HAL AIDL i klient otrzymują teraz osobną ścieżkę z `/system/lib64` oraz
+`/system_ext/lib64` przed bibliotekami stock vendor/odm, zgodnie z kolejnością
+w skrypcie referencyjnym. CNSS zachowuje vendor jako pierwsze źródło bibliotek.
+Ścieżki są ustawiane tylko dla tych procesów. Test hostowy uruchamia funkcje
+wygenerowanego loadera z atrapami programów i sprawdza ich środowiska.
+Naprawa rejestracji HAL oraz działanie radia wymagają ponownego testu na telefonie.

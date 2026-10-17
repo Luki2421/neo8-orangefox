@@ -51,5 +51,9 @@ if ! grep -q ' /mnt/vendor/persist ' /proc/mounts; then
     mount -t ext4 -o ro /dev/block/bootdevice/by-name/persist /mnt/vendor/persist || exit 1
 fi
 
-# This environment is applied ONLY to Wi-Fi subprocesses.
-WIFI_LIBS="$STOCK/vendor/lib64:$STOCK/odm/lib64:/system/lib64:/system_ext/lib64:/vendor/lib64:/odm/lib64:/sbin/lib64"
+# These environments are applied ONLY to the respective subprocesses.
+CNSS_LIBS="$STOCK/vendor/lib64:$STOCK/odm/lib64:/system/lib64:/system_ext/lib64:/vendor/lib64:/odm/lib64:/sbin/lib64"
+# AIDL HAL and client need recovery's system libbinder on /dev/binder.
+# Stock vendor libbinder defaults to /dev/vndbinder; build 10 selected it
+# first and the HAL aborted during registration (result=-129).
+WIFI_AIDL_LIBS="/system/lib64:/system_ext/lib64:$STOCK/vendor/lib64:$STOCK/odm/lib64:/vendor/lib64:/odm/lib64:/sbin/lib64"

@@ -80,8 +80,12 @@ def make_loader(reference):
     source = source.replace('client=/sbin/neo8_wifi_hal_client', 'client=/system/bin/neo8_wifi_hal_client')
     source = replace_once(source, '    if [ ! -x "$client" ]; then',
         '    chmod 0755 "$client" || return 1\n    if [ ! -x "$client" ]; then')
-    source = source.replace('LD_LIBRARY_PATH=/vendor/lib64:/system/lib64:/sbin/lib64', 'LD_LIBRARY_PATH="$WIFI_LIBS"')
-    source = source.replace('LD_LIBRARY_PATH=/system/lib64:/system_ext/lib64:/vendor/lib64:/odm/lib64:/sbin/lib64', 'LD_LIBRARY_PATH="$WIFI_LIBS"')
+    source = replace_once(source, 'LD_LIBRARY_PATH=/vendor/lib64:/system/lib64:/sbin/lib64',
+        'LD_LIBRARY_PATH="$CNSS_LIBS"')
+    aidl_path = 'LD_LIBRARY_PATH=/system/lib64:/system_ext/lib64:/vendor/lib64:/odm/lib64:/sbin/lib64'
+    if source.count(aidl_path) != 2:
+        raise ValueError('Expected separate AIDL HAL and client launches')
+    source = source.replace(aidl_path, 'LD_LIBRARY_PATH="$WIFI_AIDL_LIBS"')
     source = replace_once(source, '\nstart_wifi_hal\n', '\nstart_wifi_hal || exit 1\n')
     return source
 
