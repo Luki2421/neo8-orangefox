@@ -70,7 +70,7 @@ def check_library_environments(loader):
     Verify the environment each child receives, not Android ABI compatibility.
     """
     begin = loader.index('start_cnss_daemon() {')
-    end = loader.index('\nstart_wifi_hal || exit 1', begin)
+    end = loader.index('\nstart_wifi_hal_with_retry() {', begin)
     launches = loader[begin:end] + '\nstart_wifi_hal || exit 1\nwait\n'
     assignments = '\n'.join(line for line in loader.splitlines()
                             if line.startswith(('CNSS_LIBS=', 'WIFI_AIDL_LIBS=')))
@@ -106,6 +106,39 @@ sleep() { /bin/sleep 0.05; }
     print('PASS: HAL/client system libraries first, CNSS vendor first, parent unchanged')
 
 
+def check_hal_start_retry(loader):
+    """Exercise delayed readiness and ensure unrelated failures stay fatal."""
+    begin = loader.index('start_wifi_hal_with_retry() {')
+    end = loader.index('\nstart_wifi_hal_with_retry || exit 1', begin)
+    retry = loader[begin:end]
+    cases = [((0,), 0), ((3, 0), 0), ((3, 3, 0), 0), ((3, 3, 3), 3)]
+    for status in (1, 2, 4, 5, 6, 7, 8, 9, 10, 126, 127):
+        cases.extend([((status,), status), ((3, status), status)])
+    for statuses, expected in cases:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'statuses').write_text('\n'.join(map(str, statuses)) + '\n')
+            mocks = '''
+start_wifi_hal() {
+    local status
+    status=$(head -n 1 "$TEST_ROOT/statuses")
+    sed '1d' "$TEST_ROOT/statuses" > "$TEST_ROOT/next"
+    mv "$TEST_ROOT/next" "$TEST_ROOT/statuses"
+    echo call >> "$TEST_ROOT/calls"
+    return "${status:-99}"
+}
+sleep() { echo "$1" >> "$TEST_ROOT/sleeps"; }
+'''
+            result = subprocess.run(['sh', '-c', mocks + retry + '\nstart_wifi_hal_with_retry'],
+                env={'PATH': '/usr/bin:/bin', 'TEST_ROOT': tmp},
+                capture_output=True, text=True, timeout=5)
+            assert result.returncode == expected, (statuses, result.stdout, result.stderr)
+            assert (root / 'calls').read_text().splitlines() == ['call'] * len(statuses)
+            pauses = (root / 'sleeps').read_text().splitlines() if (root / 'sleeps').exists() else []
+            assert pauses == ['8'] * (len(statuses) - 1), (statuses, pauses)
+    print(f'PASS: {len(cases)} HAL startup retry and fatal-error scenarios')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--device', required=True, type=Path)
@@ -128,6 +161,7 @@ def main():
     assert 'chmod 0770 /data/vendor/wifi' not in loader
     check_module_traversal(loader)
     check_library_environments(loader)
+    check_hal_start_retry(loader)
     fixture = {p: {'mode': 0o100755, 'data': data} for p, data in expected.items()}
     fixture['system/etc/ueventd.rc'] = {'mode': 0o100644, 'data': ' '.join(FIRMWARE_DIRS).encode()}
     fixture['system/bin/recovery'] = {'mode': 0o100755, 'data': b'WLAN: triggering supplicant bring-up'}

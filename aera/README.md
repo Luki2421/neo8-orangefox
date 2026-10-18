@@ -209,6 +209,23 @@ połączenie, DHCP i ponowne włączenie wymagają próby na Neo8.
 
 Logi nowej próby: /tmp/neo8-wifi-service.log, /tmp/neo8-wifi-loader.log,
 /tmp/neo8-wpa.log, /tmp/dhcptool.log oraz /tmp/recovery.log.
+## Wi-Fi: poprawka po teście kompilacji 11
+
+Logcat potwierdza start HAL bez poprzedniej awarii Bindera, ale pierwsze
+`IWifi.start()` kończy się błędem po około 20 sekundach. W osobnej sesji
+`wifi11-kernel.txt` pokazuje `Driver Loading Timed-out!!` w 84,958 s,
+rozłączenie CNSS w 84,965 s i dopiero `FW ready event received` w 90,621 s.
+Inicjalizacja sterownika postępuje jeszcze po zakończeniu loadera. Wcześniej
+widać oczekiwanie na DMS QMI, a następnie przejście na domyślny MAC.
+
+Loader ponawia wyłącznie błąd `IWifi.start` (kod 3 przypiętego helpera),
+maksymalnie do trzech prób z odstępem 8 sekund. Pozostaje przy życiu między
+próbami, dzięki czemu init nie kończy przedwcześnie jego procesów HAL/CNSS.
+Inne błędy nadal przerywają uruchamianie. Całość nadal ogranicza istniejący
+timeout 100 sekund. Testy hosta obejmują opóźniony sukces, wyczerpanie prób
+i błędy, których nie należy ponawiać. Skuteczność na telefonie wymaga testu;
+sam komunikat gotowości firmware nie potwierdza jeszcze połączenia Wi-Fi.
+
 ## Wi-Fi: poprawka po teście kompilacji 10
 
 Logcat z telefonu z 2026-10-17 pokazał, że HAL i klient otwierają

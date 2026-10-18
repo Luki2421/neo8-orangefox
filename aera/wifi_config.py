@@ -86,7 +86,9 @@ def make_loader(reference):
     if source.count(aidl_path) != 2:
         raise ValueError('Expected separate AIDL HAL and client launches')
     source = source.replace(aidl_path, 'LD_LIBRARY_PATH="$WIFI_AIDL_LIBS"')
-    source = replace_once(source, '\nstart_wifi_hal\n', '\nstart_wifi_hal || exit 1\n')
+    retry = (HERE / 'wifi/hal-retry.sh').read_text()
+    source = replace_once(source, '\nstart_wifi_hal\n',
+        '\n' + retry + '\nstart_wifi_hal_with_retry || exit 1\n')
     return source
 
 
