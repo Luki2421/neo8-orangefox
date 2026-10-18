@@ -7,7 +7,7 @@ import stat
 HERE = Path(__file__).resolve().parent
 ASSETS = {
     'system/bin/neo8-wifi-service.sh': 'neo8-wifi-service.sh',
-    'system/bin/busybox': 'busybox-shim.sh',
+    'system/bin/busybox': 'busybox-arm64',
     'system/etc/init/init.neo8-wifi.rc': 'init.neo8-wifi.rc',
 }
 FIRMWARE_DIRS = (

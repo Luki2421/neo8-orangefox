@@ -278,3 +278,7 @@ zależności StrongBox w rzeczywistym gotowym obrazie. Pakiet Secure Element
 z działającej kompilacji 9 pozostaje bez zmian. Zmiany nie modyfikują danych,
 kluczy użytkownika, manifestów kryptograficznych ani fstab. Nowy obraz wymaga
 sprawdzenia odszyfrowania wzorem, ADB/MTP, fastbootd oraz Wi-Fi na Neo8.
+
+## busybox
+
+Menedżer wtyczek AERA pobiera katalog przez `busybox wget`, a test sieci używa `busybox ping`; obraz nie miał busyboxa. `aera/wifi/busybox-arm64` to statyczny BusyBox v1.36.1 (osm0sis, NDK, GPL-2.0) z https://github.com/Magisk-Modules-Repo/busybox-ndk, commit ad6700620120e3c475df05b0f8bfa7a40e741ee0, sha256 c629fce4b0dd3ba9775f851d0941e74582115f423258d3a79800f2bd11d30f5c. Trafia do obrazu jako `/system/bin/busybox`.
