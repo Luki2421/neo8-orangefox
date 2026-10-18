@@ -95,6 +95,9 @@ def make_loader(reference):
 
 def expected_files(reference):
     files = {p: (HERE / 'wifi' / n).read_bytes() for p, n in ASSETS.items()}
+    # libcurl (plugin manager, downloads) looks for CA files here; the image has none.
+    for cert in sorted((HERE / 'wifi/cacerts').iterdir()):
+        files['system/etc/security/cacerts/' + cert.name] = cert.read_bytes()
     files['system/bin/neo8-wifi-loader.sh'] = make_loader(reference).encode()
     files['system/bin/neo8_wifi_hal_client'] = reference['sbin/neo8_wifi_hal_client']['data']
     return files
