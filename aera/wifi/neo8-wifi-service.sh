@@ -23,6 +23,10 @@ EOF
 chown 1010:1010 /tmp/recovery /tmp/recovery/sockets /tmp/recovery/wpa_supplicant.conf
 chmod 770 /tmp/recovery /tmp/recovery/sockets
 chmod 660 /tmp/recovery/wpa_supplicant.conf
+# toybox ping (used by the recovery's connection test through the busybox shim)
+# opens an unprivileged ICMP socket, which the kernel allows only for gids in this range.
+echo 0 2147483647 >/proc/sys/net/ipv4/ping_group_range
+
 # This wpa_supplicant build has no -f (CONFIG_DEBUG_FILE) and prints usage and
 # exits if given it. The control socket path comes from the config, so -C is not
 # needed. Output goes to /tmp/neo8-wifi-service.log via the redirect above.
