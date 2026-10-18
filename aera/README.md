@@ -208,7 +208,9 @@ ABI bibliotek zainstalowanego systemu ani działania radia. Skanowanie,
 połączenie, DHCP i ponowne włączenie wymagają próby na Neo8.
 
 Logi nowej próby: /tmp/neo8-wifi-service.log, /tmp/neo8-wifi-loader.log,
-/tmp/neo8-wpa.log, /tmp/dhcptool.log oraz /tmp/recovery.log.
+/tmp/dhcptool.log oraz /tmp/recovery.log (wyjście supplicanta jest w
+/tmp/neo8-wifi-service.log).
+
 ## Wi-Fi: poprawka po teście kompilacji 11
 
 Logcat potwierdza start HAL bez poprzedniej awarii Bindera, ale pierwsze

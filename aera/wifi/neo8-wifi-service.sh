@@ -18,6 +18,8 @@ ctrl_interface=/tmp/recovery/sockets
 update_config=0
 ap_scan=1
 EOF
-exec /system/bin/wpa_supplicant -Dnl80211 -iwlan0 \
-    -c/tmp/recovery/wpa_supplicant.conf -C/tmp/recovery/sockets \
-    -f/tmp/neo8-wpa.log
+# This wpa_supplicant build has no -f (CONFIG_DEBUG_FILE) and prints usage and
+# exits if given it. The control socket path comes from the config, so -C is not
+# needed. Output goes to /tmp/neo8-wifi-service.log via the redirect above.
+exec /system/bin/wpa_supplicant -dd -t -Dnl80211 -iwlan0 \
+    -c/tmp/recovery/wpa_supplicant.conf
