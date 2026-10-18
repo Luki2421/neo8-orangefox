@@ -18,6 +18,11 @@ ctrl_interface=/tmp/recovery/sockets
 update_config=0
 ap_scan=1
 EOF
+# Android's wpa_supplicant drops from root to the wifi user (uid/gid 1010) before
+# it opens the config, so the umask 077 files above would give "Permission denied".
+chown 1010:1010 /tmp/recovery /tmp/recovery/sockets /tmp/recovery/wpa_supplicant.conf
+chmod 770 /tmp/recovery /tmp/recovery/sockets
+chmod 660 /tmp/recovery/wpa_supplicant.conf
 # This wpa_supplicant build has no -f (CONFIG_DEBUG_FILE) and prints usage and
 # exits if given it. The control socket path comes from the config, so -C is not
 # needed. Output goes to /tmp/neo8-wifi-service.log via the redirect above.
