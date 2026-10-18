@@ -241,3 +241,40 @@ w skrypcie referencyjnym. CNSS zachowuje vendor jako pierwsze źródło bibliote
 Ścieżki są ustawiane tylko dla tych procesów. Test hostowy uruchamia funkcje
 wygenerowanego loadera z atrapami programów i sprawdza ich środowiska.
 Naprawa rejestracji HAL oraz działanie radia wymagają ponownego testu na telefonie.
+
+## USB i StrongBox: wspólna poprawka po logach kompilacji 11
+
+W `wifi11-kernel.txt` akcję ADB uruchamiają kolejno ogólny init AERA
+(16,657 s) oraz init urządzenia (16,680 s). Druga próba zgłasza istniejący
+symlink i zajęty UDC. Konfiguracja urządzenia przejmuje wszystkie przełączenia
+configfs i montowania FunctionFS. Ogólny init zachowuje tworzenie gadżetu,
+usługi adbd/fastbootd oraz uruchamianie tych usług. Przed zmianą deskryptorów
+i dowiązań UDC jest odłączany. Tryb `none` zatrzymuje obie usługi i czyści
+sygnały gotowości. MTP i MTP+ADB czekają na `sys.usb.ffs.mtp.ready=1`, które
+przypięty MtpDescriptors.cpp ustawia po zapisaniu deskryptorów i ciągów znaków.
+Sam sygnał gotowości ADB nie wystarcza do podłączenia obu funkcji.
+
+W tej sesji jądra StrongBox kończy się kodem 1 i jest ponownie uruchamiany.
+Wpis entrypoint wskazuje program z `/odm` na dm-11. Osobna sesja logcat
+pokazuje natomiast udane `sendRootOfTrust` oraz dostępność STRONGBOX;
+nie jest to podstawa do wyłączania tej usługi ani uznania jej za zbędną.
+Nie mamy komunikatu wyjaśniającego kod 1 z nieudanej sesji.
+
+Nowy launcher uruchamia kopię programu z referencyjnego obrazu w
+`/system/bin/neo8-strongbox-service`, z bibliotekami vendor w osobnym
+`/system/lib64/neo8_strongbox`. Wybór tego programu i jego zależności
+DT_NEEDED nie zależy już od zasłonięcia `/odm` partycją stock. Biblioteki
+systemowe AERA zachowują pierwszeństwo, w tym Binder. Stderr jest zapisywany
+w `/tmp/neo8-strongbox.log` z uprawnieniami 0600. Klasa, użytkownik, grupy,
+capabilities, etykieta SELinux i moment startu usługi pozostają jak w referencji.
+To korekta źródła plików i diagnostyki, a nie potwierdzenie usunięcia każdej
+możliwej przyczyny kodu 1. Biblioteki ładowane dynamicznie, komunikacja z SE
+oraz zgodność ABI wymagają próby na telefonie.
+
+Testy hosta sprawdzają 12 przejść trybów USB, obie kolejności gotowości
+MTP/ADB, przejście bezpośrednie, brak podwójnych montowań, zależności ELF,
+brakujące pliki i środowisko launchera. Po kompilacji osobna bramka sprawdza
+zależności StrongBox w rzeczywistym gotowym obrazie. Pakiet Secure Element
+z działającej kompilacji 9 pozostaje bez zmian. Zmiany nie modyfikują danych,
+kluczy użytkownika, manifestów kryptograficznych ani fstab. Nowy obraz wymaga
+sprawdzenia odszyfrowania wzorem, ADB/MTP, fastbootd oraz Wi-Fi na Neo8.

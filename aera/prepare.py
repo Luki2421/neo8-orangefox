@@ -18,6 +18,7 @@ from boot_ramdisk import read_recovery
 from runtime_config import restore_runtime_config
 from secure_element_bundle import restore_secure_element_bundle, verified_reference
 from wifi_config import configure_wifi
+from runtime_fixes import configure_runtime_fixes
 
 REFERENCE_SHA = '80b0cbb97a969b4df1ec4c9e51056c4a6433e3536364e987666186f3c5fd7573'
 
@@ -76,6 +77,7 @@ def main():
     report['runtime_configuration'] = restore_runtime_config(device, entries)
     report['secure_element_bundle'] = restore_secure_element_bundle(device, entries)
     report['wifi'] = configure_wifi(device, entries)
+    report['usb_and_strongbox'] = configure_runtime_fixes(device, root / 'bootable/recovery', entries)
     prop = device / 'system.prop'
     text = prop.read_text().replace('ro.crypto.metadata_init_delete_all_keys.enabled=true',
                                     'ro.crypto.metadata_init_delete_all_keys.enabled=false')
