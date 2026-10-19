@@ -303,3 +303,19 @@ Testy hosta wykonują zmienione funkcje C++: 28 scenariuszy APEX oraz
 połączenie. Nie emulują sterownika USB ani montowania na Neo8. Próba na
 telefonie powinna objąć start bez kabla i z kablem, kilkukrotne odpięcie
 i podpięcie przy włączonym MTP/ADB oraz przesłanie pliku w obie strony.
+
+## Aktualizacja źródeł AERA — 19.10.2026
+
+Rdzeń recovery został zaktualizowany z `f2ce8f70` do `a0d165f1`
+(42 commity, najnowszy z 18.10.2026), a manifest z `250b38ee` do `4b0611ad`.
+Nowy manifest pobiera również biblioteki `external/libsmb2` i `external/libssh2`
+wymagane przez nową obsługę SMB/SFTP. Rewizje vold, hardware/interfaces
+i vendor/recovery sprawdzono na gałęzi `aera-16.0`; nie uległy zmianie.
+
+Zachowano dotychczasowe poprawki Neo8, w tym Wi-Fi, BusyBox, certyfikaty,
+KGSL, USB/MTP, APEX i StrongBox. Patch `0004` dopasowano do nowego kontekstu
+w `Setup_Fstab_Partitions`; dodaje te same komunikaty diagnostyczne i zachowuje
+nową logikę upstream dla urządzeń bez szyfrowania. Pozostałe łatki recovery
+stosują się bez zmian. Workflow i `sources.lock.json` wskazują te same nowe
+rewizje. Pełna kompilacja i weryfikacja obrazu są wykonywane przez Actions;
+działanie nowej bazy nadal wymaga testu na Neo8.
