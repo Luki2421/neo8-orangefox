@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Compile the actual patched loop functions with deterministic syscall doubles.
 
-This checks descriptor lifetime, nonzero loop IDs and error cleanup on the host;
+This checks ext4/EROFS selection, descriptor lifetime, loop IDs and error cleanup;
 it does not claim to mount a phone APEX or test Android decryption.
 """
 import argparse
@@ -29,7 +29,9 @@ HARNESS = r'''
 #include <vector>
 static std::map<int, std::string> opened;
 static std::string failure;
+static std::string filesystem;
 static int next_fd, free_calls, mounted;
+static int reads;
 static bool attached, detached;
 static int fail() { errno = EIO; return -1; }
 static int fake_open(const char* path, int) {
@@ -40,6 +42,21 @@ static int fake_fstat(int fd, struct stat* info) {
     assert(opened.count(fd));
     if (failure == "stat") return fail();
     info->st_size = 8192; return 0;
+}
+[[maybe_unused]] static ssize_t fake_pread(int fd, void* buffer, size_t size, off_t offset) {
+    assert(opened.count(fd));
+    assert(size == 60 && offset == 1024);
+    ++reads;
+    if (failure == "read") return fail();
+    if (failure == "short") return 4;
+    if (failure == "interrupted" && reads == 1) { errno = EINTR; return -1; }
+    auto bytes = static_cast<unsigned char*>(buffer);
+    memset(bytes, 0, size);
+    if (failure != "unknown") {
+        if (filesystem == "ext4") { bytes[56] = 0x53; bytes[57] = 0xef; }
+        else { bytes[0] = 0xe2; bytes[1] = 0xe1; bytes[2] = 0xf5; bytes[3] = 0xe0; }
+    }
+    return size;
 }
 // Keep this double so running the unpatched source detects use-after-close.
 [[maybe_unused]] static off_t fake_lseek(int fd, off_t, int) {
@@ -76,8 +93,9 @@ static int fake_mkdir(const char*, mode_t mode) {
     if (failure == "exists") { errno = EEXIST; return -1; }
     return failure == "directory" ? fail() : 0;
 }
-static int fake_mount(const char* source, const char*, const char*, unsigned long flags, const void*) {
+static int fake_mount(const char* source, const char*, const char* type, unsigned long flags, const void*) {
     assert(std::string(source) == "/dev/block/loop7");
+    assert(type == filesystem);
     assert(flags == MS_RDONLY); ++mounted;
     return failure == "mount" ? fail() : 0;
 }
@@ -101,6 +119,7 @@ public:
 #define open fake_open
 #define close fake_close
 #define fstat fake_fstat
+#define pread fake_pread
 #define lseek fake_lseek
 #define ioctl fake_ioctl
 #define mknod fake_mknod
@@ -111,19 +130,24 @@ public:
 
 MAIN = r'''
 int main() {
+    for (const std::string type : {"ext4", "erofs"}) {
     for (const std::string scenario : {"ok", "exists", "no_loop", "node", "stat",
-                                      "attach", "status", "flush", "directory", "mount"}) {
-        failure = scenario; opened.clear(); next_fd = 10;
+                                      "attach", "status", "flush", "directory", "mount",
+                                      "read", "short", "unknown", "interrupted"}) {
+        failure = scenario; filesystem = type; opened.clear(); next_fd = 10; reads = 0;
         attached = detached = false; free_calls = mounted = 0;
         twrpApex apex;
         const bool result = apex.mountApexOnLoopbackDevices({"missing", "present"});
-        assert(result == (scenario == "ok" || scenario == "exists"));
+        assert(result == (scenario == "ok" || scenario == "exists" || scenario == "interrupted"));
         assert(opened.empty());
         assert(free_calls == 1);
         if (attached && !result) assert(detached);
         if (result) assert(mounted == 1 && !detached);
+        if (scenario == "short" || scenario == "unknown" || scenario == "read")
+            assert(!attached && mounted == 0);
     }
-    puts("APEX loop: 10 descriptor/allocation/cleanup scenarios passed");
+    }
+    puts("APEX loop: 28 filesystem/descriptor/allocation/cleanup scenarios passed");
 }
 '''
 

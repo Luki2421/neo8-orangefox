@@ -103,8 +103,10 @@ def main():
                              ('neo8-keystore-stop.patch', vold),
                              ('0002-neo8-display-start.patch', recovery),
                              ('0003-apex-loop-lifetime.patch', recovery),
+                             ('0009-apex-filesystem-detection.patch', recovery),
                              ('0004-startup-diagnostics.patch', recovery),
                              ('0007-neo8-wifi-startup.patch', recovery),
+                             ('0008-mtp-readiness-lifetime.patch', recovery),
                              ('0005-fastboot-manifest-owner.patch', root / 'hardware/interfaces'),
                              ('0006-fastboot-recovery-domain.patch', root / 'hardware/interfaces')]:
         run('git', 'apply', '--check', str(HERE / 'patches' / patch), cwd=directory)

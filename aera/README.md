@@ -282,3 +282,24 @@ sprawdzenia odszyfrowania wzorem, ADB/MTP, fastbootd oraz Wi-Fi na Neo8.
 ## busybox
 
 Menedżer wtyczek AERA pobiera katalog przez `busybox wget`, a test sieci używa `busybox ping`; obraz nie miał busyboxa. `aera/wifi/busybox-arm64` to statyczny BusyBox v1.36.1 (osm0sis, NDK, GPL-2.0) z https://github.com/Magisk-Modules-Repo/busybox-ndk, commit ad6700620120e3c475df05b0f8bfa7a40e741ee0, sha256 c629fce4b0dd3ba9775f851d0941e74582115f423258d3a79800f2bd11d30f5c. Trafia do obrazu jako `/system/bin/busybox`.
+
+## APEX i ponowne podłączenie MTP
+
+Patch `0009` rozpoznaje ext4 lub EROFS po sygnaturze superbloku wypakowanego
+APEX i montuje obraz tylko do odczytu. Nieznany format lub niepełny odczyt
+kończy się jawnym błędem przed podłączeniem pliku do urządzenia loop.
+To usuwa założenie, że każdy APEX jest ext4; rzeczywisty format `tzdata`
+na telefonie musi jeszcze zostać potwierdzony w nowym logu.
+
+Patch `0008` zeruje `sys.usb.ffs.mtp.ready` przed zamknięciem endpointów
+lub uchwytu kontrolnego oraz przed zapisaniem nowych deskryptorów.
+Gotowość wraca dopiero po udanym zapisie deskryptorów i ciągów znaków.
+Usuwa to nieaktualny stan gotowości w 800-milisekundowej przerwie restartu
+MTP, podczas której ADB może już być gotowe. Poprawia również `bcdVersion`
+deskryptora Microsoft OS z 0x0001 na 0x0100.
+
+Testy hosta wykonują zmienione funkcje C++: 28 scenariuszy APEX oraz
+8 scenariuszy zapisu deskryptorów MTP, zamykanie endpointów i ponowne
+połączenie. Nie emulują sterownika USB ani montowania na Neo8. Próba na
+telefonie powinna objąć start bez kabla i z kablem, kilkukrotne odpięcie
+i podpięcie przy włączonym MTP/ADB oraz przesłanie pliku w obie strony.

@@ -1,0 +1,40 @@
+--- a/mtp/ffs/MtpFfsHandle.cpp
++++ b/mtp/ffs/MtpFfsHandle.cpp
+@@ -79,6 +79,8 @@
+ MtpFfsHandle::~MtpFfsHandle() {}
+ 
+ void MtpFfsHandle::closeEndpoints() {
++	// Revoke readiness before any FunctionFS descriptor can be closed.
++	android::base::SetProperty("sys.usb.ffs.mtp.ready", "0");
+ 	mIntr.reset();
+ 	mBulkIn.reset();
+ 	mBulkOut.reset();
+@@ -127,6 +129,8 @@
+ }
+ 
+ void MtpFfsHandle::closeConfig() {
++	// Revoke readiness before any FunctionFS descriptor can be closed.
++	android::base::SetProperty("sys.usb.ffs.mtp.ready", "0");
+ 	mControl.reset();
+ }
+ 
+--- a/mtp/ffs/MtpDescriptors.cpp
++++ b/mtp/ffs/MtpDescriptors.cpp
+@@ -180,7 +180,7 @@
+ const struct usb_os_desc_header mtp_os_desc_header = {
+ 	.interface = htole32(1),
+ 	.dwLength = htole32(sizeof(usb_os_desc_header) + sizeof(usb_ext_compat_desc)),
+-	.bcdVersion = htole16(1),
++	.bcdVersion = htole16(0x0100),
+ 	.wIndex = htole16(4),
+ 	.bCount = htole16(1),
+ 	.Reserved = htole16(0),
+@@ -261,6 +261,8 @@
+ };
+ 
+ bool writeDescriptors(int fd, bool ptp) {
++	// A failed rewrite must never leave the previous session marked ready.
++	property_set("sys.usb.ffs.mtp.ready", "0");
+ 	ssize_t ret = TEMP_FAILURE_RETRY(write(fd,
+ 				&(ptp ? ptp_desc_v2 : mtp_desc_v2), sizeof(desc_v2)));
+ 	if (ret < 0) {

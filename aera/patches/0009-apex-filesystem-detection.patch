@@ -1,0 +1,44 @@
+--- a/twrpApex.cpp
++++ b/twrpApex.cpp
+@@ -148,6 +148,32 @@
+ 	}
+ 	info.lo_sizelimit = static_cast<uint64_t>(payload_stat.st_size);
+ 
++	// Both ext4 and EROFS place their superblock at byte 1024. Read bytes
++	// explicitly so detection is independent of host endianness/alignment.
++	unsigned char superblock[60] = {};
++	ssize_t bytes;
++	do {
++		bytes = pread(fd, superblock, sizeof(superblock), 1024);
++	} while (bytes < 0 && errno == EINTR);
++	if (bytes != static_cast<ssize_t>(sizeof(superblock))) {
++		LOGERR("Unable to read APEX superblock: %s (read %zd bytes)\n",
++				fileToMount.c_str(), bytes);
++		close(fd);
++		return false;
++	}
++	const char* filesystem = nullptr;
++	if (superblock[0] == 0xe2 && superblock[1] == 0xe1 &&
++			superblock[2] == 0xf5 && superblock[3] == 0xe0) {
++		filesystem = "erofs";
++	} else if (superblock[56] == 0x53 && superblock[57] == 0xef) {
++		filesystem = "ext4";
++	} else {
++		LOGERR("Unsupported APEX payload filesystem: %s\n", fileToMount.c_str());
++		close(fd);
++		return false;
++	}
++	LOGINFO("APEX payload %s: detected %s\n", fileToMount.c_str(), filesystem);
++
+ 	std::string loop_device = "/dev/block/loop" + std::to_string(loop_device_number);
+ 	int loop_fd = open(loop_device.c_str(), O_RDWR | O_CLOEXEC);
+ 	if (loop_fd < 0) {
+@@ -196,7 +222,7 @@
+ 		return false;
+ 	}
+ 
+-	ret = mount(loop_device.c_str(), bind_mount.c_str(), "ext4", MS_RDONLY, nullptr);
++	ret = mount(loop_device.c_str(), bind_mount.c_str(), filesystem, MS_RDONLY, nullptr);
+ 	if (ret != 0) {
+ 		LOGERR("unable to mount loop device %s to %s. Reason: %s\n", loop_device.c_str(), bind_mount.c_str(), strerror(errno));
+ 		ioctl(loop_fd, LOOP_CLR_FD, 0);
