@@ -90,7 +90,7 @@ def main():
                 'AERA_INCLUDE_OMAPI := true\nAERA_UI_ADAPTIVE_RESOLUTION := true\n'
                 'AERA_ENABLE_WLAN := 1\nWPA_SUPPLICANT_VERSION := VER_0_8_X\n'
                 'BOARD_WPA_SUPPLICANT_DRIVER := NL80211\n'
-                'AERA_DEFAULT_LANGUAGE := en\nAERA_DEVICE_VERSION := Neo8-experimental\n')
+                'AERA_DEFAULT_LANGUAGE := en\nAERA_EXTRA_LANGUAGES := true\nAERA_DEVICE_VERSION := Neo8-experimental\n')
     (device / 'vendorsetup.sh').write_text(
         'if [ "${AERA_BUILD_DEVICE:-}" = "RE6402L1" ]; then\n'
         '  export AERA_BUILD_STATUS=Unofficial AERA_BUILD_TYPE=Alpha\n'
