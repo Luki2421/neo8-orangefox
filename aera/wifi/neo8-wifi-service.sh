@@ -12,6 +12,18 @@ if ! /system/bin/toybox timeout -k 5 100 /system/bin/sh /system/bin/neo8-wifi-lo
     exit 1
 fi
 
+# AERA's browser renders through the Adreno GPU (/dev/kgsl-3d0). The stock
+# vendor_dlkm is mounted by the loader above; load KGSL from it. Best effort: the
+# browser is optional, so a failure here must not stop Wi-Fi.
+KGSL=/tmp/aera-wifi/vendor_dlkm/lib/modules/msm_kgsl.ko
+if [ -f "$KGSL" ] && ! grep -q '^msm_kgsl ' /proc/modules; then
+    if /system/bin/toybox insmod "$KGSL" >>/tmp/neo8-gpu.log 2>&1; then
+        echo "KGSL loaded" >>/tmp/neo8-gpu.log
+    else
+        echo "KGSL load failed; the browser will be unavailable" >>/tmp/neo8-gpu.log
+    fi
+fi
+
 # Session-only supplicant configuration, separate from Android's saved networks.
 cat > /tmp/recovery/wpa_supplicant.conf <<'EOF'
 ctrl_interface=/tmp/recovery/sockets
