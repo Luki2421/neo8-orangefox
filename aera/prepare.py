@@ -17,6 +17,7 @@ sys.path.insert(0, str(HERE.parent / 'scripts'))
 from boot_ramdisk import read_recovery
 from runtime_config import restore_runtime_config
 from secure_element_bundle import restore_secure_element_bundle, verified_reference
+from ota_sideload import configure_ota_sideload
 from wifi_config import configure_wifi
 from runtime_fixes import configure_runtime_fixes
 
@@ -77,6 +78,7 @@ def main():
     report['runtime_configuration'] = restore_runtime_config(device, entries)
     report['secure_element_bundle'] = restore_secure_element_bundle(device, entries)
     report['wifi'] = configure_wifi(device, entries)
+    report['ota_sideload'] = configure_ota_sideload(device, entries)
     report['usb_and_strongbox'] = configure_runtime_fixes(device, root / 'bootable/recovery', entries)
     prop = device / 'system.prop'
     text = prop.read_text().replace('ro.crypto.metadata_init_delete_all_keys.enabled=true',

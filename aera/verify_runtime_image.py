@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'scripts'))
 from boot_ramdisk import read_recovery
 from runtime_config import validate_runtime_files
 from secure_element_bundle import verified_reference, validate_secure_element_bundle
+from ota_sideload import validate_ota_sideload
 from wifi_config import validate_wifi_image
 from runtime_fixes import validate_runtime_fixes
 
@@ -25,6 +26,7 @@ if __name__ == '__main__':
     reference = verified_reference(*read_recovery(args.reference))
     report['secure_element_bundle'] = validate_secure_element_bundle(entries, reference)
     report['wifi'] = validate_wifi_image(entries, reference)
+    report['ota_sideload'] = validate_ota_sideload(entries, reference)
     report['usb_and_strongbox'] = validate_runtime_fixes(entries, reference)
     etc = entries.get('etc', {})
     if not stat.S_ISLNK(etc.get('mode', 0)) or etc['data'] != b'/system/etc':

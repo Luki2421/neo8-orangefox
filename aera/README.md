@@ -349,3 +349,20 @@ errno. Kontroluje też, że `/vendor_dlkm`, `/data` i chroniony `/system` nie
 zostają objęte nowym sprzątaniem. Test jest bramką workflow przed kompilacją.
 To nie zastępuje próby instalacji konkretnego ROM-u na Neo8; zgłoszony ZIP
 nie został udostępniony do sprawdzenia jego zawartości.
+
+## update_engine_sideload — 21.10.2026
+
+Instalacja OTA z recovery kończyła się na `CANNOT LINK EXECUTABLE
+"/system/bin/update_engine_sideload": cannot locate symbol
+...MetadataBuilder26GrowBlockDevicesToLiveSize...`. Obraz zawiera `liblp.so` z
+referencyjnego TWRP 1.1, a AERA budowało własny `update_engine_sideload` z nowszych
+źródeł, który wymaga nowszego `liblp`. Teraz do drzewa urządzenia trafia
+`update_engine_sideload` z referencji (ta sama para co `liblp.so`; obsługuje
+`--payload`, `--offset`, `--headers`, `--status_fd`, czyli to, czego używa AERA).
+
+`ota_sideload.py` sprawdza spakowany obraz: plik musi być bajt w bajt binarką
+referencyjną (gdyby build AERA wygrał kopiowanie, build kończy się błędem), a
+wszystkie biblioteki `DT_NEEDED` oraz wszystkie silne symbole niezdefiniowane muszą
+rozwiązywać się w bibliotekach obrazu. `test_ota_sideload.py` sprawdza ten checker
+na obrazie referencyjnym i na zepsutych wariantach. Zapis OTA na telefonie nadal
+wymaga próby na Neo8.
