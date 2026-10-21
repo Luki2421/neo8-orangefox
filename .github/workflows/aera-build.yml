@@ -37,7 +37,9 @@ jobs:
       - name: Install Android build dependencies
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y --no-install-recommends bc bison build-essential ca-certificates curl flex git git-lfs gnupg gperf lib32z1-dev libelf-dev libncurses-dev libsdl2-dev libssl-dev libsqlite3-dev libxml2-utils lz4 python3 rsync unzip zip zlib1g-dev
+          sudo apt-get install -y --no-install-recommends bc bison build-essential ca-certificates curl flex git git-lfs gnupg gperf lib32z1-dev libelf-dev libncurses-dev libsdl2-dev libssl-dev libsqlite3-dev libxml2-utils lz4 python3 rsync unzip wireless-regdb zip zlib1g-dev
+          python3 aera/test_regdb.py
+          ls -l /lib/firmware/regulatory.db /lib/firmware/regulatory.db.p7s
           git config --global user.name 'Neo8 build'
           git config --global user.email 'aera-build@users.noreply.github.com'
           mkdir -p "$ANDROID_ROOT" "$HOME/bin" artifacts/aera-build

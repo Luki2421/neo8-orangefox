@@ -366,3 +366,13 @@ wszystkie biblioteki `DT_NEEDED` oraz wszystkie silne symbole niezdefiniowane mu
 rozwiązywać się w bibliotekach obrazu. `test_ota_sideload.py` sprawdza ten checker
 na obrazie referencyjnym i na zepsutych wariantach. Zapis OTA na telefonie nadal
 wymaga próby na Neo8.
+
+## regulatory.db — 21.10.2026
+
+Log jądra: `platform regulatory.0: Direct firmware load for regulatory.db failed` i
+`cfg80211: failed to load regulatory.db`. Bez bazy sterownik WCN7750 pracuje w świecie
+domeny regulacyjnej `00`. Obraz dostaje teraz `regulatory.db` i `regulatory.db.p7s`
+z pakietu `wireless-regdb` runnera w `/etc/firmware/` (ten katalog jest już w
+`firmware_directories` ueventd). `regdb.py` sprawdza nagłówek `RGDB` i podpis DER;
+`verify_runtime_image.py` sprawdza oba pliki w spakowanym obrazie. Czy jądro przyjmie
+podpis, widać dopiero w `dmesg` na telefonie (brak linii `failed to load regulatory.db`).

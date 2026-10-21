@@ -18,6 +18,7 @@ from boot_ramdisk import read_recovery
 from runtime_config import restore_runtime_config
 from secure_element_bundle import restore_secure_element_bundle, verified_reference
 from ota_sideload import configure_ota_sideload
+from regdb import configure_regdb
 from wifi_config import configure_wifi
 from runtime_fixes import configure_runtime_fixes
 
@@ -31,6 +32,8 @@ def main():
     ap.add_argument('--android-root', type=Path, required=True)
     ap.add_argument('--donor', type=Path, required=True)
     ap.add_argument('--reference', type=Path, required=True)
+    ap.add_argument('--regdb-dir', type=Path, default=Path('/lib/firmware'),
+                    help='directory with regulatory.db and regulatory.db.p7s')
     ap.add_argument('--report', type=Path, required=True)
     args = ap.parse_args()
     root, donor = args.android_root.resolve(), args.donor.resolve()
@@ -79,6 +82,7 @@ def main():
     report['secure_element_bundle'] = restore_secure_element_bundle(device, entries)
     report['wifi'] = configure_wifi(device, entries)
     report['ota_sideload'] = configure_ota_sideload(device, entries)
+    report['regdb'] = configure_regdb(device, args.regdb_dir)
     report['usb_and_strongbox'] = configure_runtime_fixes(device, root / 'bootable/recovery', entries)
     prop = device / 'system.prop'
     text = prop.read_text().replace('ro.crypto.metadata_init_delete_all_keys.enabled=true',
