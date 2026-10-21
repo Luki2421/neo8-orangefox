@@ -1,0 +1,176 @@
+diff --git a/partition.cpp b/partition.cpp
+index 332ead0..64c751c 100644
+--- a/partition.cpp
++++ b/partition.cpp
+@@ -37,6 +37,9 @@
+ #include <pwd.h>
+ #include <zlib.h>
+ #include <sstream>
++#include <algorithm>
++#include <mntent.h>
++#include <vector>
+ #include <android-base/properties.h>
+ #include <libsnapshot/snapshot.h>
+ 
+@@ -1817,6 +1820,47 @@ bool TWPartition::Bind_Mount(bool Display_Error) {
+ 	return true;
+ }
+ 
++// Adapted from the Neo8 TWRP 1.1 child-mount cleanup. Only normal unmounts:
++// lazy/forced detachment must not disguise a live mount before flashing.
++static bool UnmountVendorSubdirectories(const std::string& parent) {
++	FILE* mounts = setmntent("/proc/mounts", "r");
++	if (!mounts) {
++		LOGINFO("Cannot inspect mounts under '%s': %s (errno=%d)\n",
++			parent.c_str(), strerror(errno), errno);
++		return false;
++	}
++	const std::string prefix = parent + "/";
++	std::vector<std::string> children;
++	while (mntent* entry = getmntent(mounts)) {
++		const std::string path(entry->mnt_dir);
++		if (path.compare(0, prefix.size(), prefix) == 0)
++			children.push_back(path);
++	}
++	const bool read_failed = ferror(mounts);
++	endmntent(mounts);
++	if (read_failed) {
++		LOGINFO("Cannot read complete mount table for '%s'\n", parent.c_str());
++		return false;
++	}
++	std::sort(children.begin(), children.end(), [](const std::string& a, const std::string& b) {
++		return a.size() > b.size();
++	});
++	for (const auto& child : children)
++		LOGINFO("Submount under '%s': '%s'\n", parent.c_str(), child.c_str());
++	for (const auto& child : children) {
++		if (umount2(child.c_str(), 0) != 0) {
++			const int error = errno;
++			// Another recovery operation may already have removed this mount.
++			if (error == EINVAL || error == ENOENT)
++				continue;
++			LOGINFO("Cannot unmount child '%s': %s (errno=%d); leaving '%s' mounted\n",
++				child.c_str(), strerror(error), error, parent.c_str());
++			return false;
++		}
++	}
++	return true;
++}
++
+ bool TWPartition::UnMount(bool Display_Error, int flags) {
+ 	if (Mount_Point == TW_NAS_MOUNT_POINT || Current_File_System == "fuse.nas") {
+ #ifdef OF_ENABLE_WLAN
+@@ -1833,13 +1877,20 @@ bool TWPartition::UnMount(bool Display_Error, int flags) {
+ 		if (never_unmount_system == 1 && Mount_Point == PartitionManager.Get_Android_Root_Path())
+ 			return true; // Never unmount system if you're not supposed to unmount it
+ 
++		// Scope the reference behavior to the vendor trees used by this port.
++		// Do not change data, NAS, MTP storage or crypto service lifecycles.
++		if ((Mount_Point == "/vendor" || Mount_Point == "/odm") &&
++			!UnmountVendorSubdirectories(Mount_Point))
++			return false;
++
+ 		if (Is_Storage && MTP_Storage_ID > 0)
+ 			PartitionManager.Remove_MTP_Storage(MTP_Storage_ID);
+ 
+ 		if (!Symlink_Mount_Point.empty())
+ 			umount2(Symlink_Mount_Point.c_str(), flags);
+ 
+-		umount2(Mount_Point.c_str(), flags);
++		const int unmount_result = umount2(Mount_Point.c_str(), flags);
++		const int unmount_error = unmount_result == 0 ? 0 : errno;
+ 		if (Is_Mounted()) {
+ 			if (Mount_Point == "/data" || Mount_Point == "/sdcard" || Mount_Point == "/data/media/0") {
+ 				LOGINFO("DEBUG: attempting again to unmount '%s'\n", Mount_Point.c_str());
+@@ -1849,9 +1900,10 @@ bool TWPartition::UnMount(bool Display_Error, int flags) {
+ 					return true;
+ 			}
+ 			if (Display_Error)
+-				gui_msg(Msg(msg::kError, "fail_unmount=Failed to unmount '{1}' ({2})")(Mount_Point)(strerror(errno)));
++				gui_msg(Msg(msg::kError, "fail_unmount=Failed to unmount '{1}' ({2})")(Mount_Point)(unmount_error ? strerror(unmount_error) : "mount still present"));
+ 			else
+-				LOGINFO("Unable to unmount '%s'\n", Mount_Point.c_str());
++				LOGINFO("Unable to unmount '%s': %s (errno=%d)\n", Mount_Point.c_str(),
++					unmount_error ? strerror(unmount_error) : "mount still present", unmount_error);
+ 			return false;
+ 		} else {
+ 			return true;
+diff --git a/twrpinstall/twinstall.cpp b/twrpinstall/twinstall.cpp
+index a926072..0b08618 100755
+--- a/twrpinstall/twinstall.cpp
++++ b/twrpinstall/twinstall.cpp
+@@ -85,6 +85,18 @@ enum zip_type {
+ 	TWRP_THEME_ZIP_TYPE
+ };
+ 
++static zip_type GetInstallZipType(ZipArchiveHandle zip) {
++	ZipEntry64 entry;
++	// Keep the dispatch order: a ZIP with both entries runs update-binary.
++	if (FindEntry(zip, std::string(UPDATE_BINARY_NAME), &entry) == 0)
++		return UPDATE_BINARY_ZIP_TYPE;
++	if (FindEntry(zip, std::string(AB_OTA), &entry) == 0)
++		return AB_OTA_ZIP_TYPE;
++	if (FindEntry(zip, std::string("ui.xml"), &entry) == 0)
++		return TWRP_THEME_ZIP_TYPE;
++	return UNKNOWN_ZIP_TYPE;
++}
++
+ static void Append_Aera_Install_Status(const char* line) {
+ 	constexpr size_t kBufferedLines = 256;
+ 	std::string history = DataManager::GetStrValue("aera_install_status");
+@@ -790,6 +802,7 @@ static int InstallZipImpl(const char *path, int *wipe_cache, bool check_for_dige
+       return INSTALL_CORRUPT;
+     }
+ 	const bool aera_recovery_package = IsAeraRecoveryPackage(Zip);
++	const zip_type package_type = GetInstallZipType(Zip);
+ 	if (aera_recovery_package)
+ 		PreservationStatus("AERA recovery package detected; allowing recovery update");
+ 
+@@ -807,7 +820,13 @@ static int InstallZipImpl(const char *path, int *wipe_cache, bool check_for_dige
+ 	}
+    }
+ 
+-   if (unmount_vendor) {
++   // Match the working Neo8 TWRP 1.1 payload path. A/B installation below
++   // deliberately mounts vendor for backuptool and updates the inactive slot.
++   // Do not make that path depend on unmounting the active vendor first.
++   // Keep the existing unmount requirement for update-binary and other ZIPs.
++   if (unmount_vendor && package_type == AB_OTA_ZIP_TYPE)
++	LOGINFO("A/B payload: preserving active vendor mount state before installation\n");
++   if (unmount_vendor && package_type != AB_OTA_ZIP_TYPE) {
+ 	if (PartitionManager.Is_Mounted_By_Path("/vendor")) {
+ 		gui_msg("unmount_vendor=Unmounting Vendor...");
+ 		if (PartitionManager.UnMount_By_Path("/vendor", false)) {
+@@ -832,9 +851,7 @@ static int InstallZipImpl(const char *path, int *wipe_cache, bool check_for_dige
+   time(&start);
+   PartitionPreserver preserver;
+ 
+-  std::string update_binary_name(UPDATE_BINARY_NAME);
+-  ZipEntry64 update_binary_entry;
+-  if (FindEntry(Zip, update_binary_name, &update_binary_entry) == 0) {
++  if (package_type == UPDATE_BINARY_ZIP_TYPE) {
+ 		LOGINFO("Update binary zip\n");
+ 		// Additionally verify the compatibility of the package.
+ 		if (!Fox_Skip_Treble_Compatibility_Check() && !verify_package_compatibility(Zip)) {
+@@ -863,9 +880,7 @@ static int InstallZipImpl(const char *path, int *wipe_cache, bool check_for_dige
+ 			}
+ 		}
+ 	} else {
+-		std::string ab_binary_name(AB_OTA);
+-		ZipEntry64 ab_binary_entry;
+-		if (FindEntry(Zip, ab_binary_name, &ab_binary_entry) == 0) {
++		if (package_type == AB_OTA_ZIP_TYPE) {
+ 			LOGINFO("AB zip\n");
+ 			if (!preserver.Prepare(!aera_recovery_package)) {
+ 				ret_val = INSTALL_ERROR;
+@@ -904,9 +919,7 @@ static int InstallZipImpl(const char *path, int *wipe_cache, bool check_for_dige
+ 			gui_warn("flash_ab_reboot=To flash additional zips, please reboot recovery to switch to the updated slot.");
+ 			}
+ 		} else {
+-			std::string binary_name("ui.xml");
+-			ZipEntry64 binary_entry;
+-			if (FindEntry(Zip, binary_name, &binary_entry) == 0) {
++			if (package_type == TWRP_THEME_ZIP_TYPE) {
+ 				LOGINFO("AERA theme zip\n");
+ 				ret_val = Install_Theme(path, Zip);
+ 			} else {

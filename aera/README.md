@@ -319,3 +319,33 @@ nową logikę upstream dla urządzeń bez szyfrowania. Pozostałe łatki recover
 stosują się bez zmian. Workflow i `sources.lock.json` wskazują te same nowe
 rewizje. Pełna kompilacja i weryfikacja obrazu są wykonywane przez Actions;
 działanie nowej bazy nadal wymaga testu na Neo8.
+
+## Instalacja OTA i odmontowanie vendor — 21.10.2026
+
+Patch `0010` usuwa blokadę `Failed to unmount Vendor` przed uruchomieniem
+instalatora payload A/B. Typ ZIP jest wybierany raz, po otwarciu i opcjonalnej
+weryfikacji podpisu. Zarówno warunek odmontowania, jak i właściwy instalator
+korzystają z tego samego wyboru. ZIP zawierający `update-binary` zachowuje
+pierwszeństwo przed payloadem i dotychczasowy wymóg odmontowania.
+Nie zmieniamy ustawienia użytkownika `TW_UNMOUNT_VENDOR` globalnie.
+
+Dla payload A/B pozostaje montowanie aktywnego vendor na potrzeby backuptool,
+tak jak w działającym TWRP 1.1; zapis aktualizacji obsługuje istniejący updater.
+Poprawka nie zmienia wyboru slotu, kontroli zgodności, weryfikacji podpisu,
+mechanizmu Virtual A/B ani ochrony recovery/ABL.
+
+Gdy odmontowanie `/vendor` lub `/odm` jest rzeczywiście wywołane, najpierw
+usuwane są montowania pod nimi, od najgłębszych. Adaptacja rozwiązania TWRP
+celowo używa tylko zwykłego `umount2`: zajęty punkt powoduje błąd, a nie
+pozorny sukces przez lazy/force unmount. Log zawiera listę punktów i zachowany
+kod errno. Nie zatrzymujemy automatycznie usług kryptograficznych ani Wi-Fi;
+proces nadal używający partycji może więc zablokować instalację legacy.
+Montowania Wi-Fi pod `/tmp/aera-wifi` nie są usuwane przez tę funkcję.
+
+Test hosta `test_install_mounts.py` wykonuje funkcje C++ z nałożonej łatki:
+56 kombinacji typów ZIP, ustawienia i stanu vendor oraz scenariusze montowań
+zagnieżdżonych, EBUSY, znikającego punktu, błędu odczytu tabeli i zachowania
+errno. Kontroluje też, że `/vendor_dlkm`, `/data` i chroniony `/system` nie
+zostają objęte nowym sprzątaniem. Test jest bramką workflow przed kompilacją.
+To nie zastępuje próby instalacji konkretnego ROM-u na Neo8; zgłoszony ZIP
+nie został udostępniony do sprawdzenia jego zawartości.

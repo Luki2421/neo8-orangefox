@@ -83,6 +83,7 @@ jobs:
           python3 aera/test_runtime_fixes.py --device "$ANDROID_ROOT/device/realme/RE6402L1" --recovery-root "$ANDROID_ROOT/bootable/recovery" --reference /tmp/twrp-nullguard.img
           python3 aera/test_apex_loop.py --recovery-root "$ANDROID_ROOT/bootable/recovery"
           python3 aera/test_mtp_readiness.py --recovery-root "$ANDROID_ROOT/bootable/recovery"
+          python3 aera/test_install_mounts.py --recovery-root "$ANDROID_ROOT/bootable/recovery"
 
       - name: Pass Go memory controls to the isolated Soong builder
         run: |

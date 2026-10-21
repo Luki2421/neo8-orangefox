@@ -107,6 +107,7 @@ def main():
                              ('0004-startup-diagnostics.patch', recovery),
                              ('0007-neo8-wifi-startup.patch', recovery),
                              ('0008-mtp-readiness-lifetime.patch', recovery),
+                             ('0010-neo8-ota-vendor-unmount.patch', recovery),
                              ('0005-fastboot-manifest-owner.patch', root / 'hardware/interfaces'),
                              ('0006-fastboot-recovery-domain.patch', root / 'hardware/interfaces')]:
         run('git', 'apply', '--check', str(HERE / 'patches' / patch), cwd=directory)
