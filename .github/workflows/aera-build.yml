@@ -58,15 +58,15 @@ jobs:
           set -o pipefail
           git config --global url.https://github.com/.insteadOf ssh://git@github.com/
           cd "$ANDROID_ROOT"
-          "$HOME/bin/repo" init -u https://github.com/AERA-Recovery/android_manifest.git -b 4b0611ad62c1dbb6990ab129769591d137e6ad79 --depth=1 --no-clone-bundle
+          "$HOME/bin/repo" init -u https://github.com/AERA-Recovery/android_manifest.git -b aabd43b2478f3e6dcd0330e7cd5839746c0bf9a7 --depth=1 --no-clone-bundle
           mkdir -p .repo/local_manifests
           cat > .repo/local_manifests/neo8.xml <<'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
           <manifest>
-            <extend-project name="android_bootable_recovery" path="bootable/recovery" revision="a0d165f13f52de9a9569cee9bc1e74d500aa20f1" />
+            <extend-project name="android_bootable_recovery" path="bootable/recovery" revision="3cf9c3d7e5e761d5004c4109929965f3f8257359" />
             <extend-project name="android_system_vold" path="system/vold" revision="36bb8ce4fbbb4615f3d87638347c59eface0853b" />
             <extend-project name="android_hardware_interfaces" path="hardware/interfaces" revision="bdefb2a8bce20dc15882d4ab668fb628c427e26b" />
-            <extend-project name="android_vendor_recovery" path="vendor/recovery" revision="7b4e41362938ee3498fc0e8a4f3e0528bf320efd" />
+            <extend-project name="android_vendor_recovery" path="vendor/recovery" revision="6eb0b571f26032161a9836e37025a14cbf0ee16d" />
           </manifest>
           EOF
           "$HOME/bin/repo" sync -c -j4 --no-tags --no-clone-bundle --fail-fast 2>&1 | tee "$GITHUB_WORKSPACE/artifacts/aera-build/sync.log"

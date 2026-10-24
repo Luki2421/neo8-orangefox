@@ -386,3 +386,17 @@ blokady, ale podświetlenie nigdy nie gasło. `prepare.py` usuwa tę flagę
 (`screen_config.py`). `TW_NO_SCREEN_BLANK := true` zostaje: ekran gaśnie przez jasność 0
 na `TW_BRIGHTNESS_PATH`, bez blankowania framebuffera. Po zmianie obowiązuje domyślny
 czas wygaszania AERA (60 s), a jego zachowanie na panelu Neo8 wymaga próby na telefonie.
+
+## Synchronizacja źródeł AERA — 24.10.2026
+
+Recovery: `a0d165f` → `3cf9c3d` (2026-10-24, 33 commity), manifest: `4b0611ad` → `aabd43b`
+(nowe projekty `aera_qrtr`, `aera_rmtfs`, `aera_tqftpserv` dla opcjonalnego internetu
+komórkowego; flaga `AERA_ENABLE_MOBILE_DATA` nie jest ustawiona), vendor/recovery:
+`7b4e413` → `6eb0b57`. `system/vold` i `hardware/interfaces` bez zmian.
+
+Wszystkie łatki (0002–0004, 0007–0010) nakładają się bez zmian na nowy recovery,
+`prepare.py` przechodzi na pełnym drzewie, a testy hosta przeszły: SQLite WAL, service
+stop, runtime config, Secure Element, Wi-Fi, USB/StrongBox, sideload, ekran, APEX (28),
+MTP (8) i instalator (56). Kompilacja Androida i próba na telefonie wciąż konieczne;
+zmiany Wi-Fi z upstreamu (statyczne IP, DHCP, trasy) nie były testowane z naszym
+uruchamianiem supplicanta na żądanie.

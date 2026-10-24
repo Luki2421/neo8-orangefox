@@ -5,13 +5,13 @@
   },
   "AERA-Recovery/android_manifest": {
     "branch": "aera-16.0",
-    "commit": "4b0611ad62c1dbb6990ab129769591d137e6ad79",
-    "tree": "c74bfd09fdbca6a203fa8724cc1648d0cfec0c8b"
+    "commit": "aabd43b2478f3e6dcd0330e7cd5839746c0bf9a7",
+    "tree": "57673f4f9bd5f6b87b6c6839b99fa3db7ede3d99"
   },
   "AERA-Recovery/android_bootable_recovery": {
     "branch": "aera-16.0",
-    "commit": "a0d165f13f52de9a9569cee9bc1e74d500aa20f1",
-    "tree": "403a2b46acd01a2474e19ae0172ce5b525c5093d"
+    "commit": "3cf9c3d7e5e761d5004c4109929965f3f8257359",
+    "tree": "68bcef7dade67d9e234e4b2867bb7cc298c8e4d6"
   },
   "AERA-Recovery/android_system_vold": {
     "branch": "aera-16.0",
@@ -24,7 +24,7 @@
   },
   "AERA-Recovery/android_vendor_recovery": {
     "branch": "aera-16.0",
-    "commit": "7b4e41362938ee3498fc0e8a4f3e0528bf320efd",
-    "tree": "f770e939d83898dc8c4f19deff014d61913c232d"
+    "commit": "6eb0b571f26032161a9836e37025a14cbf0ee16d",
+    "tree": "315d377b93c8bd149997fb9542f588e6ee3020e7"
   }
 }
