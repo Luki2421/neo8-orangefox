@@ -19,6 +19,7 @@ from runtime_config import restore_runtime_config
 from secure_element_bundle import restore_secure_element_bundle, verified_reference
 from ota_sideload import configure_ota_sideload
 from regdb import configure_regdb
+from screen_config import enable_screen_timeout
 from wifi_config import configure_wifi
 from runtime_fixes import configure_runtime_fixes
 
@@ -84,6 +85,7 @@ def main():
     report['ota_sideload'] = configure_ota_sideload(device, entries)
     report['regdb'] = configure_regdb(device, args.regdb_dir)
     report['usb_and_strongbox'] = configure_runtime_fixes(device, root / 'bootable/recovery', entries)
+    report['screen_timeout'] = enable_screen_timeout(device)
     prop = device / 'system.prop'
     text = prop.read_text().replace('ro.crypto.metadata_init_delete_all_keys.enabled=true',
                                     'ro.crypto.metadata_init_delete_all_keys.enabled=false')

@@ -376,3 +376,13 @@ z pakietu `wireless-regdb` runnera w `/etc/firmware/` (ten katalog jest już w
 `firmware_directories` ueventd). `regdb.py` sprawdza nagłówek `RGDB` i podpis DER;
 `verify_runtime_image.py` sprawdza oba pliki w spakowanym obrazie. Czy jądro przyjmie
 podpis, widać dopiero w `dmesg` na telefonie (brak linii `failed to load regulatory.db`).
+
+## Wygaszanie ekranu i blokada — 24.10.2026
+
+Donorowy `BoardConfig.mk` z TWRP ustawia `TW_NO_SCREEN_TIMEOUT := true`. W AERA ta flaga
+zamienia `AeraScreenTimer` (`Blank`, `Wake`, `CheckTimeout`) w puste funkcje i ukrywa
+ustawienie czasu wygaszania. Krótkie naciśnięcie zasilania przełączało więc UI na ekran
+blokady, ale podświetlenie nigdy nie gasło. `prepare.py` usuwa tę flagę
+(`screen_config.py`). `TW_NO_SCREEN_BLANK := true` zostaje: ekran gaśnie przez jasność 0
+na `TW_BRIGHTNESS_PATH`, bez blankowania framebuffera. Po zmianie obowiązuje domyślny
+czas wygaszania AERA (60 s), a jego zachowanie na panelu Neo8 wymaga próby na telefonie.
