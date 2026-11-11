@@ -400,3 +400,19 @@ stop, runtime config, Secure Element, Wi-Fi, USB/StrongBox, sideload, ekran, APE
 MTP (8) i instalator (56). Kompilacja Androida i próba na telefonie wciąż konieczne;
 zmiany Wi-Fi z upstreamu (statyczne IP, DHCP, trasy) nie były testowane z naszym
 uruchamianiem supplicanta na żądanie.
+
+## Synchronizacja źródeł AERA — 11.11.2026
+
+Recovery: `3cf9c3d` → `42ed6b6` (2026-11-07, 50 commitów: m.in. ukryte i ręczne sieci
+Wi-Fi, naprawy ADB sideload i payload OTA, zwalnianie montowań przed flashowaniem ZIP,
+opcjonalny odcisk palca i blokada ekranu, KernelSU 3.3.1), vendor/recovery:
+`6eb0b57` → `1f4b6e1` (5 commitów). Manifest, `system/vold` i `hardware/interfaces`
+bez zmian w upstreamie.
+
+Wszystkie łatki nakładają się bez zmian na nowy recovery, `prepare.py` przechodzi
+(107 plików z referencji), a testy hosta przeszły: SQLite WAL, service stop, runtime
+config, Secure Element, Wi-Fi, USB/StrongBox, sideload, ekran, APEX (28), MTP (8)
+i instalator (56). Lokalnie użyto zastępczego `regulatory.db`; CI bierze prawdziwy
+z `wireless-regdb`. Nowe funkcje upstreamu typu opt-in (odcisk palca, EFISP, zależności
+w RAM, kompresja) nie są włączone. Kompilacja Androida i próba na telefonie wciąż
+konieczne; zmiany Wi-Fi i instalatora ZIP z upstreamu nie były testowane na Neo8.

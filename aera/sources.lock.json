@@ -10,8 +10,8 @@
   },
   "AERA-Recovery/android_bootable_recovery": {
     "branch": "aera-16.0",
-    "commit": "3cf9c3d7e5e761d5004c4109929965f3f8257359",
-    "tree": "68bcef7dade67d9e234e4b2867bb7cc298c8e4d6"
+    "commit": "42ed6b66808200ce0d388bb0b4f05e4c2af4d207",
+    "tree": "d5b63c0551a7d0cf5e9edd3d9fa32b6021ee1869"
   },
   "AERA-Recovery/android_system_vold": {
     "branch": "aera-16.0",
@@ -24,7 +24,7 @@
   },
   "AERA-Recovery/android_vendor_recovery": {
     "branch": "aera-16.0",
-    "commit": "6eb0b571f26032161a9836e37025a14cbf0ee16d",
-    "tree": "315d377b93c8bd149997fb9542f588e6ee3020e7"
+    "commit": "1f4b6e19882c83f95d1420872d0c31be0b97a7a6",
+    "tree": "81352259926c89ea038b1f99ce418e7756c4df49"
   }
 }
