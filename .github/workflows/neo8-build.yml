@@ -76,6 +76,18 @@ jobs:
           </manifest>
           EOF
           "$HOME/bin/repo" sync -c -j4 --no-tags --no-clone-bundle --fail-fast 2>&1 | tee "$GITHUB_WORKSPACE/artifacts/neo8-build/sync.log"
+          # external/foxcli follows its branch and now needs libfox_protocol_types, which the
+          # pinned recovery (c239fc5) does not provide. Use its state from the last successful
+          # build (run 32, 2026-10-07 15:19 UTC) until recovery itself is advanced.
+          "$HOME/bin/repo" forall external/foxcli -c '
+            set -eu
+            git fetch --no-tags --shallow-since=2025-01-01 "$REPO_REMOTE" "$REPO_RREV"
+            pin=$(git rev-list -1 --before=2026-10-07T15:19:00Z FETCH_HEAD)
+            test -n "$pin"
+            git checkout --detach "$pin"
+            git log -1 --format="external/foxcli pinned to %H (%cI) %s"
+          ' 2>&1 | tee "$GITHUB_WORKSPACE/artifacts/neo8-build/foxcli-pin.txt"
+          grep -q '^external/foxcli pinned to ' "$GITHUB_WORKSPACE/artifacts/neo8-build/foxcli-pin.txt"
           "$HOME/bin/repo" manifest -r -o "$GITHUB_WORKSPACE/artifacts/neo8-build/resolved-manifest.xml"
           df -h "$ANDROID_ROOT"
 
