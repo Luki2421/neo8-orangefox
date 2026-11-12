@@ -15,6 +15,10 @@ on:
       - scripts/prepare_neo8_port.py
       - scripts/neo8_preflight.py
       - scripts/boot_ramdisk.py
+      - scripts/neo8_reference_runtime.py
+      - scripts/secure_element_bundle.py
+      - scripts/build_reference_nullguard.py
+      - tests/test_reference_runtime.py
       - tests/test_soong_flags.py
       - tests/test_partition_tool_dependencies.py
   workflow_dispatch:
@@ -97,6 +101,15 @@ jobs:
           git -C "$ANDROID_ROOT/build/soong" apply --check "$GITHUB_WORKSPACE/patches/build-soong/neo8-ci-memory.patch"
           git -C "$ANDROID_ROOT/build/soong" apply "$GITHUB_WORKSPACE/patches/build-soong/neo8-ci-memory.patch"
 
+      # Same SHA-verified image as the AERA build; only Secure Element, StrongBox
+      # and crypto runtime files are taken from it, never the recovery ELF.
+      - name: Fetch and verify the phone-tested TWRP reference
+        run: |
+          curl --fail --location --retry 3 https://github.com/MissMyTime/twrp_device_sm8850/releases/download/1.1/TWRP_Neo8_Fix.img -o /tmp/twrp-1.1.img
+          echo 'b99a36d62c1d4e17b88ed979acdd87e58e6325b62e5ff4dc3dd116c0e5f92c9d  /tmp/twrp-1.1.img' | sha256sum -c -
+          python3 scripts/build_reference_nullguard.py /tmp/twrp-1.1.img /tmp/twrp-nullguard.img
+          echo '80b0cbb97a969b4df1ec4c9e51056c4a6433e3536364e987666186f3c5fd7573  /tmp/twrp-nullguard.img' | sha256sum -c -
+
       - name: Fetch pinned Neo8 device and apply port changes
         run: |
           git init /tmp/neo8-device-source
@@ -106,7 +119,8 @@ jobs:
           git -C /tmp/neo8-device-source fetch --depth=1 --no-tags --filter=blob:none origin d4b65c0e964942cf1b09ead3ee5f6d5e8649d17e
           git -C /tmp/neo8-device-source checkout --detach FETCH_HEAD
           python3 scripts/prepare_neo8_port.py --recovery-root "$ANDROID_ROOT/bootable/recovery" --vold-root "$ANDROID_ROOT/system/vold" --neo8-root /tmp/neo8-device-source --report artifacts/neo8-build/source-integration.json
-          python3 scripts/prepare_neo8_build.py --android-root "$ANDROID_ROOT" --neo8-root /tmp/neo8-device-source
+          python3 tests/test_reference_runtime.py --neo8-root /tmp/neo8-device-source --reference /tmp/twrp-nullguard.img
+          python3 scripts/prepare_neo8_build.py --android-root "$ANDROID_ROOT" --neo8-root /tmp/neo8-device-source --reference /tmp/twrp-nullguard.img
           python3 tests/test_metadata_environment.py --recovery-root "$ANDROID_ROOT/bootable/recovery"
           python3 tests/test_storage_init.py --recovery-root "$ANDROID_ROOT/bootable/recovery"
           python3 tests/test_usb_switch.py --recovery-root "$ANDROID_ROOT/bootable/recovery"
@@ -160,10 +174,11 @@ jobs:
           set -o pipefail
           image="$ANDROID_ROOT/out/target/product/RE6402L1/recovery.img"
           python3 scripts/inspect_recovery.py --image "$image" --report artifacts/neo8-build/image-inventory.json
+          python3 scripts/neo8_reference_runtime.py --image "$image" --reference /tmp/twrp-nullguard.img --report artifacts/neo8-build/reference-runtime.json
           python3 "$ANDROID_ROOT/external/avb/avbtool.py" verify_image --image "$image" 2>&1 | tee artifacts/neo8-build/avb-verification.txt
           mkdir -p artifacts/neo8-development-image
           cp "$image" artifacts/neo8-development-image/OrangeFox-Neo8-development.img
-          cp artifacts/neo8-build/image-inventory.json artifacts/neo8-development-image/
+          cp artifacts/neo8-build/image-inventory.json artifacts/neo8-build/reference-runtime.json artifacts/neo8-development-image/
           (cd artifacts/neo8-development-image && sha256sum OrangeFox-Neo8-development.img > recovery-image.sha256)
           printf '%s\n' 'Development image for review. Startup, touch and phone decryption have not been tested.' > artifacts/neo8-development-image/README.txt
 

@@ -11,6 +11,7 @@ import subprocess
 from neo8_service_config import (configure_service_files, configure_fastboot_manifest,
                                  configure_omapi_manifest, configure_qseecomd,
                                  preserve_ssg_ta_files, use_source_partition_libraries)
+from neo8_reference_runtime import configure_reference_runtime, load_reference
 
 PROJECT = Path(__file__).resolve().parents[1]
 
@@ -56,9 +57,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--android-root', type=Path, required=True)
     parser.add_argument('--neo8-root', type=Path, required=True)
+    parser.add_argument('--reference', type=Path, required=True,
+                        help='SHA-verified TWRP 1.1 nullguard image')
     args = parser.parse_args()
     android = args.android_root.resolve()
     donor = args.neo8_root.resolve()
+    reference = load_reference(args.reference)
     sources = json.loads((PROJECT / 'port-sources.json').read_text())
     actual = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=donor, text=True).strip()
     if actual != sources['neo8']['commit']:
@@ -82,6 +86,8 @@ def main():
     runtime["omapi_manifest"] = configure_omapi_manifest(device, android)
     runtime["qseecomd"] = configure_qseecomd(device)
     runtime["ssg_ta_files"] = preserve_ssg_ta_files(device)
+    # After the OrangeFox service configuration: only adds or replaces crypto runtime files.
+    runtime["reference_runtime"] = configure_reference_runtime(device, reference)
     board = device / 'BoardConfig.mk'
     text = board.read_text().replace('soong-libguitwrp_defaults', 'soong-libfoxui_defaults')
     text = text.replace('TW_DEFAULT_LANGUAGE := zh_CN', 'TW_DEFAULT_LANGUAGE := en')
