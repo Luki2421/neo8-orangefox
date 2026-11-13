@@ -224,9 +224,15 @@ class MainActivity : Activity() {
         val cSlot = ui.card(p1, tr("Aktywny slot", "Active slot"))
         ui.row(cSlot, ui.button("Slot A", G) { simple("set_active:a", false) }, ui.button("Slot B", G) { simple("set_active:b", false) })
         val cImg = ui.card(p1, tr("Pojedynczy obraz", "Single image"))
-        partEdit = ui.input(tr("partycja (puste = z nazwy pliku, np. boot_a)", "partition (empty = from file name, e.g. boot_a)"))
+        cImg.addView(ui.sectionLabel(tr("1. Partycja", "1. Partition")).apply { setPadding(0, 0, 0, ui.dp(4)) })
+        partEdit = ui.input(tr("np. boot_a - wybierz z listy albo wpisz", "e.g. boot_a - pick from list or type"))
         cImg.addView(partEdit, ui.lp(bottom = 10))
-        ui.row(cImg, ui.button(tr("Wybierz obraz i flashuj", "Pick image and flash"), G, ::pickImage))
+        ui.row(cImg, ui.button(tr("Lista partycji", "Partition list"), G, ::pickPartition))
+        cImg.addView(ui.sectionLabel(tr("2. Plik obrazu", "2. Image file")).apply { setPadding(0, ui.dp(4), 0, ui.dp(4)) })
+        imgLabel = ui.value("-")
+        cImg.addView(imgLabel, ui.lp(bottom = 10))
+        ui.row(cImg, ui.button(tr("Wybierz plik", "Pick file"), G, ::pickImage))
+        ui.row(cImg, ui.button(tr("3. Flashuj", "3. Flash"), B, ::flashSingle), top = 4)
         val cWipe = ui.card(p1, tr("Dane", "Data"))
         ui.row(cWipe, ui.button(tr("Wyczysc dane (format)", "Wipe data (format)"), D) { confirmWipe() })
 
@@ -837,7 +843,6 @@ class MainActivity : Activity() {
 
     @Suppress("DEPRECATION")
     private fun pickImage() {
-        if (fb == null) { log(tr("Najpierw nacisnij Polacz", "Tap Connect first")); return }
         val i = Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*")
         startActivityForResult(i, REQ_IMAGE)
     }
@@ -888,14 +893,63 @@ class MainActivity : Activity() {
         if (requestCode != REQ_IMAGE || resultCode != RESULT_OK) return
         val uri = data?.data ?: return
         val src = uriSource(uri) ?: run { log(tr("Nie mozna odczytac pliku", "Cannot read file")); return }
-        val part = partEdit.text.toString().trim().ifEmpty { src.name.substringBeforeLast('.') }
+        imgUri = uri
+        imgLabel.text = "${src.name}  (${src.size / (1 shl 20)} MB)"
+        if (partEdit.text.isBlank()) log(tr("Plik: ${src.name} - teraz wybierz partycje", "File: ${src.name} - now pick the partition"))
+    }
+
+    private var imgUri: Uri? = null
+    private lateinit var imgLabel: TextView
+
+    /** Lista partycji z telefonu (getvar all: partition-size:*), jak w FFF. Bez polaczenia - typowe nazwy. */
+    private fun pickPartition() {
+        val common = listOf("boot", "init_boot", "vendor_boot", "recovery", "dtbo", "vbmeta", "vbmeta_system", "vbmeta_vendor", "modem", "abl", "xbl", "super")
+        fun show(items: List<String>, fromDevice: Boolean) = runOnUiThread {
+            val arr = items.toTypedArray()
+            AlertDialog.Builder(this)
+                .setTitle(if (fromDevice) tr("Partycje w telefonie (${arr.size})", "Partitions on phone (${arr.size})") else tr("Typowe partycje (polacz telefon, by zobaczyc wszystkie)", "Common partitions (connect phone to see all)"))
+                .setItems(arr) { _, i -> partEdit.setText(arr[i].substringBefore("  ")) }
+                .setNegativeButton(tr("Anuluj", "Cancel"), null)
+                .show()
+        }
+        val f = fb ?: run { show(common, false); return }
+        exec.execute {
+            busy = true
+            try {
+                val sizes = LinkedHashMap<String, Long>()
+                val logical = HashSet<String>()
+                for (l in f.getVarAll()) {
+                    Regex("""partition-size:([^:]+):\s*(0x[0-9a-fA-F]+|\d+)""").find(l)?.let { m ->
+                        val v = m.groupValues[2]
+                        sizes[m.groupValues[1]] = if (v.startsWith("0x", true)) v.substring(2).toLong(16) else v.toLong()
+                    }
+                    Regex("""is-logical:([^:]+):\s*yes""").find(l)?.let { logical += it.groupValues[1] }
+                }
+                if (sizes.isEmpty()) show(common, false)
+                else show(sizes.keys.sorted().map { n ->
+                    val sz = sizes.getValue(n)
+                    n + "  " + (if (sz >= (1 shl 20)) "${sz / (1 shl 20)} MB" else "${sz / 1024} KB") + (if (n in logical) tr("  (logiczna)", "  (logical)") else "")
+                }, true)
+            } catch (e: Exception) { log("getvar all: ${e.message}"); show(common, false) }
+            finally { busy = false }
+        }
+    }
+
+    private fun flashSingle() {
+        val uri = imgUri ?: run { log(tr("Wybierz plik obrazu", "Pick an image file")); return }
+        val part = partEdit.text.toString().trim()
+        if (part.isEmpty()) { log(tr("Wybierz partycje z listy albo wpisz nazwe", "Pick a partition from the list or type its name")); return }
+        if (fb == null) { log(tr("Najpierw nacisnij Polacz", "Tap Connect first")); return }
+        val src = uriSource(uri) ?: run { log(tr("Nie mozna odczytac pliku", "Cannot read file")); return }
         AlertDialog.Builder(this)
             .setTitle("Flash")
             .setMessage(tr("Wgrac ${src.name} (${src.size / (1 shl 20)} MB) na partycje \"$part\"?", "Flash ${src.name} (${src.size / (1 shl 20)} MB) to partition \"$part\"?"))
             .setPositiveButton("Flash") { _, _ ->
                 withFb { f ->
+                    setStep("$part <- ${src.name}")
                     f.flash(part, src, ::setProgress)
                     setProgress(0, 0)
+                    setStep(tr("Gotowe: $part", "Done: $part"))
                 }
             }
             .setNegativeButton(tr("Anuluj", "Cancel"), null)
