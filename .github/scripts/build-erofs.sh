@@ -18,7 +18,7 @@ cd erofs-utils
 export PKG_CONFIG_LIBDIR=/nonexistent PKG_CONFIG_PATH=
 ./configure --host=aarch64-linux-android --disable-fuse --disable-multithreading \
   --without-uuid --without-selinux --without-zlib --without-libdeflate --without-libzstd --without-qpl --without-xxhash \
-  LZ4_CFLAGS="-I$W/lz4/lib" LZ4_LIBS="-L$W/lz4/lib -llz4" \
+  --enable-lz4 liblz4_CFLAGS="-I$W/lz4/lib" liblz4_LIBS="-L$W/lz4/lib -llz4" \
   CPPFLAGS="-I$W/lz4/lib" LDFLAGS="-static -L$W/lz4/lib" | grep -i "lz4" || true
 grep -n "LZ4" config.h || true
 make -s -j"$(nproc)"
