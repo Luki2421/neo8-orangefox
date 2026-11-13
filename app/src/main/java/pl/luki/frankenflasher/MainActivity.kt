@@ -18,25 +18,33 @@ import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.view.WindowManager
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
 import pl.luki.frankenflasher.fastboot.Fastboot
+import pl.luki.frankenflasher.fastboot.FastbootException
+import pl.luki.frankenflasher.firmware.FirmwareFlasher
+import pl.luki.frankenflasher.firmware.FirmwareFolder
+import pl.luki.frankenflasher.firmware.FlashOptions
 import pl.luki.frankenflasher.fastboot.ImageSource
 import pl.luki.frankenflasher.usb.UsbFastbootTransport
 import java.io.InputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 class MainActivity : Activity() {
 
     companion object {
         private const val ACTION_PERM = "pl.luki.frankenflasher.USB_PERMISSION"
         private const val REQ_IMAGE = 10
+        private const val REQ_FIRMWARE = 11
     }
 
     private val usb by lazy { getSystemService(Context.USB_SERVICE) as UsbManager }
@@ -49,13 +57,20 @@ class MainActivity : Activity() {
     private lateinit var progress: ProgressBar
     private lateinit var partEdit: EditText
     private lateinit var status: TextView
+    private lateinit var stepView: TextView
+    private lateinit var fwSummary: TextView
+    private var firmware: FirmwareFolder? = null
+    private val opt = FlashOptions()
+    @Volatile private var permLatch: CountDownLatch? = null
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context, intent: Intent) {
             val dev = intent.usbDevice()
             when (intent.action) {
                 ACTION_PERM -> {
-                    if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false) && dev != null) openDevice(dev)
+                    val l = permLatch
+                    if (l != null) l.countDown()
+                    else if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false) && dev != null) openDevice(dev)
                     else log("Brak zgody na dostep USB")
                 }
                 UsbManager.ACTION_USB_DEVICE_DETACHED -> {
@@ -78,7 +93,7 @@ class MainActivity : Activity() {
         }
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, f, Context.RECEIVER_NOT_EXPORTED)
         else registerReceiver(receiver, f)
-        log("Franken Flasher ${BuildConfigCompat.version(this)} - etap 1: fastboot przez OTG")
+        log("Franken Flasher ${BuildConfigCompat.version(this)} - etap 2: fastboot + firmware")
         log("Podlacz drugi telefon w trybie fastboot (lub fastbootd) i nacisnij Polacz.")
         handleIntent(intent)
     }
@@ -126,6 +141,25 @@ class MainActivity : Activity() {
         root.addView(partEdit)
         row("Wybierz obraz i flashuj" to ::pickImage)
 
+        root.addView(TextView(this).apply { text = "Firmware (folder jak w FFF)"; textSize = 15f; setTypeface(typeface, Typeface.BOLD); setPadding(0, pad, 0, 0) })
+        fwSummary = TextView(this).apply { text = "Nie wybrano folderu"; textSize = 12f }
+        root.addView(fwSummary)
+        fun chk(label: String, get: () -> Boolean, set: (Boolean) -> Unit) =
+            CheckBox(this).apply { text = label; isChecked = get(); textSize = 12f; setOnCheckedChangeListener { _, c -> set(c) } }
+        val o1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        o1.addView(chk("vbmeta bez weryf.", { opt.disableVbmeta }, { opt.disableVbmeta = it }), LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        o1.addView(chk("CRITICAL+EXTRA", { opt.flashCritical }, { opt.flashCritical = it; opt.flashExtra = it }), LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        o1.addView(chk("MODEM", { opt.flashModem }, { opt.flashModem = it }), LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        root.addView(o1)
+        val o2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        o2.addView(chk("super_empty", { opt.useSuperEmpty }, { opt.useSuperEmpty = it }), LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        o2.addView(chk("usun 2. slot", { opt.deleteOtherSlot }, { opt.deleteOtherSlot = it }), LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        o2.addView(chk("restart na koniec", { opt.rebootAtEnd }, { opt.rebootAtEnd = it }), LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        root.addView(o2)
+        row("Wybierz folder" to ::pickFirmware, "Flashuj firmware" to ::flashFirmware)
+        stepView = TextView(this).apply { textSize = 13f; setTypeface(typeface, Typeface.BOLD) }
+        root.addView(stepView)
+
         progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 1000 }
         root.addView(progress)
 
@@ -169,7 +203,7 @@ class MainActivity : Activity() {
         log("Prosba o dostep do USB...")
     }
 
-    private fun openDevice(dev: UsbDevice) {
+    private fun openDevice(dev: UsbDevice, showInfo: Boolean = true) {
         closeDevice()
         try {
             val t = UsbFastbootTransport.open(usb, dev)
@@ -177,7 +211,7 @@ class MainActivity : Activity() {
             fb = Fastboot(t, ::log)
             log("Polaczono: ${dev.manufacturerName ?: ""} ${dev.productName ?: ""} (${dev.deviceName})")
             runOnUiThread { status.text = "Polaczono: ${dev.productName ?: dev.deviceName}" }
-            info()
+            if (showInfo) info()
         } catch (e: Exception) {
             log("Blad polaczenia: ${e.message}")
         }
@@ -195,6 +229,72 @@ class MainActivity : Activity() {
         exec.execute {
             try { block(f) } catch (e: Exception) { log("BLAD: ${e.message}") }
         }
+    }
+
+    /** Czeka, az urzadzenie wroci po restarcie (fastboot/fastbootd) i laczy sie ponownie. Wywolywac z watku roboczego. */
+    private fun reconnectBlocking(timeoutMs: Long): Fastboot {
+        closeDevice()
+        log("Czekam na ponowne polaczenie...")
+        Thread.sleep(4000)
+        val end = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < end) {
+            val dev = usb.deviceList.values.firstOrNull { UsbFastbootTransport.findInterface(it) != null }
+            if (dev != null) {
+                if (!usb.hasPermission(dev)) {
+                    val l = CountDownLatch(1)
+                    permLatch = l
+                    runOnUiThread { requestOrOpen(dev) }
+                    l.await(90, TimeUnit.SECONDS)
+                    permLatch = null
+                }
+                if (usb.hasPermission(dev)) {
+                    openDevice(dev, false)
+                    fb?.let { return it }
+                }
+            }
+            Thread.sleep(1500)
+        }
+        throw FastbootException("Urzadzenie nie wrocilo po restarcie")
+    }
+
+    private fun setStep(s: String) = runOnUiThread { stepView.text = s }
+
+    @Suppress("DEPRECATION")
+    private fun pickFirmware() {
+        startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), REQ_FIRMWARE)
+    }
+
+    private fun loadFirmware(tree: Uri) {
+        try { contentResolver.takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
+        exec.execute {
+            try {
+                val fw = FirmwareFolder.scan(this, tree)
+                firmware = fw
+                runOnUiThread { fwSummary.text = fw.summary() }
+                log("Folder firmware:\n" + fw.summary())
+                if (fw.groups.isEmpty()) log("Brak podfolderow BOOTLOADER/CRITICAL/SYSTEM... - wybierz glowny folder firmware")
+            } catch (e: Exception) { log("Blad odczytu folderu: ${e.message}") }
+        }
+    }
+
+    private fun flashFirmware() {
+        val fw = firmware ?: run { log("Najpierw wybierz folder firmware"); return }
+        if (fb == null) { log("Najpierw nacisnij Polacz"); return }
+        AlertDialog.Builder(this)
+            .setTitle("Flash firmware")
+            .setMessage(fw.summary() + "\n\nWgrac na podlaczony telefon (aktualny slot)? Nie odlaczaj kabla do konca.")
+            .setPositiveButton("Flash") { _, _ ->
+                withFb { f ->
+                    try {
+                        FirmwareFlasher(fw, opt, ::log, ::setStep, ::setProgress, ::reconnectBlocking).run(f)
+                    } catch (e: Exception) {
+                        setStep("BLAD: ${e.message}")
+                        throw e
+                    } finally { setProgress(0, 0) }
+                }
+            }
+            .setNegativeButton("Anuluj", null)
+            .show()
     }
 
     // ---------------- Komendy ----------------
@@ -230,6 +330,7 @@ class MainActivity : Activity() {
     @Deprecated("Activity API")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_FIRMWARE && resultCode == RESULT_OK) { data?.data?.let { loadFirmware(it) }; return }
         if (requestCode != REQ_IMAGE || resultCode != RESULT_OK) return
         val uri = data?.data ?: return
         val src = uriSource(uri) ?: run { log("Nie mozna odczytac pliku"); return }

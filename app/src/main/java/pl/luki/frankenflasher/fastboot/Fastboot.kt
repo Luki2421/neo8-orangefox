@@ -95,26 +95,45 @@ class Fastboot(private val t: UsbFastbootTransport, private val log: (String) ->
         }
     }
 
-    /** Wgrywa obraz na partycje. Obrazy raw wieksze niz max-download-size sa dzielone na kawalki sparse. */
+    /** Rozmiar obrazu po rozpakowaniu (dla sparse: total_blks * blk_sz). */
+    fun logicalSize(src: ImageSource): Long = src.open().use { i ->
+        val h = ByteArray(28)
+        var n = 0
+        while (n < 28) { val r = i.read(h, n, 28 - n); if (r < 0) break; n += r }
+        val bb = java.nio.ByteBuffer.wrap(h).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        if (n == 28 && bb.getInt(0) == Sparse.MAGIC) (bb.getInt(16).toLong() and 0xFFFFFFFFL) * bb.getInt(12) else src.size
+    }
+
+    fun hasSlot(part: String): Boolean = try { getVar("has-slot:$part").trim() == "yes" } catch (_: Exception) { false }
+    fun isLogical(part: String): Boolean = try { getVar("is-logical:$part").trim() == "yes" } catch (_: Exception) { false }
+    fun partitionExists(part: String): Boolean = try { getVar("partition-size:$part").isNotBlank() } catch (_: Exception) { false }
+
+    /** Wysyla caly obraz (<= max-download-size) i wykonuje [then]. */
+    fun downloadThen(src: ImageSource, then: String, timeoutMs: Long, progress: (Long, Long) -> Unit): String {
+        val buf = ByteArray(1 shl 20)
+        var done = 0L
+        startDownload(src.size)
+        src.open().use { copy(it, src.size, buf) { n -> done += n; progress(done, src.size) } }
+        finishDownload()
+        return command(then, timeoutMs)
+    }
+
+    /** Wgrywa obraz na partycje. Duze obrazy (raw i sparse) sa dzielone na czesci. */
     fun flash(partition: String, src: ImageSource, progress: (Long, Long) -> Unit) {
         val max = try { maxDownloadSize() } catch (e: Exception) { 256L shl 20 }
         val sparse = src.open().use { Sparse.isSparse(it) }
         val buf = ByteArray(1 shl 20)
         var done = 0L
         if (src.size <= max) {
-            log("Wysylanie ${src.name} (${src.size / (1 shl 20)} MB)...")
-            startDownload(src.size)
-            src.open().use { copy(it, src.size, buf) { n -> done += n; progress(done, src.size) } }
-            finishDownload()
-            log("Zapisywanie $partition...")
-            command("flash:$partition", 15 * 60_000)
+            log("Wysylanie ${src.name} (${src.size / (1 shl 20)} MB) -> $partition")
+            downloadThen(src, "flash:$partition", 15 * 60_000, progress)
         } else if (!sparse) {
             val pieces = Sparse.plan(src.size, max)
             val total = pieces.sumOf { it.numBlk * Sparse.BLK }
-            log("${src.name}: ${src.size / (1 shl 20)} MB > limit ${max / (1 shl 20)} MB -> ${pieces.size} czesci sparse")
+            log("${src.name}: ${src.size / (1 shl 20)} MB -> ${pieces.size} czesci sparse -> $partition")
             src.open().use { input ->
                 pieces.forEachIndexed { i, p ->
-                    log("Czesc ${i + 1}/${pieces.size}...")
+                    log("  czesc ${i + 1}/${pieces.size}")
                     val head = Sparse.head(p)
                     val tail = Sparse.tail(p)
                     startDownload(p.byteSize)
@@ -126,7 +145,19 @@ class Fastboot(private val t: UsbFastbootTransport, private val log: (String) ->
                 }
             }
         } else {
-            throw FastbootException("Obraz sparse wiekszy niz max-download-size (${max / (1 shl 20)} MB) - obsluga w etapie 2")
+            val plan = src.open().use { SparseResplitter.plan(it, max) }
+            val total = src.size
+            log("${src.name}: sparse ${src.size / (1 shl 20)} MB -> ${plan.pieces.size} czesci -> $partition")
+            src.open().use { input ->
+                val pos = longArrayOf(0)
+                plan.pieces.forEachIndexed { i, p ->
+                    log("  czesc ${i + 1}/${plan.pieces.size}")
+                    startDownload(p.byteSize(plan.totalBlocks))
+                    plan.writePiece(p, input, pos, { b, o, l -> t.write(b, o, l, 60_000) }) { n -> done += n; progress(done, total) }
+                    finishDownload()
+                    command("flash:$partition", 15 * 60_000)
+                }
+            }
         }
         log("OK: $partition")
     }
