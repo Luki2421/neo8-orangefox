@@ -13,6 +13,7 @@ class FlashOptions(
     var deleteOtherSlot: Boolean = true,
     var rebootAtEnd: Boolean = true,
     var wipeData: Boolean = false,
+    var bothSlots: Boolean = true,
 )
 
 /** Flash calego folderu firmware: fizyczne w bootloaderze, logiczne w fastbootd. */
@@ -26,31 +27,28 @@ class FirmwareFlasher(
 ) {
     fun run(initial: Fastboot) {
         var fb = initial
-        if (fb.getVar("is-userspace").trim() == "yes") {
-            step("Restart do bootloadera")
-            fb.command("reboot-bootloader", 30_000)
-            fb = reconnect(120_000)
+        // Jak FFF: wszystko w fastbootd
+        if (fb.getVar("is-userspace").trim() != "yes") {
+            step("Restart do fastbootd")
+            fb.command("reboot-fastboot", 30_000)
+            fb = reconnect(180_000)
+            if (fb.getVar("is-userspace").trim() != "yes") throw FastbootException("Urzadzenie nie jest w fastbootd")
         }
-        val slot = fb.getVar("current-slot").trim().removePrefix("_").ifEmpty { "a" }
-        log("== Slot docelowy: $slot ==")
+        try { fb.command("snapshot-update:cancel", 60_000); log("snapshot-update: anulowano") } catch (_: Exception) {}
+        val current = fb.getVar("current-slot").trim().removePrefix("_").ifEmpty { "a" }
+        val slot = if (opt.bothSlots) "a" else current
+        log(if (opt.bothSlots) "== Fizyczne: oba sloty, logiczne: slot a (jak FFF) ==" else "== Slot docelowy: $slot ==")
 
-        // ---- partycje fizyczne (bootloader) ----
+        // ---- partycje fizyczne ----
         val phys = ArrayList<Pair<DocImage, Boolean>>() // obraz, czy blad przerywa
         if (opt.flashCritical) fw["CRITICAL"].forEach { phys += it to false }
         if (opt.flashExtra) fw["EXTRA"].forEach { phys += it to false }
         if (opt.flashModem) fw["MODEM"].forEach { phys += it to false }
         fw["BOOTLOADER"].sortedBy { if (it.base.startsWith("vbmeta")) 1 else 0 }.forEach { phys += it to true }
         phys.forEachIndexed { i, (img, fatal) ->
-            step("Bootloader ${i + 1}/${phys.size}: ${img.name}")
+            step("Fizyczne ${i + 1}/${phys.size}: ${img.name}")
             flashPhysical(fb, img, slot, fatal)
         }
-
-        // ---- fastbootd ----
-        step("Restart do fastbootd")
-        fb.command("reboot-fastboot", 30_000)
-        fb = reconnect(180_000)
-        if (fb.getVar("is-userspace").trim() != "yes") throw FastbootException("Urzadzenie nie jest w fastbootd")
-        try { fb.command("snapshot-update:cancel", 60_000); log("snapshot-update: anulowano") } catch (_: Exception) {}
 
         val superEmpty = fw["SUPER"].firstOrNull { it.name.equals("super_empty.img", true) }
         if (opt.useSuperEmpty && superEmpty != null) {
@@ -87,6 +85,10 @@ class FirmwareFlasher(
             }
         }
 
+        if (opt.bothSlots && current != "a") {
+            try { fb.command("set_active:a", 30_000); log("aktywny slot: a") } catch (e: Exception) { log("UWAGA: set_active:a - ${e.message}") }
+        }
+
         if (opt.rebootAtEnd) {
             step("Restart do systemu")
             fb.command("reboot", 30_000)
@@ -97,17 +99,19 @@ class FirmwareFlasher(
 
     private fun flashPhysical(fb: Fastboot, img: DocImage, slot: String, fatal: Boolean) {
         val b = img.base
-        val target = when {
-            b.endsWith("_a") || b.endsWith("_b") -> b
-            fb.hasSlot(b) -> "${b}_$slot"
-            else -> b
+        val targets = when {
+            b.endsWith("_a") || b.endsWith("_b") -> listOf(b)
+            fb.hasSlot(b) -> if (opt.bothSlots) listOf("${b}_a", "${b}_b") else listOf("${b}_$slot")
+            else -> listOf(b)
         }
         val src: ImageSource = if (opt.disableVbmeta && b.startsWith("vbmeta")) patchVbmeta(img) else img
-        try {
-            fb.flash(target, src, progress)
-        } catch (e: Exception) {
-            if (fatal) throw e
-            log("UWAGA: pominieto $target - ${e.message}")
+        for (target in targets) {
+            try {
+                fb.flash(target, src, progress)
+            } catch (e: Exception) {
+                if (fatal) throw e
+                log("UWAGA: pominieto $target - ${e.message}")
+            }
         }
     }
 

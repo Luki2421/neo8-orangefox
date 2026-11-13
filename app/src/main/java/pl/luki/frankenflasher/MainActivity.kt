@@ -188,6 +188,7 @@ class MainActivity : Activity() {
         fwSummary = TextView(this).apply { text = "Nie wybrano folderu"; textSize = 13f }
         p3.addView(fwSummary)
         row(p3, "Wybierz folder" to ::pickFirmware)
+        p3.addView(chk("oba sloty (fizyczne a+b, logiczne a) - jak FFF", { opt.bothSlots }, { opt.bothSlots = it }))
         p3.addView(chk("vbmeta off (wylacz weryfikacje)", { opt.disableVbmeta }, { opt.disableVbmeta = it }))
         p3.addView(chk("CRITICAL + EXTRA", { opt.flashCritical }, { opt.flashCritical = it; opt.flashExtra = it }))
         p3.addView(chk("MODEM", { opt.flashModem }, { opt.flashModem = it }))
@@ -381,7 +382,7 @@ class MainActivity : Activity() {
         if (fb == null) { log("Najpierw nacisnij Polacz"); return }
         AlertDialog.Builder(this)
             .setTitle("Flash firmware")
-            .setMessage(fw.summary() + "\n\nWgrac na podlaczony telefon (aktualny slot)? Nie odlaczaj kabla do konca." +
+            .setMessage(fw.summary() + "\n\nWgrac na podlaczony telefon (" + (if (opt.bothSlots) "oba sloty" else "aktualny slot") + ")? Wszystko w fastbootd. Nie odlaczaj kabla do konca." +
                 (if (opt.wipeData) "\n\nUWAGA: WSZYSTKIE DANE na telefonie (zdjecia, aplikacje, konta) zostana USUNIETE." else ""))
             .setPositiveButton("Flash") { _, _ ->
                 withFb { f ->
