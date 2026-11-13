@@ -32,7 +32,7 @@ class ErofsTools(val mkfs: File, val fsck: File, val dump: File, private val log
     /** Zawartosc jednego pliku z obrazu (dump.erofs --cat) - bez wypakowania calego obrazu. */
     fun cat(img: File, path: String): ByteArray {
         val p = ProcessBuilder(dump.path, "--cat", "--path=/" + path.trimStart('/'), img.path)
-            .redirectError(ProcessBuilder.Redirect.DISCARD).start()
+            .redirectError(File("/dev/null")).start()
         val out = p.inputStream.readBytes()
         val rc = p.waitFor()
         if (rc != 0) throw IOException("dump.erofs --cat $path: kod $rc")
