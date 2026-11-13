@@ -137,7 +137,7 @@ class MainActivity : Activity() {
     private fun buildUi() {
         val pad = (8 * resources.displayMetrics.density).toInt()
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad, pad, pad) }
-        status = TextView(this).apply { text = "Nie polaczono"; textSize = 15f; setTypeface(typeface, Typeface.BOLD) }
+        status = TextView(this).apply { text = "Nie polaczono  (v" + BuildConfigCompat.version(this@MainActivity) + ")"; textSize = 15f; setTypeface(typeface, Typeface.BOLD) }
         root.addView(status)
 
         // --- zakladki ---
@@ -296,7 +296,7 @@ class MainActivity : Activity() {
             transport = t
             fb = Fastboot(t, ::log)
             log("Polaczono: ${dev.manufacturerName ?: ""} ${dev.productName ?: ""} (${dev.deviceName})")
-            runOnUiThread { status.text = "Polaczono: ${dev.productName ?: dev.deviceName}" }
+            runOnUiThread { status.text = "Polaczono: ${dev.productName ?: dev.deviceName}  (v" + BuildConfigCompat.version(this) + ")" }
             if (showInfo) info()
         } catch (e: Exception) {
             log("Blad polaczenia: ${e.message}")
@@ -307,7 +307,7 @@ class MainActivity : Activity() {
         try { transport?.close() } catch (_: Exception) {}
         transport = null
         fb = null
-        runOnUiThread { status.text = "Nie polaczono" }
+        runOnUiThread { status.text = "Nie polaczono  (v" + BuildConfigCompat.version(this) + ")" }
     }
 
     private fun withFb(block: (Fastboot) -> Unit) {

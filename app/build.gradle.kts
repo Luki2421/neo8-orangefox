@@ -11,8 +11,8 @@ android {
         applicationId = "pl.luki.frankenflasher"
         minSdk = 26
         targetSdk = 35
-        versionCode = 13
-        versionName = "0.4.4"
+        versionCode = 14
+        versionName = "0.4.5"
     }
     // Staly klucz podpisu - dzieki temu nowe wersje instaluja sie jako aktualizacja
     signingConfigs {
@@ -41,3 +41,6 @@ dependencies {
     implementation("org.apache.commons:commons-compress:1.27.1")
     implementation("com.github.luben:zstd-jni:1.5.6-3@aar")
 }
+
+// Nazwa pliku APK z numerem wersji, np. FrankenFlasher-0.4.5-debug.apk
+base { archivesName.set("FrankenFlasher-" + android.defaultConfig.versionName) }
