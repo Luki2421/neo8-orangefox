@@ -15,6 +15,8 @@ interface ImageSource {
 /** Protokol fastboot (bootloader i fastbootd). */
 class Fastboot(private val t: UsbFastbootTransport, private val log: (String) -> Unit) {
 
+    companion object { const val PIECE_LIMIT = 64L shl 20 }
+
     private val rbuf = ByteArray(256)
 
     private fun send(cmd: String) {
@@ -120,7 +122,9 @@ class Fastboot(private val t: UsbFastbootTransport, private val log: (String) ->
 
     /** Wgrywa obraz na partycje. Duze obrazy (raw i sparse) sa dzielone na czesci. */
     fun flash(partition: String, src: ImageSource, progress: (Long, Long) -> Unit) {
-        val max = try { maxDownloadSize() } catch (e: Exception) { 256L shl 20 }
+        // Mniejsze czesci = mniej danych do powtorzenia po bledzie i mniejsze obciazenie RAM w fastbootd.
+        val devMax = try { maxDownloadSize() } catch (e: Exception) { 256L shl 20 }
+        val max = minOf(devMax, PIECE_LIMIT)
         val sparse = src.open().use { Sparse.isSparse(it) }
         val buf = ByteArray(1 shl 20)
         var done = 0L

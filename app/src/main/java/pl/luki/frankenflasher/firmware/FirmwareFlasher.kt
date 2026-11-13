@@ -17,6 +17,9 @@ class FlashOptions(
 )
 
 /** Flash calego folderu firmware: fizyczne w bootloaderze, logiczne w fastbootd. */
+/** Drugi telefon przestal odpowiadac - dalsze flashowanie nie ma sensu. */
+class DeviceHungException(msg: String) : Exception(msg)
+
 class FirmwareFlasher(
     private val fw: FirmwareFolder,
     private val opt: FlashOptions,
@@ -34,12 +37,23 @@ class FirmwareFlasher(
             try { return block(fb) } catch (e: Exception) {
                 last = e
                 val usb = e is java.io.IOException || (e.message ?: "").contains("USB") || (e.message ?: "").contains("timeout")
-                if (!usb || attempt == 3) throw e
+                if (e is DeviceHungException || !usb || attempt == 3) throw e
                 log("$what: blad (${e.message}) - ponowne polaczenie i proba ${attempt + 1}/3")
                 fb = reconnect(120_000)
+                ensureAlive(what)
             }
         }
         throw last!!
+    }
+
+    /** Po ponownym polaczeniu sprawdz, czy fastbootd w ogole odpowiada. */
+    private fun ensureAlive(what: String) {
+        try { fb.getVar("product") } catch (e: Exception) {
+            throw DeviceHungException(
+                "Drugi telefon nie odpowiada po bledzie przy $what (${e.message}). PRZERWANO. " +
+                "Przytrzymaj Vol- + Power, wejdz do bootloadera i uruchom flash od nowa (nie uruchamiaj systemu)."
+            )
+        }
     }
 
     fun run(initial: Fastboot) {
@@ -52,6 +66,7 @@ class FirmwareFlasher(
             if (fb.getVar("is-userspace").trim() != "yes") throw FastbootException("Urzadzenie nie jest w fastbootd")
         }
         try { fb.command("snapshot-update:cancel", 60_000); log("snapshot-update: anulowano") } catch (_: Exception) {}
+        try { log("fastbootd max-download-size: ${fb.maxDownloadSize() / (1 shl 20)} MB (czesci po ${Fastboot.PIECE_LIMIT / (1 shl 20)} MB)") } catch (_: Exception) {}
         val current = fb.getVar("current-slot").trim().removePrefix("_").ifEmpty { "a" }
         val slot = if (opt.bothSlots) "a" else current
         log(if (opt.bothSlots) "== Fizyczne: oba sloty, logiczne: slot a (jak FFF) ==" else "== Slot docelowy: $slot ==")
@@ -128,7 +143,7 @@ class FirmwareFlasher(
             try {
                 retry(target) { it.flash(target, src, progress) }
             } catch (e: Exception) {
-                if (fatal) throw e
+                if (fatal || e is DeviceHungException) throw e
                 log("UWAGA: pominieto $target - ${e.message}")
             }
         }

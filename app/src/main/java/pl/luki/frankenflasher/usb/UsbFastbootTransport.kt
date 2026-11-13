@@ -52,7 +52,7 @@ class UsbFastbootTransport private constructor(
                 conn.close()
                 throw IOException("Nie mozna przejac interfejsu USB")
             }
-            return UsbFastbootTransport(conn, intf, inEp, outEp, dev)
+            return UsbFastbootTransport(conn, intf, inEp, outEp, dev).also { it.clearHalt() }
         }
     }
 
@@ -71,10 +71,18 @@ class UsbFastbootTransport private constructor(
                     onChunkDowngrade?.invoke(CHUNKS[chunkIdx])
                     continue
                 }
-                throw IOException("Blad zapisu USB ($n, paczka ${want / 1024} KB)")
+                clearHalt()
+                throw IOException("Blad zapisu USB ($n) po ${(o - off) / 1024} KB z ${len / 1024} KB")
             }
             o += n
             rem -= n
+        }
+    }
+
+    /** CLEAR_FEATURE(ENDPOINT_HALT) na obu endpointach - odblokowuje rure po bledzie transmisji. */
+    fun clearHalt() {
+        for (ep in arrayOf(epOut, epIn)) {
+            try { conn.controlTransfer(0x02, 0x01, 0, ep.address, null, 0, 1000) } catch (_: Exception) {}
         }
     }
 
