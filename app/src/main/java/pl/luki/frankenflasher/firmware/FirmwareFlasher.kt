@@ -14,6 +14,8 @@ class FlashOptions(
     var rebootAtEnd: Boolean = true,
     var wipeData: Boolean = false,
     var bothSlots: Boolean = true,
+    /** Jak FFF "SwitchSlot": set_active na drugi slot na poczatku i wszystko na ten slot. */
+    var switchSlot: Boolean = true,
 )
 
 /** Flash calego folderu firmware: fizyczne w bootloaderze, logiczne w fastbootd. */
@@ -70,8 +72,25 @@ class FirmwareFlasher(
         try { fb.command("snapshot-update:cancel", 60_000); log("snapshot-update: anulowano") } catch (_: Exception) {}
         try { log("fastbootd max-download-size: ${fb.maxDownloadSize() / (1 shl 20)} MB (czesci po ${Fastboot.PIECE_LIMIT / (1 shl 20)} MB)") } catch (_: Exception) {}
         val current = fb.getVar("current-slot").trim().removePrefix("_").ifEmpty { "a" }
-        val slot = if (opt.bothSlots) "a" else current
-        log(if (opt.bothSlots) "== Fizyczne: oba sloty, logiczne: slot a (jak FFF) ==" else "== Slot docelowy: $slot ==")
+        switching = opt.switchSlot && (current == "a" || current == "b")
+        val slot = when {
+            switching -> if (current == "a") "b" else "a"
+            opt.bothSlots -> "a"
+            else -> current
+        }
+        if (switching) {
+            // Jak FFF TrySwitchToOppositeSlotAsync: usun -cow, set_active na drugi slot, wszystko na niego.
+            step("Przelaczanie slotu $current -> $slot")
+            log("== Przelaczanie slotu: $current -> $slot (jak FFF) ==")
+            try {
+                val cows = fb.getVarAll().mapNotNull { Regex("""is-logical:([^:]+-cow):\s*yes""").find(it)?.groupValues?.get(1) }
+                for (c in cows) try { fb.command("delete-logical-partition:$c", 60_000); log("usunieto $c") } catch (_: Exception) {}
+            } catch (_: Exception) {}
+            fb.command("set_active:$slot", 30_000)
+            log("aktywny slot: $slot - partycje wgrywane na slot $slot, slot $current zostaje nietkniety")
+        } else {
+            log(if (opt.bothSlots) "== Fizyczne: oba sloty, logiczne: slot a ==" else "== Slot docelowy: $slot ==")
+        }
 
         // ---- partycje fizyczne ----
         val phys = ArrayList<Pair<DocImage, Boolean>>() // obraz, czy blad przerywa
@@ -85,7 +104,7 @@ class FirmwareFlasher(
         }
 
         val superEmpty = fw["SUPER"].firstOrNull { it.name.equals("super_empty.img", true) }
-        if (opt.useSuperEmpty && superEmpty != null) {
+        if (opt.useSuperEmpty && superEmpty != null && !switching) {
             step("super_empty.img -> nowy uklad super")
             retry("super_empty") { it.downloadThen(superEmpty, "update-super:super:wipe", 180_000, progress) }
             log("super: uklad wyczyszczony z super_empty.img")
@@ -93,7 +112,7 @@ class FirmwareFlasher(
             val other = if (slot == "a") "b" else "a"
             val logical = fb.getVarAll().mapNotNull { Regex("""is-logical:([^:]+):\s*yes""").find(it)?.groupValues?.get(1) }.toSet()
             for (p in logical.sorted()) {
-                if (p.endsWith("-cow") || (opt.deleteOtherSlot && p.endsWith("_$other"))) {
+                if (p.endsWith("-cow") || (opt.deleteOtherSlot && !switching && p.endsWith("_$other"))) {
                     try { fb.command("delete-logical-partition:$p", 60_000); log("usunieto $p") }
                     catch (e: Exception) { log("nie usunieto $p: ${e.message}") }
                 }
@@ -106,8 +125,13 @@ class FirmwareFlasher(
             val target = if (img.base.endsWith("_a") || img.base.endsWith("_b")) img.base else "${img.base}_$slot"
             val size = fb.logicalSize(img)
             retry(target) { f ->
-                if (f.isLogical(target)) f.command("resize-logical-partition:$target:$size", 180_000)
-                else { f.command("create-logical-partition:$target:$size", 180_000); log("utworzono $target") }
+                try { prepareLogical(f, target, size) } catch (e: FastbootException) {
+                    if (!switching || freedOldSlot) throw e
+                    // Brak miejsca w super na oba sloty - zwolnij stary slot i sprobuj jeszcze raz
+                    log("$target: ${e.message} - brak miejsca w super, usuwam partycje slotu $current")
+                    freeSlot(f, current)
+                    prepareLogical(f, target, size)
+                }
                 f.flash(target, img, progress)
             }
         }
@@ -135,7 +159,7 @@ class FirmwareFlasher(
             }
         }
 
-        if (opt.bothSlots && current != "a") {
+        if (!switching && opt.bothSlots && current != "a") {
             try { fb.command("set_active:a", 30_000); log("aktywny slot: a") } catch (e: Exception) { log("UWAGA: set_active:a - ${e.message}") }
         }
 
@@ -147,11 +171,27 @@ class FirmwareFlasher(
         log("== FLASH ZAKONCZONY ==")
     }
 
+    private var switching = false
+    private var freedOldSlot = false
+
+    private fun prepareLogical(f: Fastboot, target: String, size: Long) {
+        if (f.isLogical(target)) f.command("resize-logical-partition:$target:$size", 180_000)
+        else { f.command("create-logical-partition:$target:$size", 180_000); log("utworzono $target") }
+    }
+
+    private fun freeSlot(f: Fastboot, s: String) {
+        freedOldSlot = true
+        val parts = f.getVarAll().mapNotNull { Regex("""is-logical:([^:]+):\s*yes""").find(it)?.groupValues?.get(1) }
+        for (p in parts.filter { it.endsWith("_$s") }) {
+            try { f.command("delete-logical-partition:$p", 60_000); log("usunieto $p") } catch (_: Exception) {}
+        }
+    }
+
     private fun flashPhysical(img: DocImage, slot: String, fatal: Boolean) {
         val b = img.base
         val targets = when {
             b.endsWith("_a") || b.endsWith("_b") -> listOf(b)
-            fb.hasSlot(b) -> if (opt.bothSlots) listOf("${b}_a", "${b}_b") else listOf("${b}_$slot")
+            fb.hasSlot(b) -> if (opt.bothSlots && !switching) listOf("${b}_a", "${b}_b") else listOf("${b}_$slot")
             else -> listOf(b)
         }
         val src: ImageSource = if (opt.disableVbmeta && b.startsWith("vbmeta")) patchVbmeta(img) else img
