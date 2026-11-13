@@ -220,6 +220,12 @@ class MainActivity : Activity() {
         header(p4, "Franken (etap 3 - w budowie)")
         row(p4, "Test narzedzi EROFS" to ::testErofsTools)
         row(p4, "Test: wypakuj obraz EROFS" to {
+            erofsWriteTest = false
+            @Suppress("DEPRECATION")
+            startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), REQ_EROFS_TEST)
+        })
+        row(p4, "Test: zapis do kopii obrazu" to {
+            erofsWriteTest = true
             @Suppress("DEPRECATION")
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), REQ_EROFS_TEST)
         })
@@ -502,7 +508,10 @@ class MainActivity : Activity() {
         }.start()
     }
 
+    private var erofsWriteTest = false
+
     private fun erofsExtractTest(uri: Uri) {
+        val write = erofsWriteTest
         Thread {
             try {
                 val t = pl.luki.frankenflasher.franken.ErofsTools(this, ::log)
@@ -510,6 +519,22 @@ class MainActivity : Activity() {
                 val img = File(work, "in.img")
                 setStep("Kopiowanie obrazu")
                 contentResolver.openInputStream(uri)!!.use { i -> img.outputStream().use { o -> i.copyTo(o, 1 shl 20) } }
+                if (write) {
+                    setStep("Zapis testowy do kopii")
+                    val before = img.length()
+                    pl.luki.frankenflasher.franken.ErofsPatcher(img).use { p ->
+                        val dir = listOf("etc", "").first { it.isEmpty() || p.lookup(it) != null }
+                        val path = (if (dir.isEmpty()) "" else "$dir/") + "franken_test.txt"
+                        p.putFile(path, "Franken Flasher test\n".toByteArray())
+                        log("Dodano /$path, dopisano ${p.commit()} B (obraz ${before / 1024} KB -> ${img.length() / 1024} KB)")
+                    }
+                    pl.luki.frankenflasher.franken.ErofsPatcher(img).use { p ->
+                        val n = p.lookup("etc/franken_test.txt") ?: p.lookup("franken_test.txt")
+                        if (n != null) log("Etykieta nowego pliku: " + p.xattrs(p.inode(n)).joinToString())
+                    }
+                    log("fsck.erofs zmienionego obrazu:")
+                    log("kod fsck: " + t.run(t.fsck.path, img.path))
+                }
                 log("Obraz: ${img.length() / (1 shl 20)} MB -> wypakowanie")
                 setStep("Wypakowanie EROFS")
                 val t0 = System.currentTimeMillis()
