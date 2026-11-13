@@ -132,6 +132,12 @@ class MainActivity : Activity() {
         logView = TextView(this).apply { typeface = Typeface.MONOSPACE; textSize = 11f; setTextIsSelectable(true) }
         scroll = ScrollView(this).apply { addView(logView) }
         root.addView(scroll, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+        // Android 15+ rysuje pod paskami systemowymi - odsun tresc o ich wysokosc
+        @Suppress("DEPRECATION")
+        root.setOnApplyWindowInsetsListener { v, ins ->
+            v.setPadding(pad, pad + ins.systemWindowInsetTop, pad, pad + ins.systemWindowInsetBottom)
+            ins
+        }
         setContentView(root)
     }
 
