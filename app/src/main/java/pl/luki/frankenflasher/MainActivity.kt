@@ -531,7 +531,7 @@ class MainActivity : Activity() {
     }
 
     private fun loadFirmware(tree: Uri, save: Boolean = true) {
-        if (save) prefs.edit().putString("fwTree", tree.toString()).apply()
+        if (save) { prefs.edit().putString("fwTree", tree.toString()).apply(); superFolder = null }
         try { contentResolver.takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
         exec.execute {
             try {
