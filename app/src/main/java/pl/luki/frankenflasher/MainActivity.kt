@@ -53,6 +53,7 @@ class MainActivity : Activity() {
         private const val REQ_EROFS_TEST = 15
         private const val REQ_FR_BASE = 16
         private const val REQ_FR_DONOR = 17
+        private const val REQ_SUPER_OTA = 18
     }
 
     private val usb by lazy { getSystemService(Context.USB_SERVICE) as UsbManager }
@@ -780,9 +781,15 @@ class MainActivity : Activity() {
                             ?.let { (n, b) -> defFile.writeBytes(b); log(tr("super_def.json z $otaName ($n)", "super_def.json from $otaName ($n)")) }
                     }
                 }
-                if (!defFile.isFile && size == null) throw java.io.IOException(tr(
-                    "Brak META/super_def.json - rozpakuj OTA ponownie w tej wersji, wybierz OTA zip w zakladce OTA albo wpisz rozmiar super",
-                    "No META/super_def.json - extract the OTA again with this version, pick the OTA zip in the OTA tab or enter the super size"))
+                if (!defFile.isFile && size == null) {
+                    log(tr("Brak super_def.json w folderze - wybierz plik OTA zip tego firmware (wystarczy odczyt, bez rozpakowania)",
+                        "No super_def.json in the folder - pick the OTA zip of this firmware (read only, no extraction)"))
+                    runOnUiThread {
+                        @Suppress("DEPRECATION")
+                        startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), REQ_SUPER_OTA)
+                    }
+                    return@execute
+                }
                 val t0 = System.currentTimeMillis()
                 setStep(tr("Budowanie super.img", "Building super.img"))
                 pl.luki.frankenflasher.franken.SuperFlasher(::log, ::setProgress).build(folder, size)
@@ -884,6 +891,23 @@ class MainActivity : Activity() {
             if (requestCode == REQ_FR_BASE) { frBase = f; frBaseView.text = f.path.removePrefix("/storage/emulated/0/") } else { frDonor = f; frDonorView.text = f.path.removePrefix("/storage/emulated/0/") }
             frResult = null
             saveFranken(null)
+            return
+        }
+        if (requestCode == REQ_SUPER_OTA && resultCode == RESULT_OK) {
+            val zu = data?.data ?: return
+            val folder = prefs.getString("fwTree", null)?.let { treeToFile(Uri.parse(it)) } ?: return
+            exec.execute {
+                try {
+                    val found = contentResolver.openFileDescriptor(zu, "r")?.use { pfd ->
+                        val ch = java.io.FileInputStream(pfd.fileDescriptor).channel
+                        pl.luki.frankenflasher.ota.ZipLocator.readEntry(ch) { n -> n.contains("META/") && n.substringAfterLast('/').startsWith("super_def") && n.endsWith(".json") }
+                    }
+                    if (found == null) { log(tr("W tym pliku nie ma META/super_def.json - to nie pelne OTA zip?", "No META/super_def.json in this file - not a full OTA zip?")); return@execute }
+                    File(folder, "super_def.json").writeBytes(found.second)
+                    log(tr("Zapisano super_def.json z OTA (${found.first})", "Saved super_def.json from OTA (${found.first})"))
+                    runOnUiThread { buildSuperFlasher() }
+                } catch (e: Exception) { log("super_def: $e") }
+            }
             return
         }
         if (requestCode == REQ_EROFS_TEST && resultCode == RESULT_OK) {
