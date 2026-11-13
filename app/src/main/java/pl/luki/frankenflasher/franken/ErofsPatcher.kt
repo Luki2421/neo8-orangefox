@@ -75,7 +75,7 @@ class ErofsPatcher(file: File, readOnly: Boolean = false) : AutoCloseable {
 
     fun inode(nid: Long): Inode {
         val off = nidOffset(nid)
-        val h = le(read(off, 64.coerceAtMost((raf.length() - off).toInt())))
+        val h = le(read(off, minOf(64L, raf.length() - off).toInt()))
         val fmt = h.getShort(0).toInt() and 0xFFFF
         val ext = (fmt and 1) == 1
         val layout = (fmt shr 1) and 7

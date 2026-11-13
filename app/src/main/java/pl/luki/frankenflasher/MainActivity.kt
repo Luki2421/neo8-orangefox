@@ -584,7 +584,7 @@ class MainActivity : Activity() {
                 log("== FRANKEN GOTOWY (${(System.currentTimeMillis() - t0) / 1000} s) ==\n" + fw.summary())
                 setStep("Franken gotowy - podlacz drugi telefon i nacisnij Flashuj Franken")
             } catch (e: Exception) {
-                log("BLAD Franken: ${e.message}")
+                log("BLAD Franken: $e"); e.stackTrace.take(6).forEach { log("    at $it") }
                 setStep("BLAD: ${e.message}")
             }
         }
