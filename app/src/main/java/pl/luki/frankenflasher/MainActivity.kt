@@ -48,6 +48,7 @@ class MainActivity : Activity() {
         private const val REQ_FIRMWARE = 11
         private const val REQ_OTA = 12
         private const val REQ_OTA_OUT = 13
+        private const val REQ_SAVE_LOG = 14
     }
 
     private val usb by lazy { getSystemService(Context.USB_SERVICE) as UsbManager }
@@ -69,6 +70,8 @@ class MainActivity : Activity() {
     private lateinit var otaView: TextView
     private val opt = FlashOptions()
     @Volatile private var permLatch: CountDownLatch? = null
+    private var logFile: java.io.File? = null
+    private val logLock = Any()
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context, intent: Intent) {
@@ -93,6 +96,10 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        logFile = try {
+            val dir = java.io.File(getExternalFilesDir(null), "logs").apply { mkdirs() }
+            java.io.File(dir, "log-" + SimpleDateFormat("yyyyMMdd-HHmmss", Locale.ROOT).format(Date()) + ".txt")
+        } catch (_: Exception) { null }
         buildUi()
         val f = IntentFilter().apply {
             addAction(ACTION_PERM)
@@ -210,6 +217,8 @@ class MainActivity : Activity() {
         val logBar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; isBaselineAligned = false }
         logBar.addView(TextView(this).apply { text = "Log"; textSize = 13f; setTypeface(typeface, Typeface.BOLD) },
             LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        logBar.addView(Button(this).apply { text = "Zapisz"; isAllCaps = false; textSize = 12f; setOnClickListener { saveLog() } })
+        logBar.addView(Button(this).apply { text = "Udostepnij"; isAllCaps = false; textSize = 12f; setOnClickListener { shareLog() } })
         logBar.addView(Button(this).apply { text = "Wyczysc"; isAllCaps = false; textSize = 12f; setOnClickListener { logView.text = "" } })
         root.addView(logBar)
         logView = TextView(this).apply { typeface = Typeface.MONOSPACE; textSize = 11f; setTextIsSelectable(true) }
@@ -228,9 +237,31 @@ class MainActivity : Activity() {
 
     private val timeFmt = SimpleDateFormat("HH:mm:ss", Locale.ROOT)
 
-    fun log(msg: String) = runOnUiThread {
-        logView.append("${timeFmt.format(Date())} $msg\n")
+    fun log(msg: String) {
+        val line = synchronized(logLock) {
+            val l = "${timeFmt.format(Date())} $msg\n"
+            try { logFile?.appendText(l) } catch (_: Exception) {}
+            l
+        }
+        runOnUiThread { appendLogLine(line) }
+    }
+
+    private fun appendLogLine(line: String) {
+        logView.append(line)
         scroll.post { scroll.fullScroll(ScrollView.FOCUS_DOWN) }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun saveLog() {
+        val name = logFile?.name ?: "franken-flasher-log.txt"
+        startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
+            .setType("text/plain").putExtra(Intent.EXTRA_TITLE, name), REQ_SAVE_LOG)
+    }
+
+    private fun shareLog() {
+        val text = logView.text.toString().takeLast(400_000)
+        startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain")
+            .putExtra(Intent.EXTRA_SUBJECT, "Franken Flasher log").putExtra(Intent.EXTRA_TEXT, text), "Udostepnij log"))
     }
 
     private fun setProgress(done: Long, total: Long) = runOnUiThread {
@@ -431,6 +462,15 @@ class MainActivity : Activity() {
     @Deprecated("Activity API")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_SAVE_LOG && resultCode == RESULT_OK) {
+            data?.data?.let { u ->
+                try {
+                    contentResolver.openOutputStream(u)?.use { it.write(logView.text.toString().toByteArray()) }
+                    log("Log zapisany")
+                } catch (e: Exception) { log("Nie zapisano logu: ${e.message}") }
+            }
+            return
+        }
         if (requestCode == REQ_FIRMWARE && resultCode == RESULT_OK) { data?.data?.let { loadFirmware(it) }; return }
         if (requestCode == REQ_OTA && resultCode == RESULT_OK) {
             data?.data?.let { u ->
