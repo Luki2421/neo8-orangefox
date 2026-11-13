@@ -19,7 +19,12 @@ class UsbFastbootTransport private constructor(
 ) : AutoCloseable {
 
     companion object {
-        private val MAX_CHUNK = if (Build.VERSION.SDK_INT >= 28) 256 * 1024 else 16 * 1024
+        /** Kolejne rozmiary paczek USB: jesli kontroler odrzuci wieksza (-1 od razu), schodzimy nizej. */
+        private val CHUNKS = if (Build.VERSION.SDK_INT >= 28) intArrayOf(64 * 1024, 16 * 1024, 4 * 1024) else intArrayOf(16 * 1024, 4 * 1024)
+        /** Zapamietany rozmiar, ktory dziala na tym telefonie (wspolny dla kolejnych polaczen). */
+        @Volatile var chunkIdx = 0
+        val chunkSize: Int get() = CHUNKS[chunkIdx]
+        var onChunkDowngrade: ((Int) -> Unit)? = null
 
         fun findInterface(dev: UsbDevice): UsbInterface? {
             for (i in 0 until dev.interfaceCount) {
@@ -55,8 +60,19 @@ class UsbFastbootTransport private constructor(
         var o = off
         var rem = len
         while (rem > 0) {
-            val n = conn.bulkTransfer(epOut, buf, o, minOf(rem, MAX_CHUNK), timeoutMs)
-            if (n <= 0) throw IOException("Blad zapisu USB ($n)")
+            val want = minOf(rem, CHUNKS[chunkIdx])
+            val t0 = System.nanoTime()
+            val n = conn.bulkTransfer(epOut, buf, o, want, timeoutMs)
+            if (n <= 0) {
+                val fast = (System.nanoTime() - t0) < 1_000_000_000L
+                // Natychmiastowe -1 = kontroler hosta nie przyjal tak duzej paczki; nic nie poszlo, ponawiamy mniejsza.
+                if (fast && want > 4 * 1024 && chunkIdx < CHUNKS.size - 1) {
+                    chunkIdx++
+                    onChunkDowngrade?.invoke(CHUNKS[chunkIdx])
+                    continue
+                }
+                throw IOException("Blad zapisu USB ($n, paczka ${want / 1024} KB)")
+            }
             o += n
             rem -= n
         }

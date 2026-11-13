@@ -97,6 +97,7 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        UsbFastbootTransport.onChunkDowngrade = { log("USB: kontroler odrzucil duza paczke, przechodze na ${it / 1024} KB") }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         logFile = try {
             val dir = java.io.File(getExternalFilesDir(null), "logs").apply { mkdirs() }
