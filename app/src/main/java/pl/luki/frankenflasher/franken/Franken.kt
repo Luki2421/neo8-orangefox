@@ -30,6 +30,8 @@ class Franken(
         var fixVibration: Boolean = true,
         var displayOverlayFromBase: Boolean = true,
         var skipMyPreload: Boolean = false,
+        /** Dzwonki z my_product/res/audio/haptic_ringtone do product/media/audio (jak modul franken_ringtones). */
+        var ringtones: Boolean = true,
         /** Partycje logiczne brane z bazy (domyslnie jak FFF: odm, odm_dlkm, vendor, vendor_dlkm, system_dlkm). */
         var fromBase: MutableSet<String> = HW_FROM_BASE.toMutableSet(),
     )
@@ -73,6 +75,13 @@ class Franken(
             val d = donorImgs["my_product"]; val b = baseImgs["my_product"]
             if (d != null && b != null) chosen["my_product"] = patchMyProduct(d, b, File(outSys, "my_product.img"), opt)
             else log("my_product: brak obrazu w bazie lub dawcy - pomijam poprawki")
+        }
+        // --- dzwonki ---
+        if (opt.ringtones) {
+            val prod = chosen["product"]
+            val src = File(work, "donor_my_product")
+            if (prod != null && src.isDirectory) addRingtones(prod, src, File(outSys, "product.img"))?.let { chosen["product"] = it }
+            else log("dzwonki: brak product.img albo wypakowanego my_product - pomijam")
         }
         // --- my_manifest (baza + wersja dawcy) ---
         if (opt.patchMyManifest) {
@@ -193,6 +202,46 @@ class Franken(
     private fun catAll(img: File, name: String): Map<String, ByteArray> {
         val paths = ErofsPatcher(img, readOnly = true).use { findFiles(it, name) }
         return paths.associateWith { tools.cat(img, it) }
+    }
+
+    // =====================================================================================
+    // dzwonki
+    // =====================================================================================
+
+    private fun addRingtones(productImg: File, myProductRoot: File, out: File): File? {
+        step("dzwonki")
+        val hr = File(myProductRoot, "res/audio/haptic_ringtone")
+        val dirs = listOf(File(hr, "output122HZ")) + hr.listFiles { f -> f.isDirectory }.orEmpty().sortedBy { it.name }
+        fun oggs(d: File, prefix: String) = d.listFiles { f -> f.isFile && f.name.startsWith(prefix) && f.name.endsWith(".ogg") }.orEmpty().sortedBy { it.name }
+        val src = dirs.firstOrNull { it.isDirectory && oggs(it, "ringtone_").isNotEmpty() }
+            ?: dirs.firstOrNull { it.isDirectory && oggs(it, "notification_").isNotEmpty() }
+        if (src == null) { log("dzwonki: brak plikow w my_product/res/audio/haptic_ringtone - pomijam"); return null }
+        val plan = LinkedHashMap<String, File>()
+        oggs(src, "ringtone_").forEach { plan["media/audio/ringtones/${it.name}"] = it; plan["media/audio/alarms/${it.name}"] = it }
+        oggs(src, "notification_").forEach { plan["media/audio/notifications/${it.name}"] = it }
+        oggs(src, "alarm_").forEach { plan["media/audio/alarms/${it.name}"] = it }
+        val todo = ErofsPatcher(productImg, readOnly = true).use { p -> plan.filterKeys { !p.exists(it) } }
+        if (todo.isEmpty()) { log("dzwonki: product ma juz wszystkie pliki - bez zmian"); return null }
+        copyImage(productImg, out)
+        ErofsPatcher(out).use { p ->
+            fun ensureDir(path: String) {
+                if (path.isEmpty() || p.exists(path)) return
+                val parent = path.substringBeforeLast('/', "")
+                ensureDir(parent)
+                val t = p.templateOf(parent) ?: p.attrsOf(p.rootNid)
+                p.mkdir(path, t)
+            }
+            for ((rel, f) in todo) {
+                val dir = rel.substringBeforeLast('/')
+                ensureDir(dir)
+                val d = p.templateOf(dir) ?: p.attrsOf(p.rootNid)
+                p.putFile(rel, f.readBytes(), ErofsPatcher.NewFile(0x81A4, d.uid, d.gid, d.xattrs, ByteArray(0)))
+            }
+            p.commit()
+        }
+        log("dzwonki: dodano ${todo.size} plikow z ${src.name} (dzwonki: ${oggs(src, "ringtone_").size}, powiadomienia: ${oggs(src, "notification_").size})")
+        checkImage(out)
+        return out
     }
 
     // =====================================================================================

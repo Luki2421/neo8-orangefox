@@ -231,6 +231,7 @@ class MainActivity : Activity() {
         p4.addView(chk("my_manifest: wersja dawcy", { frOpt.patchMyManifest }, { frOpt.patchMyManifest = it }))
         p4.addView(chk("odm: producent/marka dawcy", { frOpt.patchOdmIdentity }, { frOpt.patchOdmIdentity = it }))
         p4.addView(chk("app_v2: odblokuj Telefon/Kontakty/SMS", { frOpt.unlockAppV2 }, { frOpt.unlockAppV2 = it }))
+        p4.addView(chk("dzwonki z haptic_ringtone do product", { frOpt.ringtones }, { frOpt.ringtones = it }))
         p4.addView(chk("pomin my_preload", { frOpt.skipMyPreload }, { frOpt.skipMyPreload = it }))
         row(p4, "1. Zbuduj Franken" to ::buildFranken, "2. Flashuj Franken" to ::flashFranken)
         header(p4, "Narzedzia / testy")
