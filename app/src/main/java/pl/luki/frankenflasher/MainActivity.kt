@@ -146,15 +146,15 @@ class MainActivity : Activity() {
         root.addView(fwSummary)
         fun chk(label: String, get: () -> Boolean, set: (Boolean) -> Unit) =
             CheckBox(this).apply { text = label; isChecked = get(); textSize = 12f; setOnCheckedChangeListener { _, c -> set(c) } }
-        val o1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        o1.addView(chk("vbmeta bez weryf.", { opt.disableVbmeta }, { opt.disableVbmeta = it }), LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
-        o1.addView(chk("CRITICAL+EXTRA", { opt.flashCritical }, { opt.flashCritical = it; opt.flashExtra = it }), LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        val o1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; isBaselineAligned = false }
+        o1.addView(chk("vbmeta off", { opt.disableVbmeta }, { opt.disableVbmeta = it }), LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        o1.addView(chk("CRITICAL", { opt.flashCritical }, { opt.flashCritical = it; opt.flashExtra = it }), LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
         o1.addView(chk("MODEM", { opt.flashModem }, { opt.flashModem = it }), LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
         root.addView(o1)
-        val o2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val o2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; isBaselineAligned = false }
         o2.addView(chk("super_empty", { opt.useSuperEmpty }, { opt.useSuperEmpty = it }), LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
         o2.addView(chk("usun 2. slot", { opt.deleteOtherSlot }, { opt.deleteOtherSlot = it }), LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
-        o2.addView(chk("restart na koniec", { opt.rebootAtEnd }, { opt.rebootAtEnd = it }), LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        o2.addView(chk("restart", { opt.rebootAtEnd }, { opt.rebootAtEnd = it }), LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
         root.addView(o2)
         row("Wybierz folder" to ::pickFirmware, "Flashuj firmware" to ::flashFirmware)
         stepView = TextView(this).apply { textSize = 13f; setTypeface(typeface, Typeface.BOLD) }
