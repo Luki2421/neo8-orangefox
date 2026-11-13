@@ -437,7 +437,7 @@ class MainActivity : Activity() {
         exec.execute {
             try {
                 setStep("Sprawdzanie sum...")
-                val images = fw.groups.values.flatten().associate { it.base to it.uri }
+                val images = fw.groups.values.flatten().filter { it.uri != null }.associate { it.base to it.uri!! }
                 val bad = OtaExtractor(this, ::log, ::setProgress).verify(inUri, otaName, images)
                 if (bad.isEmpty()) { log("Wszystkie sumy SHA-256 zgodne"); setStep("Sumy OK - mozna flashowac") }
                 else { bad.forEach { log("BLAD: $it") }; setStep("BLEDNE SUMY (${bad.size}) - nie flashuj") }
@@ -579,7 +579,7 @@ class MainActivity : Activity() {
                 val t0 = System.currentTimeMillis()
                 val tools = pl.luki.frankenflasher.franken.erofsTools(this, ::log)
                 val r = pl.luki.frankenflasher.franken.Franken(b, d, out, tools, ::log, ::setStep).build(frOpt)
-                val fw = FirmwareFolder(r.groups.mapValues { (_, l) -> l.map { DocImage(it) } })
+                val fw = FirmwareFolder(r.groups.mapValues { (_, l) -> l.map { pl.luki.frankenflasher.firmware.DocImage(it) } })
                 frResult = fw
                 log("== FRANKEN GOTOWY (${(System.currentTimeMillis() - t0) / 1000} s) ==\n" + fw.summary())
                 setStep("Franken gotowy - podlacz drugi telefon i nacisnij Flashuj Franken")

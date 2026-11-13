@@ -7,10 +7,10 @@ import pl.luki.frankenflasher.fastboot.ImageSource
 import java.io.InputStream
 
 /** Obraz firmware: z folderu SAF albo zwykly plik (Franken). */
-class DocImage(override val name: String, override val size: Long, private val opener: () -> InputStream) : ImageSource {
+class DocImage(override val name: String, override val size: Long, val uri: Uri?, private val opener: () -> InputStream) : ImageSource {
     constructor(ctx: Context, uri: Uri, name: String, size: Long) :
-        this(name, size, { ctx.contentResolver.openInputStream(uri) ?: throw java.io.IOException("Nie mozna otworzyc $name") })
-    constructor(f: java.io.File) : this(f.name, f.length(), { f.inputStream() })
+        this(name, size, uri, { ctx.contentResolver.openInputStream(uri) ?: throw java.io.IOException("Nie mozna otworzyc $name") })
+    constructor(f: java.io.File) : this(f.name, f.length(), null, { f.inputStream() })
     override fun open(): InputStream = opener()
     val base get() = name.substringBeforeLast('.')
 }
