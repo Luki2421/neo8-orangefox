@@ -11,11 +11,22 @@ android {
         applicationId = "pl.luki.frankenflasher"
         minSdk = 26
         targetSdk = 35
-        versionCode = 9
-        versionName = "0.4.0"
+        versionCode = 10
+        versionName = "0.4.1"
+    }
+    // Staly klucz podpisu - dzieki temu nowe wersje instaluja sie jako aktualizacja
+    signingConfigs {
+        create("franken") {
+            storeFile = file("franken.p12")
+            storeType = "pkcs12"
+            storePassword = "frankenflasher"
+            keyAlias = "franken"
+            keyPassword = "frankenflasher"
+        }
     }
     buildTypes {
-        release { isMinifyEnabled = false }
+        debug { signingConfig = signingConfigs.getByName("franken") }
+        release { isMinifyEnabled = false; signingConfig = signingConfigs.getByName("franken") }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
