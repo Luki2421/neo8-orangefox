@@ -29,6 +29,16 @@ class ErofsTools(val mkfs: File, val fsck: File, val dump: File, private val log
         if (rc != 0) throw IOException("fsck.erofs --extract ${img.name}: kod $rc")
     }
 
+    /** Zawartosc jednego pliku z obrazu (dump.erofs --cat) - bez wypakowania calego obrazu. */
+    fun cat(img: File, path: String): ByteArray {
+        val p = ProcessBuilder(dump.path, "--cat", "--path=/" + path.trimStart('/'), img.path)
+            .redirectError(ProcessBuilder.Redirect.DISCARD).start()
+        val out = p.inputStream.readBytes()
+        val rc = p.waitFor()
+        if (rc != 0) throw IOException("dump.erofs --cat $path: kod $rc")
+        return out
+    }
+
     /** fsck obrazu: 0 = OK. */
     fun check(img: File): Int = run(fsck.path, img.path)
 }

@@ -16,6 +16,8 @@ class Franken(
     private val baseDir: File,
     private val donorDir: File,
     private val outDir: File,
+    /** Katalog roboczy na wypakowane drzewa - pamiec wewnetrzna aplikacji (obsluguje symlinki). */
+    private val work: File,
     private val tools: ErofsTools,
     private val log: (String) -> Unit,
     private val step: (String) -> Unit = {},
@@ -33,14 +35,12 @@ class Franken(
     /** Wynik: obraz -> plik (SYSTEM z bazy/dawcy/poprawiony), grupy fizyczne z bazy. */
     class Result(val groups: Map<String, List<File>>)
 
-    private val work = File(outDir, "work")
-
     fun build(opt: Options = Options()): Result {
         val baseSys = File(baseDir, "SYSTEM")
         val donorSys = File(donorDir, "SYSTEM")
         if (!baseSys.isDirectory) throw IOException("Brak folderu SYSTEM w bazie: $baseSys")
         if (!donorSys.isDirectory) throw IOException("Brak folderu SYSTEM w dawcy: $donorSys")
-        outDir.mkdirs(); work.mkdirs()
+        outDir.mkdirs(); work.deleteRecursively(); work.mkdirs()
         val outSys = File(outDir, "SYSTEM").apply { mkdirs() }
 
         // --- wybor partycji (FrankenBaseHardwareSystem) ---
@@ -134,6 +134,7 @@ class Franken(
                 t.mergeNamedElementsFromBase("etc/extension/feature_com.android.battery.xml", "app_feature")
                 t.mergeNamedElementsFromBase("etc/extension/config_product_com.android.providers.settings.xml", "settings_item")
                 // build.prop
+                var forced = 0
                 donorRoot.walkTopDown().filter { it.isFile && it.name == "build.prop" }.forEach { f ->
                     val rel = f.relativeTo(donorRoot).invariantSeparatorsPath
                     val bf = File(baseRoot, rel)
@@ -145,11 +146,12 @@ class Franken(
                         if (n > 0) { changed = true; log("my_product: $rel - wlasciwosci wyswietlacza/BT/audio z bazy: $n") }
                         if (PropPatches.syncActionButton(lines, bl, log)) changed = true
                     }
-                    if (PropPatches.forceProductBuildProps(lines, log)) changed = true
+                    if (PropPatches.forceProductBuildProps(lines) {}) { changed = true; forced++ }
                     val dups = PropPatches.dedupKeys(lines)
                     if (dups > 0) { changed = true; log("my_product: $rel - usunieto duplikaty: $dups") }
                     if (changed) t.writeText(rel, lines.joinToString("\n") + "\n")
                 }
+                if (forced > 0) log("my_product: speaker_geq=false / fusionlight=true w $forced plikach build.prop")
                 Features.transferDeviceFeatures(t, opt.fixVibration, log)
                 Features.removeBlacklisted(t)
                 val added = Features.ensureAppFeatures(t)
@@ -180,18 +182,21 @@ class Franken(
         }
     }
 
+    /** Pliki o danej nazwie w obrazie -> zawartosc (dump.erofs --cat, bez wypakowania). */
+    private fun catAll(img: File, name: String): Map<String, ByteArray> {
+        val paths = ErofsPatcher(img, readOnly = true).use { findFiles(it, name) }
+        return paths.associateWith { tools.cat(img, it) }
+    }
+
     // =====================================================================================
     // my_manifest
     // =====================================================================================
 
     private fun patchMyManifest(baseImg: File, donorImg: File, out: File): File? {
         step("my_manifest")
-        val baseRoot = File(work, "base_my_manifest"); val donorRoot = File(work, "donor_my_manifest")
-        tools.extractOrThrow(baseImg, baseRoot)
-        tools.extractOrThrow(donorImg, donorRoot)
         val donorProps = HashMap<String, String>()
-        donorRoot.walkTopDown().filter { it.isFile && it.name == "build.prop" }.forEach { f ->
-            f.readLines().forEach { l ->
+        catAll(donorImg, "build.prop").values.forEach { b ->
+            String(b).lines().forEach { l ->
                 val s = l.trim(); val i = s.indexOf('=')
                 if (s.isNotEmpty() && !s.startsWith("#") && i > 0) {
                     val k = s.substring(0, i).trim()
@@ -202,8 +207,9 @@ class Franken(
         log("my_manifest: klucze wersji z dawcy: " + (donorProps.keys.sorted().joinToString().ifEmpty { "(brak)" }))
         if (donorProps.isEmpty()) return null
         val edits = LinkedHashMap<String, String>()
-        baseRoot.walkTopDown().filter { it.isFile && it.name == "build.prop" }.forEach { f ->
-            val lines = f.readLines().toMutableList()
+        catAll(baseImg, "build.prop").forEach { (rel, b) ->
+            val lines = String(b).lines().toMutableList()
+            if (lines.isNotEmpty() && lines.last().isEmpty()) lines.removeAt(lines.size - 1)
             var changed = false
             for (i in lines.indices) {
                 val s = lines[i].trim(); val eq = s.indexOf('=')
@@ -214,7 +220,7 @@ class Franken(
                 val nl = "$k=$v"
                 if (lines[i] != nl) { lines[i] = nl; changed = true }
             }
-            if (changed) edits[f.relativeTo(baseRoot).invariantSeparatorsPath] = lines.joinToString("\n") + "\n"
+            if (changed) edits[rel] = lines.joinToString("\n") + "\n"
         }
         if (edits.isEmpty()) { log("my_manifest: bez zmian"); return null }
         copyImage(baseImg, out)
@@ -240,11 +246,10 @@ class Franken(
     // odm: producent/marka jak u dawcy
     // =====================================================================================
 
-    private fun readProps(img: File, root: File): Map<String, String> {
-        tools.extractOrThrow(img, root)
+    private fun props(files: Map<String, ByteArray>): Map<String, String> {
         val m = HashMap<String, String>()
-        root.walkTopDown().filter { it.isFile && it.name == "build.prop" }.forEach { f ->
-            f.readLines().forEach { l ->
+        files.values.forEach { b ->
+            String(b).lines().forEach { l ->
                 val s = l.trim(); val i = s.indexOf('=')
                 if (s.isNotEmpty() && !s.startsWith("#") && i > 0) m[s.substring(0, i).trim()] = s.substring(i + 1).trim()
             }
@@ -254,8 +259,8 @@ class Franken(
 
     private fun patchOdmIdentity(baseImg: File, donorImg: File, out: File): File? {
         step("odm: tozsamosc")
-        val baseRoot = File(work, "base_odm"); val donorRoot = File(work, "donor_odm")
-        val bp = readProps(baseImg, baseRoot); val dp = readProps(donorImg, donorRoot)
+        val baseFiles = catAll(baseImg, "build.prop")
+        val bp = props(baseFiles); val dp = props(catAll(donorImg, "build.prop"))
         fun pick(m: Map<String, String>, what: String) =
             m["ro.product.odm.$what"] ?: m["ro.product.vendor.$what"] ?: m["ro.product.$what"]
         val dMan = pick(dp, "manufacturer"); val dBrand = pick(dp, "brand")
@@ -264,8 +269,10 @@ class Franken(
         if (dMan == bMan && dBrand == bBrand) { log("odm: producent/marka zgodne ($bMan/$bBrand) - bez zmian"); return null }
         log("odm: manufacturer '$bMan'->'$dMan', brand '$bBrand'->'$dBrand'")
         val edits = LinkedHashMap<String, String>()
-        baseRoot.walkTopDown().filter { it.isFile && it.name == "build.prop" }.forEach { f ->
-            val lines = f.readLines().toMutableList(); var changed = false
+        baseFiles.forEach { (rel, b) ->
+            val lines = String(b).lines().toMutableList()
+            if (lines.isNotEmpty() && lines.last().isEmpty()) lines.removeAt(lines.size - 1)
+            var changed = false
             for (i in lines.indices) {
                 val s = lines[i].trim(); val eq = s.indexOf('=')
                 if (s.startsWith("#") || eq <= 0) continue
@@ -277,7 +284,7 @@ class Franken(
                 } ?: continue
                 if (s.substring(eq + 1).trim() != nv) { lines[i] = "$k=$nv"; changed = true }
             }
-            if (changed) edits[f.relativeTo(baseRoot).invariantSeparatorsPath] = lines.joinToString("\n") + "\n"
+            if (changed) edits[rel] = lines.joinToString("\n") + "\n"
         }
         if (edits.isEmpty()) return null
         copyImage(baseImg, out)
@@ -307,20 +314,15 @@ class Franken(
 
     private fun unlockAppV2(src: File, out: File): File? {
         step("app_v2: ${src.name}")
-        val paths = ErofsPatcher(src, readOnly = true).use { findFiles(it, "app_v2.xml") }
-        if (paths.isEmpty()) return null
-        val root = File(work, "appv2_" + src.name.removeSuffix(".img"))
-        tools.extractOrThrow(src, root)
+        val files = catAll(src, "app_v2.xml")
+        if (files.isEmpty()) return null
         val edits = LinkedHashMap<String, String>()
-        for (rel in paths) {
-            val f = File(root, rel)
-            if (!f.isFile) continue
-            val txt = f.readText()
+        for ((rel, bytes) in files) {
+            val txt = String(bytes)
             var nt = txt
             for (pkg in APP_V2_ENABLE) nt = Regex("""<disable(\s+pkg="${Regex.escape(pkg)}"[^>]*?)/>""").replace(nt, "<enable$1/>")
             if (nt != txt) edits[rel] = nt
         }
-        root.deleteRecursively()
         if (edits.isEmpty()) { log("app_v2: ${src.name} - nic do odblokowania"); return null }
         copyImage(src, out)
         ErofsPatcher(out).use { p -> edits.forEach { (rel, txt) -> p.putFile(rel, txt.toByteArray()) }; p.commit() }

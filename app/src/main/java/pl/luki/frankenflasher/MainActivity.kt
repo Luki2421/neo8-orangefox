@@ -578,7 +578,7 @@ class MainActivity : Activity() {
                 out.deleteRecursively()
                 val t0 = System.currentTimeMillis()
                 val tools = pl.luki.frankenflasher.franken.erofsTools(this, ::log)
-                val r = pl.luki.frankenflasher.franken.Franken(b, d, out, tools, ::log, ::setStep).build(frOpt)
+                val r = pl.luki.frankenflasher.franken.Franken(b, d, out, File(filesDir, "franken_work"), tools, ::log, ::setStep).build(frOpt)
                 val fw = FirmwareFolder(r.groups.mapValues { (_, l) -> l.map { pl.luki.frankenflasher.firmware.DocImage(it) } })
                 frResult = fw
                 log("== FRANKEN GOTOWY (${(System.currentTimeMillis() - t0) / 1000} s) ==\n" + fw.summary())

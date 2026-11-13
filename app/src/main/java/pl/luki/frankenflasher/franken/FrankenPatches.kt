@@ -177,7 +177,7 @@ object Features {
             val orig = lines.toList()
             if (baseLines.isNotEmpty()) {
                 val preserved = lines.filter { isTarget(it) && nameOf(it) in PRESERVED && nameOf(it).lowercase() !in baseNames }
-                val gone = lines.filter { isTarget(it) }.map { nameOf(it) }.filter { it.lowercase() !in baseNames }
+                val gone = lines.filter { isTarget(it) }.map { nameOf(it) }.filter { it.lowercase() !in baseNames && it !in PRESERVED }
                 lines.removeAll { isTarget(it) }
                 var at = lines.indexOfLast { it.trimStart().startsWith("</oplus-config>", ignoreCase = true) }
                 if (at < 0) at = lines.size

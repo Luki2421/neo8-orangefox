@@ -11,8 +11,8 @@ android {
         applicationId = "pl.luki.frankenflasher"
         minSdk = 26
         targetSdk = 35
-        versionCode = 24
-        versionName = "0.7.1"
+        versionCode = 25
+        versionName = "0.7.2"
     }
     // Staly klucz podpisu - dzieki temu nowe wersje instaluja sie jako aktualizacja
     signingConfigs {

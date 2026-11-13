@@ -22,10 +22,11 @@ export PKG_CONFIG_LIBDIR=/nonexistent PKG_CONFIG_PATH=
   CPPFLAGS="-I$W/lz4/lib" LDFLAGS="-static -L$W/lz4/lib" | grep -i "lz4" || true
 grep -n "LZ4" config.h || true
 make -s -j"$(nproc)"
-$STRIP mkfs/mkfs.erofs fsck/fsck.erofs
+$STRIP mkfs/mkfs.erofs fsck/fsck.erofs dump/dump.erofs
 
 DST="$GITHUB_WORKSPACE/app/src/main/jniLibs/arm64-v8a"
 mkdir -p "$DST"
 cp mkfs/mkfs.erofs "$DST/libmkfs_erofs.so"
 cp fsck/fsck.erofs "$DST/libfsck_erofs.so"
+cp dump/dump.erofs "$DST/libdump_erofs.so"
 file "$DST"/*
