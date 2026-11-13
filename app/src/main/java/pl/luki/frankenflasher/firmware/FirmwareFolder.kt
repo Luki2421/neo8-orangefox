@@ -54,8 +54,7 @@ class FirmwareFolder(val groups: Map<String, List<DocImage>>) {
             return out
         }
 
-        fun scan(ctx: Context, tree: Uri): FirmwareFolder {
-            val rootId = DocumentsContract.getTreeDocumentId(tree)
+        fun scan(ctx: Context, tree: Uri, rootId: String = DocumentsContract.getTreeDocumentId(tree)): FirmwareFolder {
             val groups = HashMap<String, List<DocImage>>()
             for (dir in children(ctx, tree, rootId).filter { it.isDir }) {
                 val g = dir.name.uppercase()

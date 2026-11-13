@@ -11,8 +11,8 @@ android {
         applicationId = "pl.luki.frankenflasher"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "0.2.1-etap2"
+        versionCode = 5
+        versionName = "0.3.0-etap2"
     }
     buildTypes {
         release { isMinifyEnabled = false }
@@ -22,4 +22,11 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
+    packaging { resources { excludes += setOf("META-INF/*.md", "META-INF/LICENSE*", "META-INF/NOTICE*", "META-INF/DEPENDENCIES") } }
+}
+
+dependencies {
+    implementation("org.tukaani:xz:1.10")
+    implementation("org.apache.commons:commons-compress:1.27.1")
+    implementation("com.github.luben:zstd-jni:1.5.6-3@aar")
 }

@@ -29,6 +29,7 @@ import pl.luki.frankenflasher.fastboot.FastbootException
 import pl.luki.frankenflasher.firmware.FirmwareFlasher
 import pl.luki.frankenflasher.firmware.FirmwareFolder
 import pl.luki.frankenflasher.firmware.FlashOptions
+import pl.luki.frankenflasher.ota.OtaExtractor
 import pl.luki.frankenflasher.fastboot.ImageSource
 import pl.luki.frankenflasher.usb.UsbFastbootTransport
 import java.io.InputStream
@@ -45,6 +46,8 @@ class MainActivity : Activity() {
         private const val ACTION_PERM = "pl.luki.frankenflasher.USB_PERMISSION"
         private const val REQ_IMAGE = 10
         private const val REQ_FIRMWARE = 11
+        private const val REQ_OTA = 12
+        private const val REQ_OTA_OUT = 13
     }
 
     private val usb by lazy { getSystemService(Context.USB_SERVICE) as UsbManager }
@@ -60,6 +63,10 @@ class MainActivity : Activity() {
     private lateinit var stepView: TextView
     private lateinit var fwSummary: TextView
     private var firmware: FirmwareFolder? = null
+    private var otaUri: Uri? = null
+    private var otaName: String = ""
+    private var otaOut: Uri? = null
+    private lateinit var otaView: TextView
     private val opt = FlashOptions()
     @Volatile private var permLatch: CountDownLatch? = null
 
@@ -93,7 +100,7 @@ class MainActivity : Activity() {
         }
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, f, Context.RECEIVER_NOT_EXPORTED)
         else registerReceiver(receiver, f)
-        log("Franken Flasher ${BuildConfigCompat.version(this)} - etap 2: fastboot + firmware")
+        log("Franken Flasher ${BuildConfigCompat.version(this)} - etap 2: fastboot + firmware + OTA")
         log("Podlacz drugi telefon w trybie fastboot (lub fastbootd) i nacisnij Polacz.")
         handleIntent(intent)
     }
@@ -140,6 +147,11 @@ class MainActivity : Activity() {
         partEdit = EditText(this).apply { hint = "partycja (puste = z nazwy pliku, np. boot_a)"; isSingleLine = true }
         root.addView(partEdit)
         row("Wybierz obraz i flashuj" to ::pickImage)
+
+        root.addView(TextView(this).apply { text = "Rozpakuj OTA (zip / payload.bin)"; textSize = 15f; setTypeface(typeface, Typeface.BOLD); setPadding(0, pad, 0, 0) })
+        otaView = TextView(this).apply { text = "OTA: -   cel: -"; textSize = 12f }
+        root.addView(otaView)
+        row("Wybierz OTA" to ::pickOta, "Folder docelowy" to ::pickOtaOut, "Rozpakuj" to ::extractOta)
 
         root.addView(TextView(this).apply { text = "Firmware (folder jak w FFF)"; textSize = 15f; setTypeface(typeface, Typeface.BOLD); setPadding(0, pad, 0, 0) })
         fwSummary = TextView(this).apply { text = "Nie wybrano folderu"; textSize = 12f }
@@ -277,6 +289,39 @@ class MainActivity : Activity() {
         }
     }
 
+    @Suppress("DEPRECATION")
+    private fun pickOta() {
+        startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), REQ_OTA)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun pickOtaOut() { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), REQ_OTA_OUT) }
+
+    private fun updateOtaView() = runOnUiThread {
+        otaView.text = "OTA: ${otaName.ifEmpty { "-" }}\ncel: ${otaOut?.lastPathSegment?.substringAfterLast(':') ?: "-"}"
+    }
+
+    private fun extractOta() {
+        val inUri = otaUri ?: run { log("Najpierw wybierz plik OTA"); return }
+        val out = otaOut ?: run { log("Najpierw wybierz folder docelowy"); return }
+        exec.execute {
+            try {
+                setStep("Rozpakowywanie $otaName...")
+                log("Rozpakowywanie $otaName")
+                val t0 = System.currentTimeMillis()
+                val r = OtaExtractor(this, ::log, ::setProgress).extract(inUri, otaName, out)
+                val fw = FirmwareFolder.scan(this, r.tree, r.folderDocId)
+                firmware = fw
+                runOnUiThread { fwSummary.text = fw.summary() }
+                log("Gotowe w ${(System.currentTimeMillis() - t0) / 1000} s. Folder ustawiony do flashowania:\n" + fw.summary())
+                setStep("Rozpakowano - mozna flashowac")
+            } catch (e: Exception) {
+                log("BLAD rozpakowania: ${e.message ?: e}")
+                setStep("BLAD rozpakowania")
+            } finally { setProgress(0, 0) }
+        }
+    }
+
     private fun flashFirmware() {
         val fw = firmware ?: run { log("Najpierw wybierz folder firmware"); return }
         if (fb == null) { log("Najpierw nacisnij Polacz"); return }
@@ -331,6 +376,22 @@ class MainActivity : Activity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == REQ_FIRMWARE && resultCode == RESULT_OK) { data?.data?.let { loadFirmware(it) }; return }
+        if (requestCode == REQ_OTA && resultCode == RESULT_OK) {
+            data?.data?.let { u ->
+                otaUri = u
+                otaName = contentResolver.query(u, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c -> if (c.moveToFirst()) c.getString(0) else null } ?: "payload.bin"
+                updateOtaView()
+            }
+            return
+        }
+        if (requestCode == REQ_OTA_OUT && resultCode == RESULT_OK) {
+            data?.data?.let { u ->
+                try { contentResolver.takePersistableUriPermission(u, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION) } catch (_: Exception) {}
+                otaOut = u
+                updateOtaView()
+            }
+            return
+        }
         if (requestCode != REQ_IMAGE || resultCode != RESULT_OK) return
         val uri = data?.data ?: return
         val src = uriSource(uri) ?: run { log("Nie mozna odczytac pliku"); return }
