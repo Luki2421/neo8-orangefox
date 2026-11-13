@@ -822,7 +822,7 @@ class MainActivity : Activity() {
                 }
                 log(tr("Super flasher gotowy w ${(System.currentTimeMillis() - t0) / 1000} s: ${folder.path}", "Super flasher ready in ${(System.currentTimeMillis() - t0) / 1000} s: ${folder.path}"))
                 setStep(tr("Super flasher gotowy", "Super flasher ready"))
-                u.let { loadFirmware(it, save = false) }
+                if (superFolder == null) u?.let { loadFirmware(it, save = false) }
             } catch (e: Exception) {
                 log(tr("BLAD super: $e", "super ERROR: $e")); setStep(tr("BLAD super", "super ERROR"))
             } finally { busy = false; setProgress(0, 0) }
