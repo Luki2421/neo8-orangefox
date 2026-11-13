@@ -11,8 +11,8 @@ android {
         applicationId = "pl.luki.frankenflasher"
         minSdk = 26
         targetSdk = 35
-        versionCode = 8
-        versionName = "0.3.3-etap2"
+        versionCode = 9
+        versionName = "0.4.0"
     }
     buildTypes {
         release { isMinifyEnabled = false }

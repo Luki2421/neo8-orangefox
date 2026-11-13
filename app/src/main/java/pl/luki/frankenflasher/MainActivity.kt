@@ -129,61 +129,93 @@ class MainActivity : Activity() {
         status = TextView(this).apply { text = "Nie polaczono"; textSize = 15f; setTypeface(typeface, Typeface.BOLD) }
         root.addView(status)
 
-        fun row(vararg b: Pair<String, () -> Unit>) {
+        // --- zakladki ---
+        val tabNames = listOf("Fastboot", "OTA", "Firmware")
+        val pages = tabNames.map { LinearLayout(this).apply { orientation = LinearLayout.VERTICAL } }
+        val pageScroll = ScrollView(this)
+        val tabBar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; isBaselineAligned = false }
+        val tabButtons = ArrayList<Button>()
+        fun showTab(i: Int) {
+            pageScroll.removeAllViews()
+            pageScroll.addView(pages[i])
+            pageScroll.scrollTo(0, 0)
+            tabButtons.forEachIndexed { k, btn -> btn.alpha = if (k == i) 1f else 0.5f }
+        }
+        tabNames.forEachIndexed { i, n ->
+            val btn = Button(this).apply { text = n; isAllCaps = false; setOnClickListener { showTab(i) } }
+            tabButtons += btn
+            tabBar.addView(btn, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        }
+        root.addView(tabBar)
+
+        fun row(page: LinearLayout, vararg b: Pair<String, () -> Unit>) {
             val r = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; isBaselineAligned = false }
             b.forEach { (label, action) ->
                 r.addView(Button(this).apply { text = label; isAllCaps = false; setOnClickListener { action() } },
                     LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
             }
-            root.addView(r)
+            page.addView(r)
         }
-        row("Polacz" to ::connect, "Info" to ::info, "getvar all" to ::getvarAll)
-        row("-> fastbootd" to { simple("reboot-fastboot", true) },
+        fun header(page: LinearLayout, t: String) =
+            page.addView(TextView(this).apply { text = t; textSize = 15f; setTypeface(typeface, Typeface.BOLD); setPadding(0, pad, 0, 0) })
+        fun chk(label: String, get: () -> Boolean, set: (Boolean) -> Unit) =
+            CheckBox(this).apply { text = label; isChecked = get(); textSize = 13f; setOnCheckedChangeListener { _, c -> set(c) } }
+
+        // Strona 1: Fastboot
+        val p1 = pages[0]
+        row(p1, "Polacz" to ::connect, "Info" to ::info, "getvar all" to ::getvarAll)
+        row(p1, "-> fastbootd" to { simple("reboot-fastboot", true) },
             "-> bootloader" to { simple("reboot-bootloader", true) },
             "-> system" to { simple("reboot", true) })
-        row("Slot A" to { simple("set_active:a", false) }, "Slot B" to { simple("set_active:b", false) },
-            "Wyczysc log" to { logView.text = "" })
-
+        row(p1, "Slot A" to { simple("set_active:a", false) }, "Slot B" to { simple("set_active:b", false) })
+        header(p1, "Pojedynczy obraz")
         partEdit = EditText(this).apply { hint = "partycja (puste = z nazwy pliku, np. boot_a)"; isSingleLine = true }
-        root.addView(partEdit)
-        row("Wybierz obraz i flashuj" to ::pickImage)
+        p1.addView(partEdit)
+        row(p1, "Wybierz obraz i flashuj" to ::pickImage)
 
-        root.addView(TextView(this).apply { text = "Rozpakuj OTA (zip / payload.bin)"; textSize = 15f; setTypeface(typeface, Typeface.BOLD); setPadding(0, pad, 0, 0) })
-        otaView = TextView(this).apply { text = "OTA: -   cel: -"; textSize = 12f }
-        root.addView(otaView)
-        row("Wybierz OTA" to ::pickOta, "Cel" to ::pickOtaOut, "Rozpakuj" to ::extractOta)
-        row("Sprawdz sumy folderu z OTA" to ::verifyOta)
+        // Strona 2: OTA
+        val p2 = pages[1]
+        header(p2, "Rozpakuj OTA (zip / payload.bin)")
+        otaView = TextView(this).apply { text = "OTA: -   cel: -"; textSize = 13f }
+        p2.addView(otaView)
+        row(p2, "Wybierz OTA" to ::pickOta, "Cel" to ::pickOtaOut)
+        row(p2, "Rozpakuj" to ::extractOta)
+        row(p2, "Sprawdz sumy folderu z OTA" to ::verifyOta)
 
-        root.addView(TextView(this).apply { text = "Firmware (folder jak w FFF)"; textSize = 15f; setTypeface(typeface, Typeface.BOLD); setPadding(0, pad, 0, 0) })
-        fwSummary = TextView(this).apply { text = "Nie wybrano folderu"; textSize = 12f }
-        root.addView(fwSummary)
-        fun chk(label: String, get: () -> Boolean, set: (Boolean) -> Unit) =
-            CheckBox(this).apply { text = label; isChecked = get(); textSize = 12f; setOnCheckedChangeListener { _, c -> set(c) } }
-        val o1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; isBaselineAligned = false }
-        o1.addView(chk("vbmeta off", { opt.disableVbmeta }, { opt.disableVbmeta = it }), LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
-        o1.addView(chk("CRITICAL", { opt.flashCritical }, { opt.flashCritical = it; opt.flashExtra = it }), LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
-        o1.addView(chk("MODEM", { opt.flashModem }, { opt.flashModem = it }), LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
-        root.addView(o1)
-        val o2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; isBaselineAligned = false }
-        o2.addView(chk("super_empty", { opt.useSuperEmpty }, { opt.useSuperEmpty = it }), LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
-        o2.addView(chk("usun 2. slot", { opt.deleteOtherSlot }, { opt.deleteOtherSlot = it }), LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
-        o2.addView(chk("restart", { opt.rebootAtEnd }, { opt.rebootAtEnd = it }), LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
-        root.addView(o2)
-        val o3 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; isBaselineAligned = false }
-        o3.addView(chk("wyczysc dane (userdata + metadata)", { opt.wipeData }, { opt.wipeData = it }).apply {
+        // Strona 3: Firmware
+        val p3 = pages[2]
+        header(p3, "Firmware (folder jak w FFF)")
+        fwSummary = TextView(this).apply { text = "Nie wybrano folderu"; textSize = 13f }
+        p3.addView(fwSummary)
+        row(p3, "Wybierz folder" to ::pickFirmware)
+        p3.addView(chk("vbmeta off (wylacz weryfikacje)", { opt.disableVbmeta }, { opt.disableVbmeta = it }))
+        p3.addView(chk("CRITICAL + EXTRA", { opt.flashCritical }, { opt.flashCritical = it; opt.flashExtra = it }))
+        p3.addView(chk("MODEM", { opt.flashModem }, { opt.flashModem = it }))
+        p3.addView(chk("super_empty.img (jesli jest)", { opt.useSuperEmpty }, { opt.useSuperEmpty = it }))
+        p3.addView(chk("usun partycje 2. slotu z super", { opt.deleteOtherSlot }, { opt.deleteOtherSlot = it }))
+        p3.addView(chk("restart do systemu na koniec", { opt.rebootAtEnd }, { opt.rebootAtEnd = it }))
+        p3.addView(chk("wyczysc dane (userdata + metadata)", { opt.wipeData }, { opt.wipeData = it }).apply {
             setTextColor(android.graphics.Color.rgb(255, 120, 110))
-        }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
-        root.addView(o3)
-        row("Wybierz folder" to ::pickFirmware, "Flashuj firmware" to ::flashFirmware)
+        })
+        row(p3, "Flashuj firmware" to ::flashFirmware)
+
+        root.addView(pageScroll, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1.1f))
+
+        // --- postep + log (zawsze widoczne, przewijane) ---
         stepView = TextView(this).apply { textSize = 13f; setTypeface(typeface, Typeface.BOLD) }
         root.addView(stepView)
-
         progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 1000 }
         root.addView(progress)
-
+        val logBar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; isBaselineAligned = false }
+        logBar.addView(TextView(this).apply { text = "Log"; textSize = 13f; setTypeface(typeface, Typeface.BOLD) },
+            LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        logBar.addView(Button(this).apply { text = "Wyczysc"; isAllCaps = false; textSize = 12f; setOnClickListener { logView.text = "" } })
+        root.addView(logBar)
         logView = TextView(this).apply { typeface = Typeface.MONOSPACE; textSize = 11f; setTextIsSelectable(true) }
-        scroll = ScrollView(this).apply { addView(logView) }
+        scroll = ScrollView(this).apply { addView(logView); setBackgroundColor(android.graphics.Color.rgb(24, 24, 24)) }
         root.addView(scroll, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+
+        showTab(0)
         // Android 15+ rysuje pod paskami systemowymi - odsun tresc o ich wysokosc
         @Suppress("DEPRECATION")
         root.setOnApplyWindowInsetsListener { v, ins ->
