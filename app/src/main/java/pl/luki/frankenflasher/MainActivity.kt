@@ -556,10 +556,29 @@ class MainActivity : Activity() {
         otaView.text = "OTA: ${otaName.ifEmpty { "-" }}\n" + tr("cel", "target") + ": ${otaOut?.lastPathSegment?.substringAfterLast(':') ?: "-"}"
     }
 
+    private fun docIdToFile(id: String): File? {
+        val i = id.indexOf(':'); if (i < 0) return null
+        val vol = id.substring(0, i); val path = id.substring(i + 1)
+        val root = if (vol.equals("primary", true)) android.os.Environment.getExternalStorageDirectory() else File("/storage/$vol")
+        return if (path.isEmpty()) root else File(root, path)
+    }
+
     private fun extractOta(thenHybrid: Boolean = false) {
         val inUri = otaUri ?: run { log(tr("Najpierw wybierz plik OTA", "Pick an OTA file first")); return }
         val out = otaOut ?: run { log(tr("Najpierw wybierz folder docelowy", "Pick a target folder first")); return }
+        if (busy) { log(tr("Trwa inna operacja - poczekaj az sie skonczy", "Another operation is running - wait until it finishes")); return }
+        busy = true
+        // juz rozpakowane wczesniej (ten sam OTA, ten sam folder) - od razu buduj hybrid ZIP
+        val prev = treeToFile(out)?.let { File(it, otaName.substringBeforeLast('.').ifEmpty { "firmware" }) }
+        if (thenHybrid && prev != null && File(prev, "SYSTEM").isDirectory && (File(prev, "extract_ok.txt").isFile || File(prev, "super_groups.txt").isFile || File(prev, "super_def.json").isFile)) {
+            busy = false
+            log(tr("OTA juz rozpakowane w ${prev.name} - pomijam rozpakowanie, buduje hybrid ZIP", "OTA already extracted in ${prev.name} - skipping extraction, building hybrid ZIP"))
+            superFolder = prev
+            buildSuperFlasher(true)
+            return
+        }
         exec.execute {
+            var dir: File? = null
             try {
                 setStep(tr("Rozpakowywanie $otaName...", "Extracting $otaName..."))
                 log(tr("Rozpakowywanie $otaName", "Extracting $otaName"))
@@ -571,14 +590,14 @@ class MainActivity : Activity() {
                 log(tr("Gotowe w ${(System.currentTimeMillis() - t0) / 1000} s. Folder ustawiony do flashowania:\n", "Done in ${(System.currentTimeMillis() - t0) / 1000} s. Folder set for flashing:\n") + fw.summary())
                 setStep(tr("Rozpakowano - mozna flashowac", "Extracted - ready to flash"))
                 if (thenHybrid) {
-                    val dir = treeToFile(out)?.let { File(it, otaName.substringBeforeLast('.').ifEmpty { "firmware" }) }
-                    if (dir == null || !dir.isDirectory) log(tr("Nie moge znalezc rozpakowanego folderu jako sciezki - wybierz go w zakladce Firmware", "Cannot map the extracted folder to a path - pick it in the Firmware tab"))
-                    else { superFolder = dir; runOnUiThread { buildSuperFlasher(true) } }
+                    dir = docIdToFile(r.folderDocId)
+                    if (dir == null || !dir.isDirectory) { dir = null; log(tr("Nie moge znalezc rozpakowanego folderu jako sciezki - wybierz go w zakladce Firmware", "Cannot map the extracted folder to a path - pick it in the Firmware tab")) }
                 }
             } catch (e: Exception) {
                 log(tr("BLAD rozpakowania: ${e.message ?: e}", "EXTRACTION ERROR: ${e.message ?: e}"))
                 setStep(tr("BLAD rozpakowania", "EXTRACTION ERROR"))
-            } finally { setProgress(0, 0) }
+            } finally { setProgress(0, 0); busy = false }
+            dir?.let { d -> superFolder = d; runOnUiThread { buildSuperFlasher(true) } }
         }
     }
 
@@ -774,12 +793,14 @@ class MainActivity : Activity() {
     private var superFolder: File? = null
 
     private fun buildSuperFlasher(hybrid: Boolean = superHybrid) {
+        if (busy) { log(tr("Trwa inna operacja - poczekaj az sie skonczy", "Another operation is running - wait until it finishes")); return }
         superHybrid = hybrid
         val u = prefs.getString("fwTree", null)?.let { Uri.parse(it) }
         val folder = superFolder ?: u?.let { treeToFile(it) }
         if (folder == null || !File(folder, "SYSTEM").isDirectory) { log(tr("Najpierw wybierz folder firmware z podfolderem SYSTEM (rozpakowane OTA) albo uzyj 'OTA zip -> hybrid ZIP' w zakladce OTA",
             "Pick a firmware folder with a SYSTEM subfolder (extracted OTA) or use 'OTA zip -> hybrid ZIP' in the OTA tab")); return }
         if (!hasAllFiles()) { requestAllFiles(); return }
+        busy = true
         // rozmiar super: wpisany > z OTA (super_def.json) > zapamietany z telefonu (Polacz) > wyliczony z grupy w payload
         val size = superEdit.text.toString().trim().toLongOrNull()?.takeIf { it > 0 }
             ?: prefs.getLong("superSize", 0L).takeIf { it > 0 && !File(folder, "super_def.json").isFile }?.also {

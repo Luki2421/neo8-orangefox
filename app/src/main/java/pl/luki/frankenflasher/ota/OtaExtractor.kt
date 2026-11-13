@@ -154,6 +154,9 @@ class OtaExtractor(
                     cr.openOutputStream(u)?.use { it.write(txt.toByteArray()) }
                 }
             } catch (_: Exception) {}
+            try {
+                DocumentsContract.createDocument(cr, outDir, "text/plain", "extract_ok.txt")?.let { u -> cr.openOutputStream(u)?.use { it.write("$inputName\n".toByteArray()) } }
+            } catch (_: Exception) {}
             log(tr("Rozpakowano do: $outName - wszystkie sumy SHA-256 zgodne", "Extracted to: $outName - all SHA-256 checksums match"))
             return Result(outTree, DocumentsContract.getDocumentId(outDir))
         }
