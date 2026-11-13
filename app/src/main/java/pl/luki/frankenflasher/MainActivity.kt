@@ -224,6 +224,7 @@ class MainActivity : Activity() {
         frDonorView = TextView(this).apply { text = "Dawca: -" }
         p4.addView(frBaseView); p4.addView(frDonorView)
         row(p4, "Baza (Neo 8)" to { pickTree(REQ_FR_BASE) }, "Dawca (GT 8 Pro)" to { pickTree(REQ_FR_DONOR) })
+        row(p4, "Partycje: baza / dawca" to ::choosePartitions)
         p4.addView(chk("my_product: konfiguracja sprzetu z bazy", { frOpt.patchMyProduct }, { frOpt.patchMyProduct = it }))
         p4.addView(chk("wibracje z bazy (bez qcom_lmvibrator)", { frOpt.fixVibration }, { frOpt.fixVibration = it }))
         p4.addView(chk("nakladka wyswietlacza z bazy", { frOpt.displayOverlayFromBase }, { frOpt.displayOverlayFromBase = it }))
@@ -588,6 +589,27 @@ class MainActivity : Activity() {
                 setStep("BLAD: ${e.message}")
             }
         }
+    }
+
+    /** Jak okno Franken w FFF: ktore partycje logiczne z bazy (zaznaczone), reszta z dawcy. */
+    private fun choosePartitions() {
+        val b = frBase; val d = frDonor
+        if (b == null || d == null) { log("Najpierw wybierz baze i dawce"); return }
+        fun names(dir: File) = File(dir, "SYSTEM").listFiles { f -> f.name.endsWith(".img") }.orEmpty().map { it.name.removeSuffix(".img") }.toSet()
+        val nb = names(b); val nd = names(d)
+        val all = (nb + nd).filter { it != "my_manifest" && it != "my_product" }.sorted()
+        val labels = all.map { n -> n + when { n !in nb -> "  (tylko dawca)"; n !in nd -> "  (tylko baza)"; else -> "" } }.toTypedArray()
+        val checked = all.map { it in frOpt.fromBase }.toBooleanArray()
+        AlertDialog.Builder(this)
+            .setTitle("Zaznaczone = z BAZY, reszta z dawcy")
+            .setMultiChoiceItems(labels, checked) { _, i, c -> checked[i] = c }
+            .setPositiveButton("OK") { _, _ ->
+                frOpt.fromBase = all.filterIndexed { i, _ -> checked[i] }.toMutableSet()
+                frResult = null
+                log("Franken: z bazy: ${frOpt.fromBase.sorted().joinToString().ifEmpty { "(nic)" }}; z dawcy: ${all.count { it !in frOpt.fromBase && it in nd } + 2} (z my_product i my_manifest*)")
+            }
+            .setNegativeButton("Anuluj", null)
+            .show()
     }
 
     private fun flashFranken() {

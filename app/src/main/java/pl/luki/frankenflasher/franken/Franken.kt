@@ -30,6 +30,8 @@ class Franken(
         var fixVibration: Boolean = true,
         var displayOverlayFromBase: Boolean = true,
         var skipMyPreload: Boolean = false,
+        /** Partycje logiczne brane z bazy (domyslnie jak FFF: odm, odm_dlkm, vendor, vendor_dlkm, system_dlkm). */
+        var fromBase: MutableSet<String> = HW_FROM_BASE.toMutableSet(),
     )
 
     /** Wynik: obraz -> plik (SYSTEM z bazy/dawcy/poprawiony), grupy fizyczne z bazy. */
@@ -47,17 +49,18 @@ class Franken(
         val donorImgs = donorSys.listFiles { f -> f.name.endsWith(".img", true) }.orEmpty().associateBy { it.name.removeSuffix(".img") }
         val baseImgs = baseSys.listFiles { f -> f.name.endsWith(".img", true) }.orEmpty().associateBy { it.name.removeSuffix(".img") }
         val chosen = LinkedHashMap<String, File>()
+        val hw = opt.fromBase
         for ((n, f) in donorImgs.toSortedMap()) {
-            if (n in HW_FROM_BASE) continue
+            if (n in hw) continue
             if (opt.skipMyPreload && n == "my_preload") continue
             chosen[n] = f
         }
         val missing = ArrayList<String>()
-        for (n in HW_FROM_BASE) {
+        for (n in hw.sorted()) {
             val b = baseImgs[n]
             if (b != null) chosen[n] = b else if (donorImgs.containsKey(n)) missing += n
         }
-        log("Franken: z BAZY (sprzet): " + HW_FROM_BASE.filter { baseImgs.containsKey(it) }.joinToString())
+        log("Franken: z BAZY: " + hw.sorted().filter { baseImgs.containsKey(it) }.joinToString() + ", z DAWCY: " + donorImgs.keys.count { it !in hw })
         if (missing.isNotEmpty()) log("Franken: UWAGA - brak w bazie: ${missing.joinToString()} (nie beda wgrane)")
         baseImgs["my_manifest"]?.let { chosen["my_manifest"] = it }
 
