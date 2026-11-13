@@ -245,7 +245,8 @@ class MainActivity : Activity() {
         cOta.addView(otaView, ui.lp(bottom = 12))
         ui.row(cOta, ui.button(tr("Wybierz OTA", "Pick OTA"), G, ::pickOta), ui.button(tr("Cel", "Target"), G, ::pickOtaOut))
         val cOta2 = ui.card(p2, tr("Akcja", "Action"))
-        ui.row(cOta2, ui.button(tr("Rozpakuj", "Extract"), B, ::extractOta))
+        ui.row(cOta2, ui.button(tr("Rozpakuj", "Extract"), B) { extractOta(false) })
+        ui.row(cOta2, ui.button(tr("OTA zip -> hybrid ZIP (super flasher)", "OTA zip -> hybrid ZIP (super flasher)"), G) { extractOta(true) })
         ui.row(cOta2, ui.button(tr("Sprawdz sumy folderu z OTA", "Verify folder checksums against OTA"), G, ::verifyOta))
 
         // Strona 3: Firmware
@@ -555,7 +556,7 @@ class MainActivity : Activity() {
         otaView.text = "OTA: ${otaName.ifEmpty { "-" }}\n" + tr("cel", "target") + ": ${otaOut?.lastPathSegment?.substringAfterLast(':') ?: "-"}"
     }
 
-    private fun extractOta() {
+    private fun extractOta(thenHybrid: Boolean = false) {
         val inUri = otaUri ?: run { log(tr("Najpierw wybierz plik OTA", "Pick an OTA file first")); return }
         val out = otaOut ?: run { log(tr("Najpierw wybierz folder docelowy", "Pick a target folder first")); return }
         exec.execute {
@@ -569,6 +570,11 @@ class MainActivity : Activity() {
                 runOnUiThread { fwSummary.text = fw.summary() }
                 log(tr("Gotowe w ${(System.currentTimeMillis() - t0) / 1000} s. Folder ustawiony do flashowania:\n", "Done in ${(System.currentTimeMillis() - t0) / 1000} s. Folder set for flashing:\n") + fw.summary())
                 setStep(tr("Rozpakowano - mozna flashowac", "Extracted - ready to flash"))
+                if (thenHybrid) {
+                    val dir = treeToFile(out)?.let { File(it, otaName.substringBeforeLast('.').ifEmpty { "firmware" }) }
+                    if (dir == null || !dir.isDirectory) log(tr("Nie moge znalezc rozpakowanego folderu jako sciezki - wybierz go w zakladce Firmware", "Cannot map the extracted folder to a path - pick it in the Firmware tab"))
+                    else { superFolder = dir; runOnUiThread { buildSuperFlasher(true) } }
+                }
             } catch (e: Exception) {
                 log(tr("BLAD rozpakowania: ${e.message ?: e}", "EXTRACTION ERROR: ${e.message ?: e}"))
                 setStep(tr("BLAD rozpakowania", "EXTRACTION ERROR"))
@@ -765,14 +771,20 @@ class MainActivity : Activity() {
     }
 
     private var superHybrid = false
+    private var superFolder: File? = null
 
     private fun buildSuperFlasher(hybrid: Boolean = superHybrid) {
         superHybrid = hybrid
         val u = prefs.getString("fwTree", null)?.let { Uri.parse(it) }
-        val folder = u?.let { treeToFile(it) }
-        if (folder == null || !folder.isDirectory) { log(tr("Najpierw wybierz folder firmware (rozpakowane OTA)", "Pick a firmware folder first (extracted OTA)")); return }
+        val folder = superFolder ?: u?.let { treeToFile(it) }
+        if (folder == null || !File(folder, "SYSTEM").isDirectory) { log(tr("Najpierw wybierz folder firmware z podfolderem SYSTEM (rozpakowane OTA) albo uzyj 'OTA zip -> hybrid ZIP' w zakladce OTA",
+            "Pick a firmware folder with a SYSTEM subfolder (extracted OTA) or use 'OTA zip -> hybrid ZIP' in the OTA tab")); return }
         if (!hasAllFiles()) { requestAllFiles(); return }
+        // rozmiar super: wpisany > z OTA (super_def.json) > zapamietany z telefonu (Polacz) > wyliczony z grupy w payload
         val size = superEdit.text.toString().trim().toLongOrNull()?.takeIf { it > 0 }
+            ?: prefs.getLong("superSize", 0L).takeIf { it > 0 && !File(folder, "super_def.json").isFile }?.also {
+                log(tr("super: rozmiar zapamietany z telefonu: $it B", "super: size remembered from the phone: $it B"))
+            }
         exec.execute {
             busy = true
             try {
@@ -785,7 +797,10 @@ class MainActivity : Activity() {
                             ?.let { (n, b) -> defFile.writeBytes(b); log(tr("super_def.json z $otaName ($n)", "super_def.json from $otaName ($n)")) }
                     }
                 }
-                if (!defFile.isFile && size == null) {
+                if (!defFile.isFile && size == null && File(folder, "super_groups.txt").isFile) {
+                    log(tr("super: brak super_def.json - rozmiar wyliczony z grupy w payload (grupa + 4 MB, jak w konfiguracjach Qualcomm Virtual A/B)",
+                        "super: no super_def.json - size derived from the payload group (group + 4 MB, as in Qualcomm Virtual A/B configs)"))
+                } else if (!defFile.isFile && size == null) {
                     log(tr("Brak super_def.json w folderze - wybierz plik OTA zip tego firmware (wystarczy odczyt, bez rozpakowania)",
                         "No super_def.json in the folder - pick the OTA zip of this firmware (read only, no extraction)"))
                     runOnUiThread {
@@ -907,16 +922,27 @@ class MainActivity : Activity() {
         }
         if (requestCode == REQ_SUPER_OTA && resultCode == RESULT_OK) {
             val zu = data?.data ?: return
-            val folder = prefs.getString("fwTree", null)?.let { treeToFile(Uri.parse(it)) } ?: return
+            val folder = superFolder ?: prefs.getString("fwTree", null)?.let { treeToFile(Uri.parse(it)) } ?: return
             exec.execute {
                 try {
                     val found = contentResolver.openFileDescriptor(zu, "r")?.use { pfd ->
                         val ch = java.io.FileInputStream(pfd.fileDescriptor).channel
                         pl.luki.frankenflasher.ota.ZipLocator.readEntry(ch) { n -> n.contains("META/") && n.substringAfterLast('/').startsWith("super_def") && n.endsWith(".json") }
                     }
-                    if (found == null) { log(tr("W tym pliku nie ma META/super_def.json - to nie pelne OTA zip?", "No META/super_def.json in this file - not a full OTA zip?")); return@execute }
-                    File(folder, "super_def.json").writeBytes(found.second)
-                    log(tr("Zapisano super_def.json z OTA (${found.first})", "Saved super_def.json from OTA (${found.first})"))
+                    if (found != null) {
+                        File(folder, "super_def.json").writeBytes(found.second)
+                        log(tr("Zapisano super_def.json z OTA (${found.first})", "Saved super_def.json from OTA (${found.first})"))
+                    } else {
+                        // brak META/super_def.json (OTA OPPO/realme) - grupy partycji z naglowka payload.bin
+                        val groups = contentResolver.openFileDescriptor(zu, "r")?.use { pfd ->
+                            val ch = java.io.FileInputStream(pfd.fileDescriptor).channel
+                            val base = pl.luki.frankenflasher.ota.ZipLocator.findStored(ch, "payload.bin") ?: 0L
+                            pl.luki.frankenflasher.ota.PayloadParser.parse(ch, base).groups
+                        }.orEmpty()
+                        if (groups.isEmpty()) { log(tr("W tym pliku nie ma ukladu super (ani META/super_def.json, ani grup w payload)", "No super layout in this file (no META/super_def.json, no payload groups)")); return@execute }
+                        File(folder, "super_groups.txt").writeText(groups.joinToString("\n") { g -> "${g.name} ${g.size} ${g.partitions.joinToString(",")}" } + "\n")
+                        log(tr("Uklad super z payload.bin: ${groups.joinToString { "${it.name} ${it.size / (1 shl 20)} MB" }}", "Super layout from payload.bin: ${groups.joinToString { "${it.name} ${it.size / (1 shl 20)} MB" }}"))
+                    }
                     runOnUiThread { buildSuperFlasher(superHybrid) }
                 } catch (e: Exception) { log("super_def: $e") }
             }

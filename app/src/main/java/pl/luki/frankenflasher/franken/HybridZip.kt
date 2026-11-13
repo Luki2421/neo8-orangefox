@@ -86,7 +86,7 @@ class HybridZip(private val log: (String) -> Unit, private val progress: (Long, 
         RandomAccessFile(tmp, "rw").use { raf ->
             val buf = ByteArray(4 shl 20)
             for (e in entries) {
-                if (e === binEntry) e.bytes = recoveryScript(physEntries, metaEntry, logical, plan).toByteArray()
+                if (e === binEntry) e.bytes = recoveryScript(physEntries, metaEntry, logical, plan, st.superSize).toByteArray()
                 writeLocal(raf, e)
                 val crc = CRC32()
                 if (e.file != null) {
@@ -181,7 +181,7 @@ class HybridZip(private val log: (String) -> Unit, private val progress: (Long, 
         return "${src / MB} ${dst / MB} $mb ${(src + mb * MB) / 4096} ${(dst + mb * MB) / 4096} ${(rem + 4095) / 4096}"
     }
 
-    private fun recoveryScript(phys: List<Pair<String, Entry>>, meta: Entry, logical: List<Pair<String, Entry>>, plan: SuperBuilder.Plan): String {
+    private fun recoveryScript(phys: List<Pair<String, Entry>>, meta: Entry, logical: List<Pair<String, Entry>>, plan: SuperBuilder.Plan, superSize: Long): String {
         val s = StringBuilder()
         s.append("""#!/sbin/sh
 # Franken Flasher - hybrid super flasher (recovery)
@@ -208,8 +208,15 @@ ui "**************************************"
 ui " Franken Flasher - hybrid super flasher"
 ui "**************************************"
 for m in /system_root /system /vendor /product /odm /system_ext; do umount -l ${'$'}m 2>/dev/null; done
+SZ=${'$'}(blockdev --getsize64 "${'$'}BD/super" 2>/dev/null)
+[ -z "${'$'}SZ" ] && SZ=${'$'}(( ${'$'}(cat /sys/class/block/${'$'}(basename ${'$'}(readlink -f "${'$'}BD/super"))/size 2>/dev/null || echo 0) * 512 ))
+if [ -n "${'$'}SZ" ] && [ "${'$'}SZ" != 0 ] && [ "${'$'}SZ" != "SUPERSIZE" ]; then
+  ui "! Rozmiar super w telefonie (${'$'}SZ) != ZIP (SUPERSIZE) - inny model? PRZERWANO, nic nie zapisano"
+  ui "! Phone super size differs from ZIP - wrong model? ABORTED, nothing written"
+  exit 1
+fi
 ui "- Partycje fizyczne / physical partitions"
-""")
+""".replace("SUPERSIZE", superSize.toString()))
         for ((n, e) in phys) s.append("p $n ${ddArgs(e.dataOffset, 0, e.size)}\n")
         s.append("ui \"- super: metadane / metadata\"\n")
         s.append("w super ${ddArgs(meta.dataOffset, 0, meta.size)}\n")

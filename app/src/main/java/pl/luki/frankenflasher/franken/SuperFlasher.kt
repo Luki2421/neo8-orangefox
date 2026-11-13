@@ -43,8 +43,14 @@ class SuperFlasher(private val log: (String) -> Unit, private val progress: (Lon
 
     fun setup(folder: File, superSizeIn: Long?): Setup {
         val def = File(folder, "super_def.json").takeIf { it.isFile }?.let { parseDef(it.readText()) }
+        val gfile = File(folder, "super_groups.txt")
+        val payloadGroup = if (gfile.isFile) gfile.readLines().map { it.trim().split(' ') }.filter { it.size >= 2 }
+            .maxByOrNull { it[1].toLongOrNull() ?: 0 }?.let { it[0] to (it[1].toLongOrNull() ?: 0L) } else null
         val superSize = def?.superSize ?: superSizeIn
-            ?: throw IOException(tr("Brak super_def.json w folderze i nie podano rozmiaru super", "No super_def.json in the folder and no super size given"))
+            ?: payloadGroup?.second?.takeIf { it > 0 }?.let { it + (4L shl 20) }?.also {
+                log(tr("super: rozmiar wyliczony z payload: grupa ${payloadGroup.first} + 4 MB = $it B", "super: size derived from payload: group ${payloadGroup.first} + 4 MB = $it B"))
+            }
+            ?: throw IOException(tr("Brak super_def.json/super_groups.txt w folderze i nie podano rozmiaru super", "No super_def.json/super_groups.txt in the folder and no super size given"))
         if (def != null) log(tr("super_def.json: super ${def.superSize} B, grupa ${def.group} ${def.groupMax} B", "super_def.json: super ${def.superSize} B, group ${def.group} ${def.groupMax} B"))
         val sys = File(folder, "SYSTEM")
         val images = sys.listFiles { f -> f.isFile && f.name.endsWith(".img") && f.length() > 0 }.orEmpty()
