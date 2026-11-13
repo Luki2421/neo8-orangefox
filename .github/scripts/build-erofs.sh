@@ -11,7 +11,8 @@ W=/tmp/erofsbuild; rm -rf $W; mkdir -p $W; cd $W
 git clone -q --depth 1 -b v1.10.0 https://github.com/lz4/lz4.git
 make -s -C lz4/lib CC="$CC" AR="$AR" liblz4.a
 
-git clone -q --depth 1 -b v1.8.10 https://git.kernel.org/pub/scm/linux/kernel/git/xiang/erofs-utils.git
+git clone -q --depth 1 -b v1.8.10 https://github.com/erofs/erofs-utils.git \
+  || git clone -q --depth 1 -b v1.8.10 https://git.kernel.org/pub/scm/linux/kernel/git/xiang/erofs-utils.git
 cd erofs-utils
 ./autogen.sh >/dev/null
 export PKG_CONFIG_LIBDIR=/nonexistent PKG_CONFIG_PATH=
