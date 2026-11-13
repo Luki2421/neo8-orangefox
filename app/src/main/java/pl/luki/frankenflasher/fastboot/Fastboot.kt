@@ -80,6 +80,43 @@ class Fastboot(private val t: UsbFastbootTransport, private val log: (String) ->
         if (c != "OKAY") throw FastbootException("download: $c $p")
     }
 
+    /**
+     * Laczy naglowki sparse i dane w jeden ciagly strumien. Wysylamy tylko pelne bloki 1 MB,
+     * a krotki pakiet dopiero na samym koncu - fastbootd zawiesza sie, gdy krotki pakiet
+     * (np. 40-bajtowy naglowek) przyjdzie w srodku pobierania.
+     */
+    private inner class Sink {
+        private val b = ByteArray(1 shl 20)
+        private var n = 0
+        fun write(src: ByteArray, off: Int, len: Int) {
+            var o = off; var l = len
+            while (l > 0) {
+                val k = minOf(l, b.size - n)
+                System.arraycopy(src, o, b, n, k)
+                n += k; o += k; l -= k
+                if (n == b.size) { t.write(b, 0, n, 60_000); n = 0 }
+            }
+        }
+        fun flush() { if (n > 0) { t.write(b, 0, n, 60_000); n = 0 } }
+    }
+
+    private fun copyTo(sink: Sink, input: InputStream, count: Long, buf: ByteArray, onBytes: (Int) -> Unit) {
+        var left = count
+        while (left > 0) {
+            val want = minOf(left, buf.size.toLong()).toInt()
+            var got = 0
+            while (got < want) {
+                val r = input.read(buf, got, want - got)
+                if (r < 0) break
+                got += r
+            }
+            if (got < want) java.util.Arrays.fill(buf, got, want, 0)
+            sink.write(buf, 0, want)
+            left -= want
+            onBytes(want)
+        }
+    }
+
     private fun copy(input: InputStream, count: Long, buf: ByteArray, onBytes: (Int) -> Unit) {
         var left = count
         while (left > 0) {
@@ -141,9 +178,11 @@ class Fastboot(private val t: UsbFastbootTransport, private val log: (String) ->
                     val head = Sparse.head(p)
                     val tail = Sparse.tail(p)
                     startDownload(p.byteSize)
-                    t.write(head, 0, head.size)
-                    copy(input, p.numBlk * Sparse.BLK, buf) { n -> done += n; progress(done, total) }
-                    if (tail.isNotEmpty()) t.write(tail, 0, tail.size)
+                    val sink = Sink()
+                    sink.write(head, 0, head.size)
+                    copyTo(sink, input, p.numBlk * Sparse.BLK, buf) { n -> done += n; progress(done, total) }
+                    if (tail.isNotEmpty()) sink.write(tail, 0, tail.size)
+                    sink.flush()
                     finishDownload()
                     command("flash:$partition", 15 * 60_000)
                 }
@@ -157,7 +196,9 @@ class Fastboot(private val t: UsbFastbootTransport, private val log: (String) ->
                 plan.pieces.forEachIndexed { i, p ->
                     log("  czesc ${i + 1}/${plan.pieces.size}")
                     startDownload(p.byteSize(plan.totalBlocks))
-                    plan.writePiece(p, input, pos, { b, o, l -> t.write(b, o, l, 60_000) }) { n -> done += n; progress(done, total) }
+                    val sink = Sink()
+                    plan.writePiece(p, input, pos, { b, o, l -> sink.write(b, o, l) }) { n -> done += n; progress(done, total) }
+                    sink.flush()
                     finishDownload()
                     command("flash:$partition", 15 * 60_000)
                 }
