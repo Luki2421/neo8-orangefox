@@ -1,0 +1,273 @@
+package pl.luki.frankenflasher
+
+import android.app.Activity
+import android.app.AlertDialog
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.graphics.Typeface
+import android.hardware.usb.UsbDevice
+import android.hardware.usb.UsbManager
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.provider.OpenableColumns
+import android.view.ViewGroup.LayoutParams.MATCH_PARENT
+import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+import android.view.WindowManager
+import android.widget.Button
+import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.ProgressBar
+import android.widget.ScrollView
+import android.widget.TextView
+import pl.luki.frankenflasher.fastboot.Fastboot
+import pl.luki.frankenflasher.fastboot.ImageSource
+import pl.luki.frankenflasher.usb.UsbFastbootTransport
+import java.io.InputStream
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.concurrent.Executors
+
+class MainActivity : Activity() {
+
+    companion object {
+        private const val ACTION_PERM = "pl.luki.frankenflasher.USB_PERMISSION"
+        private const val REQ_IMAGE = 10
+    }
+
+    private val usb by lazy { getSystemService(Context.USB_SERVICE) as UsbManager }
+    private val exec = Executors.newSingleThreadExecutor()
+    private var transport: UsbFastbootTransport? = null
+    private var fb: Fastboot? = null
+
+    private lateinit var logView: TextView
+    private lateinit var scroll: ScrollView
+    private lateinit var progress: ProgressBar
+    private lateinit var partEdit: EditText
+    private lateinit var status: TextView
+
+    private val receiver = object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context, intent: Intent) {
+            val dev = intent.usbDevice()
+            when (intent.action) {
+                ACTION_PERM -> {
+                    if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false) && dev != null) openDevice(dev)
+                    else log("Brak zgody na dostep USB")
+                }
+                UsbManager.ACTION_USB_DEVICE_DETACHED -> {
+                    if (dev != null && dev.deviceName == transport?.device?.deviceName) {
+                        log("Urzadzenie odlaczone")
+                        closeDevice()
+                    }
+                }
+            }
+        }
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        buildUi()
+        val f = IntentFilter().apply {
+            addAction(ACTION_PERM)
+            addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
+        }
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, f, Context.RECEIVER_NOT_EXPORTED)
+        else registerReceiver(receiver, f)
+        log("Franken Flasher ${BuildConfigCompat.version(this)} - etap 1: fastboot przez OTG")
+        log("Podlacz drugi telefon w trybie fastboot (lub fastbootd) i nacisnij Polacz.")
+        handleIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleIntent(intent)
+    }
+
+    private fun handleIntent(i: Intent?) {
+        if (i?.action == UsbManager.ACTION_USB_DEVICE_ATTACHED) i.usbDevice()?.let { requestOrOpen(it) }
+    }
+
+    override fun onDestroy() {
+        unregisterReceiver(receiver)
+        closeDevice()
+        exec.shutdownNow()
+        super.onDestroy()
+    }
+
+    // ---------------- UI ----------------
+
+    private fun buildUi() {
+        val pad = (8 * resources.displayMetrics.density).toInt()
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad, pad, pad) }
+        status = TextView(this).apply { text = "Nie polaczono"; textSize = 15f; setTypeface(typeface, Typeface.BOLD) }
+        root.addView(status)
+
+        fun row(vararg b: Pair<String, () -> Unit>) {
+            val r = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            b.forEach { (label, action) ->
+                r.addView(Button(this).apply { text = label; isAllCaps = false; setOnClickListener { action() } },
+                    LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+            }
+            root.addView(r)
+        }
+        row("Polacz" to ::connect, "Info" to ::info, "getvar all" to ::getvarAll)
+        row("-> fastbootd" to { simple("reboot-fastboot", true) },
+            "-> bootloader" to { simple("reboot-bootloader", true) },
+            "-> system" to { simple("reboot", true) })
+        row("Slot A" to { simple("set_active:a", false) }, "Slot B" to { simple("set_active:b", false) },
+            "Wyczysc log" to { logView.text = "" })
+
+        partEdit = EditText(this).apply { hint = "partycja (puste = z nazwy pliku, np. boot_a)"; isSingleLine = true }
+        root.addView(partEdit)
+        row("Wybierz obraz i flashuj" to ::pickImage)
+
+        progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 1000 }
+        root.addView(progress)
+
+        logView = TextView(this).apply { typeface = Typeface.MONOSPACE; textSize = 11f; setTextIsSelectable(true) }
+        scroll = ScrollView(this).apply { addView(logView) }
+        root.addView(scroll, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+        setContentView(root)
+    }
+
+    private val timeFmt = SimpleDateFormat("HH:mm:ss", Locale.ROOT)
+
+    fun log(msg: String) = runOnUiThread {
+        logView.append("${timeFmt.format(Date())} $msg\n")
+        scroll.post { scroll.fullScroll(ScrollView.FOCUS_DOWN) }
+    }
+
+    private fun setProgress(done: Long, total: Long) = runOnUiThread {
+        progress.progress = if (total > 0) (done * 1000 / total).toInt() else 0
+    }
+
+    // ---------------- USB ----------------
+
+    private fun connect() {
+        if (fb != null) { log("Juz polaczono: ${transport?.device?.productName}"); return }
+        val dev = usb.deviceList.values.firstOrNull { UsbFastbootTransport.findInterface(it) != null }
+        if (dev == null) { log("Nie znaleziono urzadzenia fastboot. Sprawdz kabel OTG i tryb fastboot."); return }
+        requestOrOpen(dev)
+    }
+
+    private fun requestOrOpen(dev: UsbDevice) {
+        if (usb.hasPermission(dev)) { openDevice(dev); return }
+        val flags = if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0
+        val pi = PendingIntent.getBroadcast(this, 0, Intent(ACTION_PERM).setPackage(packageName), flags)
+        usb.requestPermission(dev, pi)
+        log("Prosba o dostep do USB...")
+    }
+
+    private fun openDevice(dev: UsbDevice) {
+        closeDevice()
+        try {
+            val t = UsbFastbootTransport.open(usb, dev)
+            transport = t
+            fb = Fastboot(t, ::log)
+            log("Polaczono: ${dev.manufacturerName ?: ""} ${dev.productName ?: ""} (${dev.deviceName})")
+            runOnUiThread { status.text = "Polaczono: ${dev.productName ?: dev.deviceName}" }
+            info()
+        } catch (e: Exception) {
+            log("Blad polaczenia: ${e.message}")
+        }
+    }
+
+    private fun closeDevice() {
+        try { transport?.close() } catch (_: Exception) {}
+        transport = null
+        fb = null
+        runOnUiThread { status.text = "Nie polaczono" }
+    }
+
+    private fun withFb(block: (Fastboot) -> Unit) {
+        val f = fb ?: run { log("Najpierw nacisnij Polacz"); return }
+        exec.execute {
+            try { block(f) } catch (e: Exception) { log("BLAD: ${e.message}") }
+        }
+    }
+
+    // ---------------- Komendy ----------------
+
+    private fun info() = withFb { f ->
+        for (v in listOf("product", "current-slot", "is-userspace", "unlocked", "secure", "max-download-size", "version-bootloader")) {
+            val r = try { f.getVar(v) } catch (e: Exception) { "-" }
+            log("  $v: $r")
+        }
+    }
+
+    private fun getvarAll() = withFb { f -> f.getVarAll().forEach { log("  $it") } }
+
+    private fun simple(cmd: String, reboot: Boolean) = withFb { f ->
+        log("> $cmd")
+        val r = f.command(cmd, 30_000)
+        log("OKAY $r")
+        if (reboot) {
+            log("Urzadzenie sie restartuje - po uruchomieniu nacisnij Polacz.")
+            closeDevice()
+        }
+    }
+
+    // ---------------- Flash ----------------
+
+    @Suppress("DEPRECATION")
+    private fun pickImage() {
+        if (fb == null) { log("Najpierw nacisnij Polacz"); return }
+        val i = Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*")
+        startActivityForResult(i, REQ_IMAGE)
+    }
+
+    @Deprecated("Activity API")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQ_IMAGE || resultCode != RESULT_OK) return
+        val uri = data?.data ?: return
+        val src = uriSource(uri) ?: run { log("Nie mozna odczytac pliku"); return }
+        val part = partEdit.text.toString().trim().ifEmpty { src.name.substringBeforeLast('.') }
+        AlertDialog.Builder(this)
+            .setTitle("Flash")
+            .setMessage("Wgrac ${src.name} (${src.size / (1 shl 20)} MB) na partycje \"$part\"?")
+            .setPositiveButton("Flash") { _, _ ->
+                withFb { f ->
+                    f.flash(part, src, ::setProgress)
+                    setProgress(0, 0)
+                }
+            }
+            .setNegativeButton("Anuluj", null)
+            .show()
+    }
+
+    private fun uriSource(uri: Uri): ImageSource? {
+        var name = "obraz.img"
+        var size = -1L
+        contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use { c ->
+            if (c.moveToFirst()) {
+                name = c.getString(0) ?: name
+                if (!c.isNull(1)) size = c.getLong(1)
+            }
+        }
+        if (size <= 0) return null
+        val n = name
+        val s = size
+        return object : ImageSource {
+            override val name = n
+            override val size = s
+            override fun open(): InputStream = contentResolver.openInputStream(uri) ?: throw java.io.IOException("open failed")
+        }
+    }
+}
+
+@Suppress("DEPRECATION")
+private fun Intent.usbDevice(): UsbDevice? =
+    if (Build.VERSION.SDK_INT >= 33) getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
+    else getParcelableExtra(UsbManager.EXTRA_DEVICE)
+
+private object BuildConfigCompat {
+    fun version(ctx: Context): String = try {
+        ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName ?: ""
+    } catch (_: Exception) { "" }
+}
