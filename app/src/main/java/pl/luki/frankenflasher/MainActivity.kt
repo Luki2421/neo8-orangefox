@@ -180,6 +180,7 @@ class MainActivity : Activity() {
             "-> bootloader" to { simple("reboot-bootloader", true) },
             "-> system" to { simple("reboot", true) })
         row(p1, "Slot A" to { simple("set_active:a", false) }, "Slot B" to { simple("set_active:b", false) })
+        row(p1, "Wyczysc dane (format)" to { confirmWipe() })
         header(p1, "Pojedynczy obraz")
         partEdit = EditText(this).apply { hint = "partycja (puste = z nazwy pliku, np. boot_a)"; isSingleLine = true }
         p1.addView(partEdit)
@@ -455,6 +456,26 @@ class MainActivity : Activity() {
             log("Urzadzenie sie restartuje - po uruchomieniu nacisnij Polacz.")
             closeDevice()
         }
+    }
+
+    /** Odpowiednik "fastboot -w": erase userdata + metadata. System sformatuje je przy starcie. */
+    private fun confirmWipe() {
+        if (fb == null) { log("Najpierw nacisnij Polacz"); return }
+        AlertDialog.Builder(this)
+            .setTitle("Wyczysc dane")
+            .setMessage("Usunac WSZYSTKIE dane z drugiego telefonu (userdata + metadata, jak fastboot -w)?\n\nAplikacje, zdjecia, konta i pamiec wewnetrzna zostana skasowane. Tego nie da sie cofnac.")
+            .setPositiveButton("Wyczysc") { _, _ ->
+                withFb { f ->
+                    for (p in listOf("metadata", "userdata")) {
+                        log("> erase:$p")
+                        try { f.command("erase:$p", 10 * 60_000); log("wyczyszczono $p") }
+                        catch (e: Exception) { log("BLAD erase:$p - ${e.message}") }
+                    }
+                    log("Gotowe. Pierwsze uruchomienie systemu potrwa dluzej (formatowanie).")
+                }
+            }
+            .setNegativeButton("Anuluj", null)
+            .show()
     }
 
     // ---------------- Flash ----------------
