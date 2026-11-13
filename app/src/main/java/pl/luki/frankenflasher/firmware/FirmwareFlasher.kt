@@ -29,6 +29,8 @@ class FirmwareFlasher(
     private val reconnect: (Long) -> Fastboot,
 ) {
     private lateinit var fb: Fastboot
+    /** Partycje zablokowane w fastbootd (np. modem aktywnego slotu) - wgrywane potem w bootloaderze. */
+    private val deferred = ArrayList<Pair<ImageSource, String>>()
 
     /** Jak FFF: przy bledzie USB polacz ponownie (fastbootd) i powtorz. */
     private fun <T> retry(what: String, block: (Fastboot) -> T): T {
@@ -119,6 +121,20 @@ class FirmwareFlasher(
             }
         }
 
+        if (deferred.isNotEmpty()) {
+            step("Restart do bootloadera (${deferred.size} partycji)")
+            fb.command("reboot-bootloader", 30_000)
+            fb = reconnect(180_000)
+            log("== Bootloader: ${deferred.joinToString { it.second }} ==")
+            for ((src, target) in deferred) {
+                try { retry(target) { it.flash(target, src, progress) } }
+                catch (e: Exception) {
+                    if (e is DeviceHungException) throw e
+                    log("UWAGA: nie wgrano $target - ${e.message}")
+                }
+            }
+        }
+
         if (opt.bothSlots && current != "a") {
             try { fb.command("set_active:a", 30_000); log("aktywny slot: a") } catch (e: Exception) { log("UWAGA: set_active:a - ${e.message}") }
         }
@@ -143,7 +159,13 @@ class FirmwareFlasher(
             try {
                 retry(target) { it.flash(target, src, progress) }
             } catch (e: Exception) {
-                if (fatal || e is DeviceHungException) throw e
+                if (e is DeviceHungException) throw e
+                if ((e.message ?: "").contains("not permitted", true)) {
+                    deferred += src to target
+                    log("$target zablokowana w fastbootd - wgram ja na koncu w bootloaderze")
+                    continue
+                }
+                if (fatal) throw e
                 log("UWAGA: pominieto $target - ${e.message}")
             }
         }
