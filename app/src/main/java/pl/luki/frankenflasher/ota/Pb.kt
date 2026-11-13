@@ -25,7 +25,7 @@ class Pb(private val b: ByteArray, private var p: Int = 0, private val end: Int 
         when (wt) {
             0 -> varint()
             1 -> p += 8
-            2 -> p += varint().toInt()
+            2 -> { val n = varint().toInt(); p += n }
             5 -> p += 4
             else -> throw IllegalStateException("protobuf: nieznany typ $wt")
         }

@@ -130,7 +130,7 @@ class MainActivity : Activity() {
         root.addView(status)
 
         fun row(vararg b: Pair<String, () -> Unit>) {
-            val r = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            val r = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; isBaselineAligned = false }
             b.forEach { (label, action) ->
                 r.addView(Button(this).apply { text = label; isAllCaps = false; setOnClickListener { action() } },
                     LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
@@ -151,7 +151,7 @@ class MainActivity : Activity() {
         root.addView(TextView(this).apply { text = "Rozpakuj OTA (zip / payload.bin)"; textSize = 15f; setTypeface(typeface, Typeface.BOLD); setPadding(0, pad, 0, 0) })
         otaView = TextView(this).apply { text = "OTA: -   cel: -"; textSize = 12f }
         root.addView(otaView)
-        row("Wybierz OTA" to ::pickOta, "Folder docelowy" to ::pickOtaOut, "Rozpakuj" to ::extractOta)
+        row("Wybierz OTA" to ::pickOta, "Cel" to ::pickOtaOut, "Rozpakuj" to ::extractOta)
 
         root.addView(TextView(this).apply { text = "Firmware (folder jak w FFF)"; textSize = 15f; setTypeface(typeface, Typeface.BOLD); setPadding(0, pad, 0, 0) })
         fwSummary = TextView(this).apply { text = "Nie wybrano folderu"; textSize = 12f }
