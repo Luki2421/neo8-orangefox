@@ -11,6 +11,7 @@ import android.graphics.Typeface
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.net.Uri
+import java.io.File
 import android.os.Build
 import android.os.Bundle
 import android.provider.OpenableColumns
@@ -49,6 +50,7 @@ class MainActivity : Activity() {
         private const val REQ_OTA = 12
         private const val REQ_OTA_OUT = 13
         private const val REQ_SAVE_LOG = 14
+        private const val REQ_EROFS_TEST = 15
     }
 
     private val usb by lazy { getSystemService(Context.USB_SERVICE) as UsbManager }
@@ -142,7 +144,7 @@ class MainActivity : Activity() {
         root.addView(status)
 
         // --- zakladki ---
-        val tabNames = listOf("Fastboot", "OTA", "Firmware")
+        val tabNames = listOf("Fastboot", "OTA", "Firmware", "Franken")
         val pages = tabNames.map { LinearLayout(this).apply { orientation = LinearLayout.VERTICAL } }
         val pageScroll = ScrollView(this)
         val tabBar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; isBaselineAligned = false }
@@ -213,6 +215,14 @@ class MainActivity : Activity() {
             setTextColor(android.graphics.Color.rgb(255, 120, 110))
         })
         row(p3, "Flashuj firmware" to ::flashFirmware)
+
+        val p4 = pages[3]
+        header(p4, "Franken (etap 3 - w budowie)")
+        row(p4, "Test narzedzi EROFS" to ::testErofsTools)
+        row(p4, "Test: wypakuj obraz EROFS" to {
+            @Suppress("DEPRECATION")
+            startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), REQ_EROFS_TEST)
+        })
 
         root.addView(pageScroll, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1.1f))
 
@@ -478,6 +488,42 @@ class MainActivity : Activity() {
             .show()
     }
 
+    // ---------------- Franken ----------------
+
+    private fun testErofsTools() {
+        val t = pl.luki.frankenflasher.franken.ErofsTools(this, ::log)
+        log("mkfs.erofs: ${t.mkfs.path} (wykonywalny: ${t.mkfs.canExecute()})")
+        log("fsck.erofs: ${t.fsck.path} (wykonywalny: ${t.fsck.canExecute()})")
+        Thread {
+            try {
+                log("kod: " + t.run(t.mkfs.path, "--version"))
+                log("kod: " + t.run(t.fsck.path, "--version"))
+            } catch (e: Exception) { log("BLAD: ${e.message}") }
+        }.start()
+    }
+
+    private fun erofsExtractTest(uri: Uri) {
+        Thread {
+            try {
+                val t = pl.luki.frankenflasher.franken.ErofsTools(this, ::log)
+                val work = File(getExternalFilesDir(null), "franken_test").apply { deleteRecursively(); mkdirs() }
+                val img = File(work, "in.img")
+                setStep("Kopiowanie obrazu")
+                contentResolver.openInputStream(uri)!!.use { i -> img.outputStream().use { o -> i.copyTo(o, 1 shl 20) } }
+                log("Obraz: ${img.length() / (1 shl 20)} MB -> wypakowanie")
+                setStep("Wypakowanie EROFS")
+                val t0 = System.currentTimeMillis()
+                val out = File(work, "out")
+                val rc = t.extract(img, out)
+                var files = 0; var bytes = 0L
+                out.walkTopDown().forEach { if (it.isFile) { files++; bytes += it.length() } }
+                log("kod $rc, plikow: $files, ${bytes / (1 shl 20)} MB, ${(System.currentTimeMillis() - t0) / 1000} s")
+                log("Folder: ${out.path}")
+                setStep("Gotowe")
+            } catch (e: Exception) { log("BLAD: ${e.message}") }
+        }.start()
+    }
+
     // ---------------- Flash ----------------
 
     @Suppress("DEPRECATION")
@@ -514,6 +560,10 @@ class MainActivity : Activity() {
                 otaOut = u
                 updateOtaView()
             }
+            return
+        }
+        if (requestCode == REQ_EROFS_TEST && resultCode == RESULT_OK) {
+            data?.data?.let { erofsExtractTest(it) }
             return
         }
         if (requestCode != REQ_IMAGE || resultCode != RESULT_OK) return

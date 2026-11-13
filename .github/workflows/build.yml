@@ -16,6 +16,10 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.11.1"
+      - name: Zbuduj erofs-utils (arm64, NDK)
+        run: |
+          sudo apt-get install -y -qq autoconf automake libtool pkg-config >/dev/null
+          bash .github/scripts/build-erofs.sh
       - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace
       - uses: actions/upload-artifact@v4
