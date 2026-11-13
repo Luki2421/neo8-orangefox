@@ -120,7 +120,10 @@ class SuperBuilder(private val log: (String) -> Unit, private val progress: (Lon
      * Buduje sparse super.img. [parts] - partycje slotu A z obrazami, slot B tworzony pusty.
      * Zwraca liczbe zapisanych bajtow.
      */
-    fun build(images: Map<String, File>, groupName: String, groupMax: Long, superSize: Long, out: File): Long {
+    /** Uklad super: naglowek (geometria + metadane, pierwszy 1 MB) i przesuniecia partycji slotu A w bajtach. */
+    class Plan(val head: ByteArray, val offsets: Map<String, Long>, internal val starts: Map<Part, Long>, val used: Long)
+
+    fun plan(images: Map<String, File>, groupName: String, groupMax: Long, superSize: Long): Plan {
         if (superSize % BLOCK != 0L) throw IOException("Rozmiar super nie jest wielokrotnoscia 4096")
         val names = images.keys.sorted()
         val ga = "${groupName}_a"; val gb = "${groupName}_b"
@@ -134,7 +137,6 @@ class SuperBuilder(private val log: (String) -> Unit, private val progress: (Lon
         val lay = layout(parts, superSize)
         val meta = metadata(parts, groups, superSize, lay)
         val geo = geometry()
-
         // blok poczatkowy: reserved + 2x geometria + 3 sloty glowne + 3 zapasowe
         val head = ByteArray((lay.firstLogicalSector * SECTOR).toInt())
         System.arraycopy(geo, 0, head, RESERVED.toInt(), geo.size)
@@ -145,7 +147,16 @@ class SuperBuilder(private val log: (String) -> Unit, private val progress: (Lon
             System.arraycopy(meta, 0, head, prim.toInt(), meta.size)
             System.arraycopy(meta, 0, head, back.toInt(), meta.size)
         }
+        val offsets = lay.starts.entries.associate { (p, sec) -> p.name.removeSuffix("_a") to sec * SECTOR }
+        log(tr("super: ${names.size} partycji, ${used / (1 shl 20)} MB, super ${superSize / (1 shl 20)} MB, grupa $groupName ${groupMax / (1 shl 20)} MB",
+            "super: ${names.size} partitions, ${used / (1 shl 20)} MB, super ${superSize / (1 shl 20)} MB, group $groupName ${groupMax / (1 shl 20)} MB"))
+        return Plan(head, offsets, lay.starts, used)
+    }
 
+    fun build(images: Map<String, File>, groupName: String, groupMax: Long, superSize: Long, out: File): Long {
+        val pl = plan(images, groupName, groupMax, superSize)
+        val head = pl.head
+        val lay = Layout(head.size / SECTOR, pl.starts)
         // plan chunkow sparse
         class Chunk(val raw: File?, val bytes: ByteArray?, val blocks: Long, val rawOffset: Long = 0)
         val chunks = ArrayList<Chunk>()
@@ -164,8 +175,6 @@ class SuperBuilder(private val log: (String) -> Unit, private val progress: (Lon
 
         val total = images.values.sumOf { it.length() }
         var done = 0L
-        log(tr("super: ${names.size} partycji, ${used / (1 shl 20)} MB, super ${superSize / (1 shl 20)} MB, grupa $groupName ${groupMax / (1 shl 20)} MB",
-            "super: ${names.size} partitions, ${used / (1 shl 20)} MB, super ${superSize / (1 shl 20)} MB, group $groupName ${groupMax / (1 shl 20)} MB"))
         out.parentFile?.mkdirs()
         BufferedOutputStream(out.outputStream(), 4 shl 20).use { o ->
             val fh = le(28)

@@ -39,7 +39,9 @@ class SuperFlasher(private val log: (String) -> Unit, private val progress: (Lon
         }
     }
 
-    fun build(folder: File, superSizeIn: Long?): File {
+    class Setup(val images: Map<String, File>, val superSize: Long, val group: String, val groupMax: Long)
+
+    fun setup(folder: File, superSizeIn: Long?): Setup {
         val def = File(folder, "super_def.json").takeIf { it.isFile }?.let { parseDef(it.readText()) }
         val superSize = def?.superSize ?: superSizeIn
             ?: throw IOException(tr("Brak super_def.json w folderze i nie podano rozmiaru super", "No super_def.json in the folder and no super size given"))
@@ -48,16 +50,20 @@ class SuperFlasher(private val log: (String) -> Unit, private val progress: (Lon
         val images = sys.listFiles { f -> f.isFile && f.name.endsWith(".img") && f.length() > 0 }.orEmpty()
             .associateBy { it.name.removeSuffix(".img") }
         if (images.isEmpty()) throw IOException(tr("Brak obrazow w ${sys.path}", "No images in ${sys.path}"))
-        // grupa z OTA (super_groups.txt zapisany przy rozpakowaniu)
         var group = def?.group ?: "qti_dynamic_partitions"
         var groupMax = def?.groupMax ?: (superSize - (4L shl 20))
         val gf = File(folder, "super_groups.txt")
         if (def == null && gf.isFile) {
             val g = gf.readLines().map { it.trim().split(' ') }.filter { it.size >= 2 }.maxByOrNull { it[1].toLongOrNull() ?: 0 }
             if (g != null) { group = g[0].removeSuffix("_a").removeSuffix("_b"); g[1].toLongOrNull()?.takeIf { it > 0 }?.let { groupMax = it } }
-            log(tr("super: grupa z OTA: $group (${groupMax / (1 shl 20)} MB)", "super: group from OTA: $group (${groupMax / (1 shl 20)} MB)"))
-        } else if (def == null) log(tr("super: brak super_groups.txt - grupa $group, ${groupMax / (1 shl 20)} MB", "super: no super_groups.txt - group $group, ${groupMax / (1 shl 20)} MB"))
+        }
         if (groupMax > superSize) groupMax = superSize - (4L shl 20)
+        return Setup(images, superSize, group, groupMax)
+    }
+
+    fun build(folder: File, superSizeIn: Long?): File {
+        val st = setup(folder, superSizeIn)
+        val images = st.images; val group = st.group; val groupMax = st.groupMax; val superSize = st.superSize
         val free = folder.usableSpace
         val need = images.values.sumOf { it.length() } + (64L shl 20)
         if (free < need) throw IOException(tr("Za malo miejsca: wolne ${free / (1 shl 30)} GB, potrzeba ${need / (1 shl 30) + 1} GB",

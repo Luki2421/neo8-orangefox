@@ -275,7 +275,8 @@ class MainActivity : Activity() {
         superEdit = ui.input(tr("rozmiar super (puste = z OTA, META/super_def.json)", "super size (empty = from OTA, META/super_def.json)"))
         superEdit.inputType = android.text.InputType.TYPE_CLASS_NUMBER
         cSup.addView(superEdit, ui.lp(bottom = 10))
-        ui.row(cSup, ui.button(tr("Zbuduj super.img", "Build super.img"), G, ::buildSuperFlasher))
+        ui.row(cSup, ui.button(tr("Zbuduj super.img", "Build super.img"), G) { buildSuperFlasher(false) })
+        ui.row(cSup, ui.button(tr("Zbuduj hybrid ZIP (recovery + PC)", "Build hybrid ZIP (recovery + PC)"), G) { buildSuperFlasher(true) })
         ui.toggle(cSup, tr("flashuj przez super.img, jesli jest w folderze", "flash via super.img if present in the folder"), { opt.useSuperImage }, { opt.useSuperImage = it })
 
         // Strona 4: Franken
@@ -763,7 +764,10 @@ class MainActivity : Activity() {
             .show()
     }
 
-    private fun buildSuperFlasher() {
+    private var superHybrid = false
+
+    private fun buildSuperFlasher(hybrid: Boolean = superHybrid) {
+        superHybrid = hybrid
         val u = prefs.getString("fwTree", null)?.let { Uri.parse(it) }
         val folder = u?.let { treeToFile(it) }
         if (folder == null || !folder.isDirectory) { log(tr("Najpierw wybierz folder firmware (rozpakowane OTA)", "Pick a firmware folder first (extracted OTA)")); return }
@@ -791,8 +795,16 @@ class MainActivity : Activity() {
                     return@execute
                 }
                 val t0 = System.currentTimeMillis()
-                setStep(tr("Budowanie super.img", "Building super.img"))
-                pl.luki.frankenflasher.franken.SuperFlasher(::log, ::setProgress).build(folder, size)
+                if (hybrid) {
+                    setStep(tr("Budowanie hybrid ZIP", "Building hybrid ZIP"))
+                    val zip = File(folder.parentFile, folder.name + "_hybrid.zip")
+                    pl.luki.frankenflasher.franken.HybridZip(::log, ::setProgress).build(folder, size, opt.disableVbmeta, zip)
+                    log(tr("Recovery (OrangeFox/AERA/TWRP): Install -> ${zip.name}. PC: rozpakuj ZIP i uruchom flash_all.bat w bootloaderze.",
+                        "Recovery (OrangeFox/AERA/TWRP): Install -> ${zip.name}. PC: extract the ZIP and run flash_all.bat in bootloader."))
+                } else {
+                    setStep(tr("Budowanie super.img", "Building super.img"))
+                    pl.luki.frankenflasher.franken.SuperFlasher(::log, ::setProgress).build(folder, size)
+                }
                 log(tr("Super flasher gotowy w ${(System.currentTimeMillis() - t0) / 1000} s: ${folder.path}", "Super flasher ready in ${(System.currentTimeMillis() - t0) / 1000} s: ${folder.path}"))
                 setStep(tr("Super flasher gotowy", "Super flasher ready"))
                 u.let { loadFirmware(it, save = false) }
@@ -905,7 +917,7 @@ class MainActivity : Activity() {
                     if (found == null) { log(tr("W tym pliku nie ma META/super_def.json - to nie pelne OTA zip?", "No META/super_def.json in this file - not a full OTA zip?")); return@execute }
                     File(folder, "super_def.json").writeBytes(found.second)
                     log(tr("Zapisano super_def.json z OTA (${found.first})", "Saved super_def.json from OTA (${found.first})"))
-                    runOnUiThread { buildSuperFlasher() }
+                    runOnUiThread { buildSuperFlasher(superHybrid) }
                 } catch (e: Exception) { log("super_def: $e") }
             }
             return
