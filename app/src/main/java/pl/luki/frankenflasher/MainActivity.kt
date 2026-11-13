@@ -142,6 +142,7 @@ class MainActivity : Activity() {
     // ---------------- UI ----------------
 
     private lateinit var slotChip: TextView
+    private lateinit var superEdit: EditText
     private lateinit var stateChip: TextView
     private lateinit var connDot: android.view.View
 
@@ -260,6 +261,16 @@ class MainActivity : Activity() {
         ui.toggle(cOpt, tr("restart do systemu na koniec", "reboot to system at the end"), { opt.rebootAtEnd }, { opt.rebootAtEnd = it })
         ui.toggle(cOpt, tr("wyczysc dane (userdata + metadata)", "wipe data (userdata + metadata)"), { opt.wipeData }, { opt.wipeData = it }, danger = true)
         ui.row(p3, ui.button(tr("Flashuj firmware", "Flash firmware"), B, ::flashFirmware))
+
+        val cSup = ui.card(p3, "Super flasher")
+        cSup.addView(ui.body(tr("Z rozpakowanego OTA: SYSTEM -> SUPER/super.img + skrypty flash_all.bat/.sh na PC. Flash w bootloaderze, bez fastbootd.",
+            "From an extracted OTA: SYSTEM -> SUPER/super.img + flash_all.bat/.sh scripts for PC. Flashes in bootloader, no fastbootd.")), ui.lp(bottom = 10))
+        superEdit = ui.input(tr("rozmiar super w bajtach (z telefonu: Polacz)", "super size in bytes (from phone: Connect)"))
+        superEdit.inputType = android.text.InputType.TYPE_CLASS_NUMBER
+        prefs.getLong("superSize", 0L).takeIf { it > 0 }?.let { superEdit.setText(it.toString()) }
+        cSup.addView(superEdit, ui.lp(bottom = 10))
+        ui.row(cSup, ui.button(tr("Zbuduj super.img", "Build super.img"), G, ::buildSuperFlasher))
+        ui.toggle(cSup, tr("flashuj przez super.img, jesli jest w folderze", "flash via super.img if present in the folder"), { opt.useSuperImage }, { opt.useSuperImage = it })
 
         // Strona 4: Franken
         val p4 = pages[3]
@@ -602,9 +613,15 @@ class MainActivity : Activity() {
     // ---------------- Komendy ----------------
 
     private fun info() = withFb { f ->
-        for (v in listOf("product", "current-slot", "is-userspace", "unlocked", "secure", "max-download-size", "version-bootloader")) {
+        for (v in listOf("product", "current-slot", "is-userspace", "unlocked", "secure", "max-download-size", "version-bootloader", "partition-size:super")) {
             val r = try { f.getVar(v) } catch (e: Exception) { "-" }
             if (v == "current-slot") runOnUiThread { slotChip.text = "Slot " + r.trim().removePrefix("_").uppercase() }
+            if (v == "partition-size:super") r.trim().let { t ->
+                (if (t.startsWith("0x", true)) t.substring(2).toLongOrNull(16) else t.toLongOrNull())?.takeIf { it > 0 }?.let { sz ->
+                    prefs.edit().putLong("superSize", sz).apply()
+                    runOnUiThread { superEdit.setText(sz.toString()) }
+                }
+            }
             log("  $v: $r")
         }
     }
@@ -739,6 +756,29 @@ class MainActivity : Activity() {
             }
             .setNegativeButton(tr("Anuluj", "Cancel"), null)
             .show()
+    }
+
+    private fun buildSuperFlasher() {
+        val u = prefs.getString("fwTree", null)?.let { Uri.parse(it) }
+        val folder = u?.let { treeToFile(it) }
+        if (folder == null || !folder.isDirectory) { log(tr("Najpierw wybierz folder firmware (rozpakowane OTA)", "Pick a firmware folder first (extracted OTA)")); return }
+        if (!hasAllFiles()) { requestAllFiles(); return }
+        val size = superEdit.text.toString().trim().toLongOrNull()
+        if (size == null || size <= 0) { log(tr("Podaj rozmiar super - podlacz telefon i nacisnij Polacz (odczyt partition-size:super)", "Enter super size - connect the phone and tap Connect (reads partition-size:super)")); return }
+        prefs.edit().putLong("superSize", size).apply()
+        exec.execute {
+            busy = true
+            try {
+                val t0 = System.currentTimeMillis()
+                setStep(tr("Budowanie super.img", "Building super.img"))
+                pl.luki.frankenflasher.franken.SuperFlasher(::log, ::setProgress).build(folder, size)
+                log(tr("Super flasher gotowy w ${(System.currentTimeMillis() - t0) / 1000} s: ${folder.path}", "Super flasher ready in ${(System.currentTimeMillis() - t0) / 1000} s: ${folder.path}"))
+                setStep(tr("Super flasher gotowy", "Super flasher ready"))
+                u.let { loadFirmware(it, save = false) }
+            } catch (e: Exception) {
+                log(tr("BLAD super: $e", "super ERROR: $e")); setStep(tr("BLAD super", "super ERROR"))
+            } finally { busy = false; setProgress(0, 0) }
+        }
     }
 
     private fun flashFranken() {

@@ -9,7 +9,9 @@ import java.nio.channels.FileChannel
 class Extent(val start: Long, val num: Long)
 class Op(val type: Int, val dataOffset: Long, val dataLength: Long, val dst: List<Extent>)
 class PartUpdate(val name: String, val size: Long, val ops: List<Op>, val hash: ByteArray?)
-class PayloadInfo(val blockSize: Int, val parts: List<PartUpdate>, val dataStart: Long, val dynamic: Set<String>)
+class DynGroup(val name: String, val size: Long, val partitions: List<String>)
+
+class PayloadInfo(val blockSize: Int, val parts: List<PartUpdate>, val dataStart: Long, val dynamic: Set<String>, val groups: List<DynGroup> = emptyList())
 
 object OpType {
     const val REPLACE = 0
@@ -53,16 +55,17 @@ object PayloadParser {
         var blockSize = 4096
         val parts = ArrayList<PartUpdate>()
         val dynamic = HashSet<String>()
+        val groups = ArrayList<DynGroup>()
         while (man.more()) {
             val (f, wt) = man.tag()
             when {
                 f == 3 && wt == 0 -> blockSize = man.varint().toInt()
                 f == 13 && wt == 2 -> parts += parsePart(man.sub())
-                f == 15 && wt == 2 -> parseDynamic(man.sub(), dynamic)
+                f == 15 && wt == 2 -> parseDynamic(man.sub(), dynamic, groups)
                 else -> man.skip(wt)
             }
         }
-        return PayloadInfo(blockSize, parts, base + hdr + manSize + sigSize, dynamic)
+        return PayloadInfo(blockSize, parts, base + hdr + manSize + sigSize, dynamic, groups)
     }
 
     private fun parsePart(m: Pb): PartUpdate {
@@ -112,12 +115,22 @@ object PayloadParser {
         return Op(type, off, len, dst)
     }
 
-    private fun parseDynamic(m: Pb, out: MutableSet<String>) {
+    private fun parseDynamic(m: Pb, out: MutableSet<String>, groups: MutableList<DynGroup>) {
         while (m.more()) {
             val (f, wt) = m.tag()
             if (f == 1 && wt == 2) {
                 val g = m.sub()
-                while (g.more()) { val (h, w) = g.tag(); if (h == 3 && w == 2) out += g.string() else g.skip(w) }
+                var name = ""; var size = 0L; val names = ArrayList<String>()
+                while (g.more()) {
+                    val (h, w) = g.tag()
+                    when {
+                        h == 1 && w == 2 -> name = g.string()
+                        h == 2 && w == 0 -> size = g.varint()
+                        h == 3 && w == 2 -> { val n = g.string(); out += n; names += n }
+                        else -> g.skip(w)
+                    }
+                }
+                groups += DynGroup(name, size, names)
             } else m.skip(wt)
         }
     }

@@ -138,6 +138,13 @@ class OtaExtractor(
                 pool.shutdownNow()
             }
             if (bad.isNotEmpty()) throw IllegalStateException(tr("Bledne sumy: ${bad.joinToString()} - NIE flashuj, rozpakuj ponownie", "Bad checksums: ${bad.joinToString()} - DO NOT flash, extract again"))
+            // uklad super z OTA (grupy i rozmiary) - dla budowania super flashera
+            if (info.groups.isNotEmpty()) try {
+                val txt = info.groups.joinToString("\n") { g -> "${g.name} ${g.size} ${g.partitions.joinToString(",")}" } + "\n"
+                DocumentsContract.createDocument(cr, outDir, "text/plain", "super_groups.txt")?.let { u ->
+                    cr.openOutputStream(u)?.use { it.write(txt.toByteArray()) }
+                }
+            } catch (_: Exception) {}
             log(tr("Rozpakowano do: $outName - wszystkie sumy SHA-256 zgodne", "Extracted to: $outName - all SHA-256 checksums match"))
             return Result(outTree, DocumentsContract.getDocumentId(outDir))
         }
