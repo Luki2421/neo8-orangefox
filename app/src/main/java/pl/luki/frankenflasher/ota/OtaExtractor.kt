@@ -48,6 +48,45 @@ class OtaExtractor(
 ) {
     class Result(val tree: Uri, val folderDocId: String)
 
+    private fun openPayload(input: Uri, inputName: String): Pair<android.os.ParcelFileDescriptor, PayloadInfo> {
+        val pfd = ctx.contentResolver.openFileDescriptor(input, "r") ?: throw java.io.IOException("Nie mozna otworzyc $inputName")
+        val ch = FileInputStream(pfd.fileDescriptor).channel
+        val base = if (inputName.endsWith(".zip", true)) {
+            ZipLocator.findStored(ch, "payload.bin") ?: throw IllegalArgumentException("W ZIP nie ma payload.bin")
+        } else 0L
+        return pfd to PayloadParser.parse(ch, base)
+    }
+
+    private fun sha256(uri: Uri, onBytes: (Long) -> Unit): ByteArray {
+        val md = java.security.MessageDigest.getInstance("SHA-256")
+        val buf = ByteArray(1 shl 20)
+        (ctx.contentResolver.openInputStream(uri) ?: throw java.io.IOException("odczyt $uri")).use { i ->
+            while (true) { val n = i.read(buf); if (n < 0) break; md.update(buf, 0, n); onBytes(n.toLong()) }
+        }
+        return md.digest()
+    }
+
+    /** Sprawdza rozpakowane obrazy (wg nazwy) z sumami SHA-256 zapisanymi w OTA. Zwraca liste bledow. */
+    fun verify(input: Uri, inputName: String, images: Map<String, Uri>): List<String> {
+        val (pfd, info) = openPayload(input, inputName)
+        pfd.close()
+        val total = info.parts.sumOf { it.size }
+        var done = 0L
+        val bad = ArrayList<String>()
+        for (p in info.parts) {
+            val u = images[p.name]
+            when {
+                u == null -> bad += "${p.name}: brak pliku"
+                p.hash == null -> log("  ${p.name}: brak sumy w OTA - pominieto")
+                else -> {
+                    val h = sha256(u) { n -> done += n; progress(done, total) }
+                    if (h.contentEquals(p.hash)) log("  OK ${p.name}") else bad += "${p.name}: ZLA SUMA"
+                }
+            }
+        }
+        return bad
+    }
+
     fun extract(input: Uri, inputName: String, outTree: Uri, threads: Int = 3): Result {
         val pfd = ctx.contentResolver.openFileDescriptor(input, "r") ?: throw java.io.IOException("Nie mozna otworzyc $inputName")
         pfd.use {
@@ -75,6 +114,7 @@ class OtaExtractor(
 
             val total = info.parts.sumOf { it.size }
             val done = AtomicLong()
+            val bad = ArrayList<String>()
             val pool = Executors.newFixedThreadPool(threads)
             try {
                 val futures = ArrayList<Future<*>>()
@@ -84,14 +124,20 @@ class OtaExtractor(
                         val doc = DocumentsContract.createDocument(cr, groupDirs[g]!!, "application/octet-stream", "${p.name}.img")
                             ?: throw java.io.IOException("Nie mozna utworzyc ${p.name}.img")
                         writePartition(ch, info, p, doc) { n -> progress(done.addAndGet(n), total) }
-                        log("  $g/${p.name}.img (${p.size / (1 shl 20)} MB)")
+                        val ok = p.hash?.let { sha256(doc) {}.contentEquals(it) }
+                        when (ok) {
+                            true -> log("  $g/${p.name}.img (${p.size / (1 shl 20)} MB) - suma OK")
+                            false -> { synchronized(bad) { bad += p.name }; log("  $g/${p.name}.img - ZLA SUMA SHA-256!") }
+                            null -> log("  $g/${p.name}.img (${p.size / (1 shl 20)} MB) - brak sumy w OTA")
+                        }
                     })
                 }
                 for (f in futures) try { f.get() } catch (e: java.util.concurrent.ExecutionException) { throw (e.cause ?: e) }
             } finally {
                 pool.shutdownNow()
             }
-            log("Rozpakowano do: $outName")
+            if (bad.isNotEmpty()) throw IllegalStateException("Bledne sumy: ${bad.joinToString()} - NIE flashuj, rozpakuj ponownie")
+            log("Rozpakowano do: $outName - wszystkie sumy SHA-256 zgodne")
             return Result(outTree, DocumentsContract.getDocumentId(outDir))
         }
     }

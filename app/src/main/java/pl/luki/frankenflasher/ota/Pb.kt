@@ -19,6 +19,7 @@ class Pb(private val b: ByteArray, private var p: Int = 0, private val end: Int 
     fun tag(): Pair<Int, Int> { val k = varint(); return (k ushr 3).toInt() to (k and 7).toInt() }
 
     fun sub(): Pb { val len = varint().toInt(); val s = Pb(b, p, p + len); p += len; return s }
+    fun bytes(): ByteArray { val len = varint().toInt(); val r = b.copyOfRange(p, p + len); p += len; return r }
     fun string(): String { val len = varint().toInt(); val s = String(b, p, len, Charsets.UTF_8); p += len; return s }
 
     fun skip(wt: Int) {

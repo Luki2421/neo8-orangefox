@@ -152,6 +152,7 @@ class MainActivity : Activity() {
         otaView = TextView(this).apply { text = "OTA: -   cel: -"; textSize = 12f }
         root.addView(otaView)
         row("Wybierz OTA" to ::pickOta, "Cel" to ::pickOtaOut, "Rozpakuj" to ::extractOta)
+        row("Sprawdz sumy folderu z OTA" to ::verifyOta)
 
         root.addView(TextView(this).apply { text = "Firmware (folder jak w FFF)"; textSize = 15f; setTypeface(typeface, Typeface.BOLD); setPadding(0, pad, 0, 0) })
         fwSummary = TextView(this).apply { text = "Nie wybrano folderu"; textSize = 12f }
@@ -318,6 +319,22 @@ class MainActivity : Activity() {
             } catch (e: Exception) {
                 log("BLAD rozpakowania: ${e.message ?: e}")
                 setStep("BLAD rozpakowania")
+            } finally { setProgress(0, 0) }
+        }
+    }
+
+    private fun verifyOta() {
+        val inUri = otaUri ?: run { log("Najpierw wybierz plik OTA"); return }
+        val fw = firmware ?: run { log("Najpierw wybierz folder firmware (sekcja Firmware)"); return }
+        exec.execute {
+            try {
+                setStep("Sprawdzanie sum...")
+                val images = fw.groups.values.flatten().associate { it.base to it.uri }
+                val bad = OtaExtractor(this, ::log, ::setProgress).verify(inUri, otaName, images)
+                if (bad.isEmpty()) { log("Wszystkie sumy SHA-256 zgodne"); setStep("Sumy OK - mozna flashowac") }
+                else { bad.forEach { log("BLAD: $it") }; setStep("BLEDNE SUMY (${bad.size}) - nie flashuj") }
+            } catch (e: Exception) {
+                log("BLAD sprawdzania: ${e.message ?: e}"); setStep("BLAD sprawdzania")
             } finally { setProgress(0, 0) }
         }
     }

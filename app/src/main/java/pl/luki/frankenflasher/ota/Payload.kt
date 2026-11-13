@@ -8,7 +8,7 @@ import java.nio.channels.FileChannel
 
 class Extent(val start: Long, val num: Long)
 class Op(val type: Int, val dataOffset: Long, val dataLength: Long, val dst: List<Extent>)
-class PartUpdate(val name: String, val size: Long, val ops: List<Op>)
+class PartUpdate(val name: String, val size: Long, val ops: List<Op>, val hash: ByteArray?)
 class PayloadInfo(val blockSize: Int, val parts: List<PartUpdate>, val dataStart: Long, val dynamic: Set<String>)
 
 object OpType {
@@ -68,17 +68,28 @@ object PayloadParser {
     private fun parsePart(m: Pb): PartUpdate {
         var name = ""
         var size = 0L
+        var hash: ByteArray? = null
         val ops = ArrayList<Op>()
         while (m.more()) {
             val (f, wt) = m.tag()
             when {
                 f == 1 && wt == 2 -> name = m.string()
-                f == 7 && wt == 2 -> { val pi = m.sub(); while (pi.more()) { val (g, w) = pi.tag(); if (g == 1 && w == 0) size = pi.varint() else pi.skip(w) } }
+                f == 7 && wt == 2 -> {
+                    val pi = m.sub()
+                    while (pi.more()) {
+                        val (g, w) = pi.tag()
+                        when {
+                            g == 1 && w == 0 -> size = pi.varint()
+                            g == 2 && w == 2 -> hash = pi.bytes()
+                            else -> pi.skip(w)
+                        }
+                    }
+                }
                 f == 8 && wt == 2 -> ops += parseOp(m.sub())
                 else -> m.skip(wt)
             }
         }
-        return PartUpdate(name, size, ops)
+        return PartUpdate(name, size, ops, hash)
     }
 
     private fun parseOp(m: Pb): Op {
