@@ -1,5 +1,6 @@
 package pl.luki.frankenflasher.usb
 
+import pl.luki.frankenflasher.tr
 import android.hardware.usb.UsbConstants
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbDeviceConnection
@@ -44,7 +45,7 @@ class UsbFastbootTransport private constructor(
         }
 
         fun open(mgr: UsbManager, dev: UsbDevice): UsbFastbootTransport {
-            val intf = findInterface(dev) ?: throw IOException("Urzadzenie nie ma interfejsu fastboot")
+            val intf = findInterface(dev) ?: throw IOException(tr("Urzadzenie nie ma interfejsu fastboot", "Device has no fastboot interface"))
             var inEp: UsbEndpoint? = null
             var outEp: UsbEndpoint? = null
             for (i in 0 until intf.endpointCount) {
@@ -53,11 +54,11 @@ class UsbFastbootTransport private constructor(
                     if (e.direction == UsbConstants.USB_DIR_IN) inEp = e else outEp = e
                 }
             }
-            if (inEp == null || outEp == null) throw IOException("Brak endpointow bulk")
-            val conn = mgr.openDevice(dev) ?: throw IOException("Nie mozna otworzyc urzadzenia USB")
+            if (inEp == null || outEp == null) throw IOException(tr("Brak endpointow bulk", "No bulk endpoints"))
+            val conn = mgr.openDevice(dev) ?: throw IOException(tr("Nie mozna otworzyc urzadzenia USB", "Cannot open USB device"))
             if (!conn.claimInterface(intf, true)) {
                 conn.close()
-                throw IOException("Nie mozna przejac interfejsu USB")
+                throw IOException(tr("Nie mozna przejac interfejsu USB", "Cannot claim USB interface"))
             }
             return UsbFastbootTransport(conn, intf, inEp, outEp, dev).also { it.clearHalt() }
         }
@@ -96,7 +97,7 @@ class UsbFastbootTransport private constructor(
                 if (!ok) {
                     if (!sentAny && inFlight == 0) return false
                     clearHalt()
-                    throw IOException("Blad kolejki USB po ${(o - off) / 1024} KB z ${len / 1024} KB")
+                    throw IOException(tr("Blad kolejki USB po ${(o - off) / 1024} KB z ${len / 1024} KB", "USB queue error after ${(o - off) / 1024} KB of ${len / 1024} KB"))
                 }
                 r.clientData = bb
                 o += n; inFlight++; sentAny = true
@@ -108,7 +109,7 @@ class UsbFastbootTransport private constructor(
             } ?: run {
                 pool.forEach { try { it.first.cancel() } catch (_: Exception) {} }
                 clearHalt()
-                throw IOException("Blad zapisu USB (async) po ${(o - off) / 1024} KB z ${len / 1024} KB")
+                throw IOException(tr("Blad zapisu USB (async) po ${(o - off) / 1024} KB z ${len / 1024} KB", "USB write error (async) after ${(o - off) / 1024} KB of ${len / 1024} KB"))
             }
             val pair = pool.first { it.first === done }
             free.addLast(pair); inFlight--
@@ -137,7 +138,7 @@ class UsbFastbootTransport private constructor(
                     continue
                 }
                 clearHalt()
-                throw IOException("Blad zapisu USB ($n) po ${(o - off) / 1024} KB z ${len / 1024} KB")
+                throw IOException(tr("Blad zapisu USB ($n) po ${(o - off) / 1024} KB z ${len / 1024} KB", "USB write error ($n) after ${(o - off) / 1024} KB of ${len / 1024} KB"))
             }
             o += n
             rem -= n

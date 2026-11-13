@@ -87,11 +87,11 @@ class MainActivity : Activity() {
                     if (l != null) l.countDown()
                     else if (busy) Unit
                     else if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false) && dev != null) openDevice(dev)
-                    else log("Brak zgody na dostep USB")
+                    else log(tr("Brak zgody na dostep USB", "USB permission denied"))
                 }
                 UsbManager.ACTION_USB_DEVICE_DETACHED -> {
                     if (dev != null && dev.deviceName == transport?.device?.deviceName && !busy) {
-                        log("Urzadzenie odlaczone")
+                        log(tr("Urzadzenie odlaczone", "Device disconnected"))
                         closeDevice()
                     }
                 }
@@ -101,8 +101,9 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        UsbFastbootTransport.onAsyncDisabled = { log("USB: szybki zapis wylaczony ($it) - zwykly tryb") }
-        UsbFastbootTransport.onChunkDowngrade = { log("USB: kontroler odrzucil duza paczke, przechodze na ${it / 1024} KB") }
+        prefs.getString("lang", null)?.let { I18n.en = it == "en" }
+        UsbFastbootTransport.onAsyncDisabled = { log(tr("USB: szybki zapis wylaczony ($it) - zwykly tryb", "USB: fast write disabled ($it) - normal mode")) }
+        UsbFastbootTransport.onChunkDowngrade = { log(tr("USB: kontroler odrzucil duza paczke, przechodze na ${it / 1024} KB", "USB: controller rejected large packet, switching to ${it / 1024} KB")) }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         logFile = try {
             val dir = java.io.File(getExternalFilesDir(null), "logs").apply { mkdirs() }
@@ -115,8 +116,8 @@ class MainActivity : Activity() {
         }
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, f, Context.RECEIVER_NOT_EXPORTED)
         else registerReceiver(receiver, f)
-        log("Franken Flasher ${BuildConfigCompat.version(this)} - etap 2: fastboot + firmware + OTA")
-        log("Podlacz drugi telefon w trybie fastboot (lub fastbootd) i nacisnij Polacz.")
+        log("Franken Flasher ${BuildConfigCompat.version(this)} - fastboot + firmware + OTA + Franken")
+        log(tr("Podlacz drugi telefon w trybie fastboot (lub fastbootd) i nacisnij Polacz.", "Connect the second phone in fastboot (or fastbootd) mode and tap Connect."))
         handleIntent(intent)
     }
 
@@ -143,7 +144,7 @@ class MainActivity : Activity() {
     private fun buildUi() {
         val pad = (8 * resources.displayMetrics.density).toInt()
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad, pad, pad) }
-        status = TextView(this).apply { text = "Nie polaczono  (v" + BuildConfigCompat.version(this@MainActivity) + ")"; textSize = 15f; setTypeface(typeface, Typeface.BOLD) }
+        status = TextView(this).apply { text = tr("Nie polaczono  (v", "Not connected  (v") + BuildConfigCompat.version(this@MainActivity) + ")"; textSize = 15f; setTypeface(typeface, Typeface.BOLD) }
         root.addView(status)
 
         // --- zakladki ---
@@ -180,70 +181,75 @@ class MainActivity : Activity() {
 
         // Strona 1: Fastboot
         val p1 = pages[0]
-        row(p1, "Polacz" to ::connect, "Info" to ::info, "getvar all" to ::getvarAll)
+        row(p1, tr("Polacz", "Connect") to ::connect, "Info" to ::info, "getvar all" to ::getvarAll)
         row(p1, "-> fastbootd" to { simple("reboot-fastboot", true) },
             "-> bootloader" to { simple("reboot-bootloader", true) },
             "-> system" to { simple("reboot", true) })
+        row(p1, (if (I18n.en) "Polski" else "English") to {
+            I18n.en = !I18n.en
+            prefs.edit().putString("lang", if (I18n.en) "en" else "pl").apply()
+            recreate()
+        })
         row(p1, "Slot A" to { simple("set_active:a", false) }, "Slot B" to { simple("set_active:b", false) })
-        row(p1, "Wyczysc dane (format)" to { confirmWipe() })
-        header(p1, "Pojedynczy obraz")
-        partEdit = EditText(this).apply { hint = "partycja (puste = z nazwy pliku, np. boot_a)"; isSingleLine = true }
+        row(p1, tr("Wyczysc dane (format)", "Wipe data (format)") to { confirmWipe() })
+        header(p1, tr("Pojedynczy obraz", "Single image"))
+        partEdit = EditText(this).apply { hint = tr("partycja (puste = z nazwy pliku, np. boot_a)", "partition (empty = from file name, e.g. boot_a)"); isSingleLine = true }
         p1.addView(partEdit)
-        row(p1, "Wybierz obraz i flashuj" to ::pickImage)
+        row(p1, tr("Wybierz obraz i flashuj", "Pick image and flash") to ::pickImage)
 
         // Strona 2: OTA
         val p2 = pages[1]
-        header(p2, "Rozpakuj OTA (zip / payload.bin)")
-        otaView = TextView(this).apply { text = "OTA: -   cel: -"; textSize = 13f }
+        header(p2, tr("Rozpakuj OTA (zip / payload.bin)", "Extract OTA (zip / payload.bin)"))
+        otaView = TextView(this).apply { text = "OTA: -   " + tr("cel", "target") + ": -"; textSize = 13f }
         p2.addView(otaView)
-        row(p2, "Wybierz OTA" to ::pickOta, "Cel" to ::pickOtaOut)
-        row(p2, "Rozpakuj" to ::extractOta)
-        row(p2, "Sprawdz sumy folderu z OTA" to ::verifyOta)
+        row(p2, tr("Wybierz OTA", "Pick OTA") to ::pickOta, "Cel" to ::pickOtaOut)
+        row(p2, tr("Rozpakuj", "Extract") to ::extractOta)
+        row(p2, tr("Sprawdz sumy folderu z OTA", "Verify folder checksums against OTA") to ::verifyOta)
 
         // Strona 3: Firmware
         val p3 = pages[2]
-        header(p3, "Firmware (folder jak w FFF)")
-        fwSummary = TextView(this).apply { text = "Nie wybrano folderu"; textSize = 13f }
+        header(p3, tr("Firmware (folder jak w FFF)", "Firmware (FFF-style folder)"))
+        fwSummary = TextView(this).apply { text = tr("Nie wybrano folderu", "No folder selected"); textSize = 13f }
         p3.addView(fwSummary)
-        row(p3, "Wybierz folder" to ::pickFirmware)
-        p3.addView(chk("przelacz na drugi slot i wgraj na niego (jak FFF)", { opt.switchSlot }, { opt.switchSlot = it }))
-        p3.addView(chk("od razu usun system starego slotu (szybciej)", { opt.freeOldSlotFirst }, { opt.freeOldSlotFirst = it }))
-        p3.addView(chk("bez przelaczania: oba sloty (fizyczne a+b, logiczne a)", { opt.bothSlots }, { opt.bothSlots = it }))
-        p3.addView(chk("vbmeta off (wylacz weryfikacje)", { opt.disableVbmeta }, { opt.disableVbmeta = it }))
+        row(p3, tr("Wybierz folder", "Pick folder") to ::pickFirmware)
+        p3.addView(chk(tr("przelacz na drugi slot i wgraj na niego (jak FFF)", "switch to the other slot and flash it (like FFF)"), { opt.switchSlot }, { opt.switchSlot = it }))
+        p3.addView(chk(tr("od razu usun system starego slotu (szybciej)", "delete old slot system right away (faster)"), { opt.freeOldSlotFirst }, { opt.freeOldSlotFirst = it }))
+        p3.addView(chk(tr("bez przelaczania: oba sloty (fizyczne a+b, logiczne a)", "no switching: both slots (physical a+b, logical a)"), { opt.bothSlots }, { opt.bothSlots = it }))
+        p3.addView(chk(tr("vbmeta off (wylacz weryfikacje)", "vbmeta off (disable verification)"), { opt.disableVbmeta }, { opt.disableVbmeta = it }))
         p3.addView(chk("CRITICAL + EXTRA", { opt.flashCritical }, { opt.flashCritical = it; opt.flashExtra = it }))
         p3.addView(chk("MODEM", { opt.flashModem }, { opt.flashModem = it }))
-        p3.addView(chk("super_empty.img (jesli jest)", { opt.useSuperEmpty }, { opt.useSuperEmpty = it }))
-        p3.addView(chk("usun partycje 2. slotu z super", { opt.deleteOtherSlot }, { opt.deleteOtherSlot = it }))
-        p3.addView(chk("restart do systemu na koniec", { opt.rebootAtEnd }, { opt.rebootAtEnd = it }))
-        p3.addView(chk("wyczysc dane (userdata + metadata)", { opt.wipeData }, { opt.wipeData = it }).apply {
+        p3.addView(chk(tr("super_empty.img (jesli jest)", "super_empty.img (if present)"), { opt.useSuperEmpty }, { opt.useSuperEmpty = it }))
+        p3.addView(chk(tr("usun partycje 2. slotu z super", "delete other-slot partitions from super"), { opt.deleteOtherSlot }, { opt.deleteOtherSlot = it }))
+        p3.addView(chk(tr("restart do systemu na koniec", "reboot to system at the end"), { opt.rebootAtEnd }, { opt.rebootAtEnd = it }))
+        p3.addView(chk(tr("wyczysc dane (userdata + metadata)", "wipe data (userdata + metadata)"), { opt.wipeData }, { opt.wipeData = it }).apply {
             setTextColor(android.graphics.Color.rgb(255, 120, 110))
         })
-        row(p3, "Flashuj firmware" to ::flashFirmware)
+        row(p3, tr("Flashuj firmware", "Flash firmware") to ::flashFirmware)
 
         val p4 = pages[3]
-        header(p4, "Franken: baza (sprzet) + dawca (system)")
+        header(p4, tr("Franken: baza (sprzet) + dawca (system)", "Franken: base (hardware) + donor (system)"))
         frBaseView = TextView(this).apply { text = "Baza: -" }
         frDonorView = TextView(this).apply { text = "Dawca: -" }
         p4.addView(frBaseView); p4.addView(frDonorView)
-        row(p4, "Baza (Neo 8)" to { pickTree(REQ_FR_BASE) }, "Dawca (GT 8 Pro)" to { pickTree(REQ_FR_DONOR) })
-        row(p4, "Partycje: baza / dawca" to ::choosePartitions)
-        p4.addView(chk("my_product: konfiguracja sprzetu z bazy", { frOpt.patchMyProduct }, { frOpt.patchMyProduct = it }))
-        p4.addView(chk("wibracje z bazy (bez qcom_lmvibrator)", { frOpt.fixVibration }, { frOpt.fixVibration = it }))
-        p4.addView(chk("nakladka wyswietlacza z bazy", { frOpt.displayOverlayFromBase }, { frOpt.displayOverlayFromBase = it }))
-        p4.addView(chk("my_manifest: wersja dawcy", { frOpt.patchMyManifest }, { frOpt.patchMyManifest = it }))
-        p4.addView(chk("odm: producent/marka dawcy", { frOpt.patchOdmIdentity }, { frOpt.patchOdmIdentity = it }))
-        p4.addView(chk("app_v2: odblokuj Telefon/Kontakty/SMS", { frOpt.unlockAppV2 }, { frOpt.unlockAppV2 = it }))
-        p4.addView(chk("dzwonki z haptic_ringtone do product", { frOpt.ringtones }, { frOpt.ringtones = it }))
-        p4.addView(chk("pomin my_preload", { frOpt.skipMyPreload }, { frOpt.skipMyPreload = it }))
-        row(p4, "1. Zbuduj Franken" to ::buildFranken, "2. Flashuj Franken" to ::flashFranken)
-        header(p4, "Narzedzia / testy")
-        row(p4, "Dostep do plikow" to ::requestAllFiles, "Test narzedzi EROFS" to ::testErofsTools)
-        row(p4, "Test: wypakuj obraz EROFS" to {
+        row(p4, tr("Baza (Neo 8)", "Base (Neo 8)") to { pickTree(REQ_FR_BASE) }, tr("Dawca (GT 8 Pro)", "Donor (GT 8 Pro)") to { pickTree(REQ_FR_DONOR) })
+        row(p4, tr("Partycje: baza / dawca", "Partitions: base / donor") to ::choosePartitions)
+        p4.addView(chk(tr("my_product: konfiguracja sprzetu z bazy", "my_product: hardware config from base"), { frOpt.patchMyProduct }, { frOpt.patchMyProduct = it }))
+        p4.addView(chk(tr("wibracje z bazy (bez qcom_lmvibrator)", "vibration from base (no qcom_lmvibrator)"), { frOpt.fixVibration }, { frOpt.fixVibration = it }))
+        p4.addView(chk(tr("nakladka wyswietlacza z bazy", "display overlay from base"), { frOpt.displayOverlayFromBase }, { frOpt.displayOverlayFromBase = it }))
+        p4.addView(chk(tr("my_manifest: wersja dawcy", "my_manifest: donor version"), { frOpt.patchMyManifest }, { frOpt.patchMyManifest = it }))
+        p4.addView(chk(tr("odm: producent/marka dawcy", "odm: donor manufacturer/brand"), { frOpt.patchOdmIdentity }, { frOpt.patchOdmIdentity = it }))
+        p4.addView(chk(tr("app_v2: odblokuj Telefon/Kontakty/SMS", "app_v2: unlock Phone/Contacts/SMS"), { frOpt.unlockAppV2 }, { frOpt.unlockAppV2 = it }))
+        p4.addView(chk(tr("dzwonki z haptic_ringtone do product", "ringtones from haptic_ringtone to product"), { frOpt.ringtones }, { frOpt.ringtones = it }))
+        p4.addView(chk(tr("pomin my_preload", "skip my_preload"), { frOpt.skipMyPreload }, { frOpt.skipMyPreload = it }))
+        row(p4, tr("1. Zbuduj Franken", "1. Build Franken") to ::buildFranken, tr("2. Flashuj Franken", "2. Flash Franken") to ::flashFranken)
+        header(p4, tr("Narzedzia / testy", "Tools / tests"))
+        row(p4, tr("Dostep do plikow", "File access") to ::requestAllFiles, tr("Test narzedzi EROFS", "Test EROFS tools") to ::testErofsTools)
+        row(p4, tr("Test: wypakuj obraz EROFS", "Test: extract EROFS image") to {
             erofsWriteTest = false
             @Suppress("DEPRECATION")
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), REQ_EROFS_TEST)
         })
-        row(p4, "Test: zapis do kopii obrazu" to {
+        row(p4, tr("Test: zapis do kopii obrazu", "Test: write to image copy") to {
             erofsWriteTest = true
             @Suppress("DEPRECATION")
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), REQ_EROFS_TEST)
@@ -259,9 +265,9 @@ class MainActivity : Activity() {
         val logBar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; isBaselineAligned = false }
         logBar.addView(TextView(this).apply { text = "Log"; textSize = 13f; setTypeface(typeface, Typeface.BOLD) },
             LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
-        logBar.addView(Button(this).apply { text = "Zapisz"; isAllCaps = false; textSize = 12f; setOnClickListener { saveLog() } })
-        logBar.addView(Button(this).apply { text = "Udostepnij"; isAllCaps = false; textSize = 12f; setOnClickListener { shareLog() } })
-        logBar.addView(Button(this).apply { text = "Wyczysc"; isAllCaps = false; textSize = 12f; setOnClickListener { logView.text = "" } })
+        logBar.addView(Button(this).apply { text = tr("Zapisz", "Save"); isAllCaps = false; textSize = 12f; setOnClickListener { saveLog() } })
+        logBar.addView(Button(this).apply { text = tr("Udostepnij", "Share"); isAllCaps = false; textSize = 12f; setOnClickListener { shareLog() } })
+        logBar.addView(Button(this).apply { text = tr("Wyczysc", "Clear"); isAllCaps = false; textSize = 12f; setOnClickListener { logView.text = "" } })
         root.addView(logBar)
         logView = TextView(this).apply { typeface = Typeface.MONOSPACE; textSize = 11f; setTextIsSelectable(true) }
         scroll = ScrollView(this).apply { addView(logView); setBackgroundColor(android.graphics.Color.rgb(24, 24, 24)) }
@@ -304,7 +310,7 @@ class MainActivity : Activity() {
     private fun shareLog() {
         val text = logView.text.toString().takeLast(400_000)
         startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain")
-            .putExtra(Intent.EXTRA_SUBJECT, "Franken Flasher log").putExtra(Intent.EXTRA_TEXT, text), "Udostepnij log"))
+            .putExtra(Intent.EXTRA_SUBJECT, "Franken Flasher log").putExtra(Intent.EXTRA_TEXT, text), tr("Udostepnij log", "Share log")))
     }
 
     private fun setProgress(done: Long, total: Long) = runOnUiThread {
@@ -314,9 +320,9 @@ class MainActivity : Activity() {
     // ---------------- USB ----------------
 
     private fun connect() {
-        if (fb != null) { log("Juz polaczono: ${transport?.device?.productName}"); return }
+        if (fb != null) { log(tr("Juz polaczono: ${transport?.device?.productName}", "Already connected: ${transport?.device?.productName}")); return }
         val dev = usb.deviceList.values.firstOrNull { UsbFastbootTransport.findInterface(it) != null }
-        if (dev == null) { log("Nie znaleziono urzadzenia fastboot. Sprawdz kabel OTG i tryb fastboot."); return }
+        if (dev == null) { log(tr("Nie znaleziono urzadzenia fastboot. Sprawdz kabel OTG i tryb fastboot.", "No fastboot device found. Check the OTG cable and fastboot mode.")); return }
         requestOrOpen(dev)
     }
 
@@ -325,7 +331,7 @@ class MainActivity : Activity() {
         val flags = if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0
         val pi = PendingIntent.getBroadcast(this, 0, Intent(ACTION_PERM).setPackage(packageName), flags)
         usb.requestPermission(dev, pi)
-        log("Prosba o dostep do USB...")
+        log(tr("Prosba o dostep do USB...", "Requesting USB access..."))
     }
 
     private fun openDevice(dev: UsbDevice, showInfo: Boolean = true) {
@@ -334,11 +340,11 @@ class MainActivity : Activity() {
             val t = UsbFastbootTransport.open(usb, dev)
             transport = t
             fb = Fastboot(t, ::log)
-            log("Polaczono: ${dev.manufacturerName ?: ""} ${dev.productName ?: ""} (${dev.deviceName})")
-            runOnUiThread { status.text = "Polaczono: ${dev.productName ?: dev.deviceName}  (v" + BuildConfigCompat.version(this) + ")" }
+            log(tr("Polaczono: ${dev.manufacturerName ?: ""} ${dev.productName ?: ""} (${dev.deviceName})", "Connected: ${dev.manufacturerName ?: ""} ${dev.productName ?: ""} (${dev.deviceName})"))
+            runOnUiThread { status.text = tr("Polaczono: ${dev.productName ?: dev.deviceName}  (v", "Connected: ${dev.productName ?: dev.deviceName}  (v") + BuildConfigCompat.version(this) + ")" }
             if (showInfo) info()
         } catch (e: Exception) {
-            log("Blad polaczenia: ${e.message}")
+            log(tr("Blad polaczenia: ${e.message}", "Connection error: ${e.message}"))
         }
     }
 
@@ -346,11 +352,11 @@ class MainActivity : Activity() {
         try { transport?.close() } catch (_: Exception) {}
         transport = null
         fb = null
-        runOnUiThread { status.text = "Nie polaczono  (v" + BuildConfigCompat.version(this) + ")" }
+        runOnUiThread { status.text = tr("Nie polaczono  (v", "Not connected  (v") + BuildConfigCompat.version(this) + ")" }
     }
 
     private fun withFb(block: (Fastboot) -> Unit) {
-        val f = fb ?: run { log("Najpierw nacisnij Polacz"); return }
+        val f = fb ?: run { log(tr("Najpierw nacisnij Polacz", "Tap Connect first")); return }
         exec.execute {
             busy = true
             try { block(f) } catch (e: Exception) { log("BLAD: ${e.message}") } finally { busy = false }
@@ -360,7 +366,7 @@ class MainActivity : Activity() {
     /** Czeka, az urzadzenie wroci po restarcie (fastboot/fastbootd) i laczy sie ponownie. Wywolywac z watku roboczego. */
     private fun reconnectBlocking(timeoutMs: Long): Fastboot {
         closeDevice()
-        log("Czekam na ponowne polaczenie...")
+        log(tr("Czekam na ponowne polaczenie...", "Waiting for reconnection..."))
         Thread.sleep(4000)
         val end = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < end) {
@@ -380,7 +386,7 @@ class MainActivity : Activity() {
             }
             Thread.sleep(1500)
         }
-        throw FastbootException("Urzadzenie nie wrocilo po restarcie")
+        throw FastbootException(tr("Urzadzenie nie wrocilo po restarcie", "Device did not come back after reboot"))
     }
 
     private fun setStep(s: String) = runOnUiThread { stepView.text = s }
@@ -411,7 +417,7 @@ class MainActivity : Activity() {
             }
             if (ok && groups.isNotEmpty()) {
                 frResult = FirmwareFolder(groups)
-                log("Ostatni Franken gotowy do flashowania (bez ponownego budowania):\n" + frResult!!.summary())
+                log(tr("Ostatni Franken gotowy do flashowania (bez ponownego budowania):\n", "Last Franken ready to flash (no rebuild needed):\n") + frResult!!.summary())
             }
         }
     }
@@ -434,9 +440,9 @@ class MainActivity : Activity() {
                 val fw = FirmwareFolder.scan(this, tree)
                 firmware = fw
                 runOnUiThread { fwSummary.text = fw.summary() }
-                log("Folder firmware:\n" + fw.summary())
-                if (fw.groups.isEmpty()) log("Brak podfolderow BOOTLOADER/CRITICAL/SYSTEM... - wybierz glowny folder firmware")
-            } catch (e: Exception) { log("Blad odczytu folderu: ${e.message}") }
+                log(tr("Folder firmware:\n", "Firmware folder:\n") + fw.summary())
+                if (fw.groups.isEmpty()) log(tr("Brak podfolderow BOOTLOADER/CRITICAL/SYSTEM... - wybierz glowny folder firmware", "No BOOTLOADER/CRITICAL/SYSTEM... subfolders - pick the main firmware folder"))
+            } catch (e: Exception) { log(tr("Blad odczytu folderu: ${e.message}", "Folder read error: ${e.message}")) }
         }
     }
 
@@ -449,57 +455,57 @@ class MainActivity : Activity() {
     private fun pickOtaOut() { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), REQ_OTA_OUT) }
 
     private fun updateOtaView() = runOnUiThread {
-        otaView.text = "OTA: ${otaName.ifEmpty { "-" }}\ncel: ${otaOut?.lastPathSegment?.substringAfterLast(':') ?: "-"}"
+        otaView.text = "OTA: ${otaName.ifEmpty { "-" }}\n" + tr("cel", "target") + ": ${otaOut?.lastPathSegment?.substringAfterLast(':') ?: "-"}"
     }
 
     private fun extractOta() {
-        val inUri = otaUri ?: run { log("Najpierw wybierz plik OTA"); return }
-        val out = otaOut ?: run { log("Najpierw wybierz folder docelowy"); return }
+        val inUri = otaUri ?: run { log(tr("Najpierw wybierz plik OTA", "Pick an OTA file first")); return }
+        val out = otaOut ?: run { log(tr("Najpierw wybierz folder docelowy", "Pick a target folder first")); return }
         exec.execute {
             try {
-                setStep("Rozpakowywanie $otaName...")
-                log("Rozpakowywanie $otaName")
+                setStep(tr("Rozpakowywanie $otaName...", "Extracting $otaName..."))
+                log(tr("Rozpakowywanie $otaName", "Extracting $otaName"))
                 val t0 = System.currentTimeMillis()
                 val r = OtaExtractor(this, ::log, ::setProgress).extract(inUri, otaName, out)
                 val fw = FirmwareFolder.scan(this, r.tree, r.folderDocId)
                 firmware = fw
                 runOnUiThread { fwSummary.text = fw.summary() }
-                log("Gotowe w ${(System.currentTimeMillis() - t0) / 1000} s. Folder ustawiony do flashowania:\n" + fw.summary())
-                setStep("Rozpakowano - mozna flashowac")
+                log(tr("Gotowe w ${(System.currentTimeMillis() - t0) / 1000} s. Folder ustawiony do flashowania:\n", "Done in ${(System.currentTimeMillis() - t0) / 1000} s. Folder set for flashing:\n") + fw.summary())
+                setStep(tr("Rozpakowano - mozna flashowac", "Extracted - ready to flash"))
             } catch (e: Exception) {
-                log("BLAD rozpakowania: ${e.message ?: e}")
-                setStep("BLAD rozpakowania")
+                log(tr("BLAD rozpakowania: ${e.message ?: e}", "EXTRACTION ERROR: ${e.message ?: e}"))
+                setStep(tr("BLAD rozpakowania", "EXTRACTION ERROR"))
             } finally { setProgress(0, 0) }
         }
     }
 
     private fun verifyOta() {
-        val inUri = otaUri ?: run { log("Najpierw wybierz plik OTA"); return }
-        val fw = firmware ?: run { log("Najpierw wybierz folder firmware (sekcja Firmware)"); return }
+        val inUri = otaUri ?: run { log(tr("Najpierw wybierz plik OTA", "Pick an OTA file first")); return }
+        val fw = firmware ?: run { log(tr("Najpierw wybierz folder firmware (sekcja Firmware)", "Pick a firmware folder first (Firmware tab)")); return }
         exec.execute {
             try {
-                setStep("Sprawdzanie sum...")
+                setStep(tr("Sprawdzanie sum...", "Verifying checksums..."))
                 val images = fw.groups.values.flatten().filter { it.uri != null }.associate { it.base to it.uri!! }
                 val bad = OtaExtractor(this, ::log, ::setProgress).verify(inUri, otaName, images)
-                if (bad.isEmpty()) { log("Wszystkie sumy SHA-256 zgodne"); setStep("Sumy OK - mozna flashowac") }
-                else { bad.forEach { log("BLAD: $it") }; setStep("BLEDNE SUMY (${bad.size}) - nie flashuj") }
+                if (bad.isEmpty()) { log(tr("Wszystkie sumy SHA-256 zgodne", "All SHA-256 checksums match")); setStep(tr("Sumy OK - mozna flashowac", "Checksums OK - ready to flash")) }
+                else { bad.forEach { log("BLAD: $it") }; setStep(tr("BLEDNE SUMY (${bad.size}) - nie flashuj", "BAD CHECKSUMS (${bad.size}) - do not flash")) }
             } catch (e: Exception) {
-                log("BLAD sprawdzania: ${e.message ?: e}"); setStep("BLAD sprawdzania")
+                log(tr("BLAD sprawdzania: ${e.message ?: e}", "VERIFY ERROR: ${e.message ?: e}")); setStep(tr("BLAD sprawdzania", "VERIFY ERROR"))
             } finally { setProgress(0, 0) }
         }
     }
 
     private fun flashFirmware() {
-        val fw = firmware ?: run { log("Najpierw wybierz folder firmware"); return }
+        val fw = firmware ?: run { log(tr("Najpierw wybierz folder firmware", "Pick a firmware folder first")); return }
         flashFolder(fw, "Flash firmware")
     }
 
     private fun flashFolder(fw: FirmwareFolder, title: String) {
-        if (fb == null) { log("Najpierw nacisnij Polacz"); return }
+        if (fb == null) { log(tr("Najpierw nacisnij Polacz", "Tap Connect first")); return }
         AlertDialog.Builder(this)
             .setTitle(title)
-            .setMessage(fw.summary() + "\n\nWgrac na podlaczony telefon (" + (if (opt.switchSlot) "przelaczenie na drugi slot" else if (opt.bothSlots) "oba sloty" else "aktualny slot") + ")? Wszystko w fastbootd. Nie odlaczaj kabla do konca." +
-                (if (opt.wipeData) "\n\nUWAGA: WSZYSTKIE DANE na telefonie (zdjecia, aplikacje, konta) zostana USUNIETE." else ""))
+            .setMessage(fw.summary() + tr("\n\nWgrac na podlaczony telefon (", "\n\nFlash to the connected phone (") + (if (opt.switchSlot) tr("przelaczenie na drugi slot", "switch to the other slot") else if (opt.bothSlots) tr("oba sloty", "both slots") else tr("aktualny slot", "current slot")) + tr(")? Wszystko w fastbootd. Nie odlaczaj kabla do konca.", ")? Everything in fastbootd. Do not unplug the cable until done.") +
+                (if (opt.wipeData) tr("\n\nUWAGA: WSZYSTKIE DANE na telefonie (zdjecia, aplikacje, konta) zostana USUNIETE.", "\n\nWARNING: ALL DATA on the phone (photos, apps, accounts) will be ERASED.") else ""))
             .setPositiveButton("Flash") { _, _ ->
                 withFb { f ->
                     try {
@@ -510,7 +516,7 @@ class MainActivity : Activity() {
                     } finally { setProgress(0, 0) }
                 }
             }
-            .setNegativeButton("Anuluj", null)
+            .setNegativeButton(tr("Anuluj", "Cancel"), null)
             .show()
     }
 
@@ -530,28 +536,28 @@ class MainActivity : Activity() {
         val r = f.command(cmd, 30_000)
         log("OKAY $r")
         if (reboot) {
-            log("Urzadzenie sie restartuje - po uruchomieniu nacisnij Polacz.")
+            log(tr("Urzadzenie sie restartuje - po uruchomieniu nacisnij Polacz.", "Device is rebooting - tap Connect when it is back."))
             closeDevice()
         }
     }
 
     /** Odpowiednik "fastboot -w": erase userdata + metadata. System sformatuje je przy starcie. */
     private fun confirmWipe() {
-        if (fb == null) { log("Najpierw nacisnij Polacz"); return }
+        if (fb == null) { log(tr("Najpierw nacisnij Polacz", "Tap Connect first")); return }
         AlertDialog.Builder(this)
-            .setTitle("Wyczysc dane")
-            .setMessage("Usunac WSZYSTKIE dane z drugiego telefonu (userdata + metadata, jak fastboot -w)?\n\nAplikacje, zdjecia, konta i pamiec wewnetrzna zostana skasowane. Tego nie da sie cofnac.")
-            .setPositiveButton("Wyczysc") { _, _ ->
+            .setTitle(tr("Wyczysc dane", "Wipe data"))
+            .setMessage(tr("Usunac WSZYSTKIE dane z drugiego telefonu (userdata + metadata, jak fastboot -w)?\n\nAplikacje, zdjecia, konta i pamiec wewnetrzna zostana skasowane. Tego nie da sie cofnac.", "Erase ALL data on the second phone (userdata + metadata, like fastboot -w)?\n\nApps, photos, accounts and internal storage will be wiped. This cannot be undone."))
+            .setPositiveButton(tr("Wyczysc", "Clear")) { _, _ ->
                 withFb { f ->
                     for (p in listOf("metadata", "userdata")) {
                         log("> erase:$p")
-                        try { f.command("erase:$p", 10 * 60_000); log("wyczyszczono $p") }
-                        catch (e: Exception) { log("BLAD erase:$p - ${e.message}") }
+                        try { f.command("erase:$p", 10 * 60_000); log(tr("wyczyszczono $p", "wiped $p")) }
+                        catch (e: Exception) { log(tr("BLAD erase:$p - ${e.message}", "ERROR erase:$p - ${e.message}")) }
                     }
-                    log("Gotowe. Pierwsze uruchomienie systemu potrwa dluzej (formatowanie).")
+                    log(tr("Gotowe. Pierwsze uruchomienie systemu potrwa dluzej (formatowanie).", "Done. First boot will take longer (formatting)."))
                 }
             }
-            .setNegativeButton("Anuluj", null)
+            .setNegativeButton(tr("Anuluj", "Cancel"), null)
             .show()
     }
 
@@ -586,8 +592,8 @@ class MainActivity : Activity() {
     private fun hasAllFiles() = Build.VERSION.SDK_INT < 30 || android.os.Environment.isExternalStorageManager()
 
     private fun requestAllFiles() {
-        if (hasAllFiles()) { log("Dostep do wszystkich plikow: jest"); return }
-        log("Franken potrzebuje dostepu do wszystkich plikow (narzedzia EROFS czytaja obrazy bezposrednio). Wlacz go i wroc.")
+        if (hasAllFiles()) { log(tr("Dostep do wszystkich plikow: jest", "All files access: granted")); return }
+        log(tr("Franken potrzebuje dostepu do wszystkich plikow (narzedzia EROFS czytaja obrazy bezposrednio). Wlacz go i wroc.", "Franken needs All files access (EROFS tools read images directly). Enable it and come back."))
         try {
             startActivity(Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:$packageName")))
         } catch (_: Exception) {
@@ -606,8 +612,8 @@ class MainActivity : Activity() {
     }
 
     private fun buildFranken() {
-        val b = frBase ?: run { log("Wybierz folder bazy (Neo 8)"); return }
-        val d = frDonor ?: run { log("Wybierz folder dawcy (GT 8 Pro)"); return }
+        val b = frBase ?: run { log(tr("Wybierz folder bazy (Neo 8)", "Pick the base folder (Neo 8)")); return }
+        val d = frDonor ?: run { log(tr("Wybierz folder dawcy (GT 8 Pro)", "Pick the donor folder (GT 8 Pro)")); return }
         if (!hasAllFiles()) { requestAllFiles(); return }
         val out = File(android.os.Environment.getExternalStorageDirectory(), "FrankenFlasher/franken")
         exec.execute {
@@ -615,8 +621,8 @@ class MainActivity : Activity() {
                 val need = listOf("my_product", "my_stock", "my_region").sumOf { File(File(d, "SYSTEM"), "$it.img").length() } +
                     File(File(b, "SYSTEM"), "my_product.img").length() * 3
                 val free = android.os.Environment.getExternalStorageDirectory().usableSpace
-                log("Franken: wolne miejsce ${free / (1 shl 30)} GB, potrzeba ok. ${need / (1 shl 30) + 1} GB")
-                if (free < need) throw java.io.IOException("Za malo miejsca")
+                log(tr("Franken: wolne miejsce ${free / (1 shl 30)} GB, potrzeba ok. ${need / (1 shl 30) + 1} GB", "Franken: free space ${free / (1 shl 30)} GB, need about ${need / (1 shl 30) + 1} GB"))
+                if (free < need) throw java.io.IOException(tr("Za malo miejsca", "Not enough storage"))
                 out.deleteRecursively()
                 val t0 = System.currentTimeMillis()
                 val tools = pl.luki.frankenflasher.franken.erofsTools(this, ::log)
@@ -624,10 +630,10 @@ class MainActivity : Activity() {
                 val fw = FirmwareFolder(r.groups.mapValues { (_, l) -> l.map { pl.luki.frankenflasher.firmware.DocImage(it) } })
                 frResult = fw
                 saveFranken(r)
-                log("== FRANKEN GOTOWY (${(System.currentTimeMillis() - t0) / 1000} s) ==\n" + fw.summary())
-                setStep("Franken gotowy - podlacz drugi telefon i nacisnij Flashuj Franken")
+                log(tr("== FRANKEN GOTOWY (${(System.currentTimeMillis() - t0) / 1000} s) ==\n", "== FRANKEN READY (${(System.currentTimeMillis() - t0) / 1000} s) ==\n") + fw.summary())
+                setStep(tr("Franken gotowy - podlacz drugi telefon i nacisnij Flashuj Franken", "Franken ready - connect the second phone and tap Flash Franken"))
             } catch (e: Exception) {
-                log("BLAD Franken: $e"); e.stackTrace.take(6).forEach { log("    at $it") }
+                log(tr("BLAD Franken: $e", "Franken ERROR: $e")); e.stackTrace.take(6).forEach { log("    at $it") }
                 setStep("BLAD: ${e.message}")
             }
         }
@@ -636,27 +642,27 @@ class MainActivity : Activity() {
     /** Jak okno Franken w FFF: ktore partycje logiczne z bazy (zaznaczone), reszta z dawcy. */
     private fun choosePartitions() {
         val b = frBase; val d = frDonor
-        if (b == null || d == null) { log("Najpierw wybierz baze i dawce"); return }
+        if (b == null || d == null) { log(tr("Najpierw wybierz baze i dawce", "Pick base and donor first")); return }
         fun names(dir: File) = File(dir, "SYSTEM").listFiles { f -> f.name.endsWith(".img") }.orEmpty().map { it.name.removeSuffix(".img") }.toSet()
         val nb = names(b); val nd = names(d)
         val all = (nb + nd).filter { it != "my_manifest" && it != "my_product" }.sorted()
-        val labels = all.map { n -> n + when { n !in nb -> "  (tylko dawca)"; n !in nd -> "  (tylko baza)"; else -> "" } }.toTypedArray()
+        val labels = all.map { n -> n + when { n !in nb -> tr("  (tylko dawca)", "  (donor only)"); n !in nd -> tr("  (tylko baza)", "  (base only)"); else -> "" } }.toTypedArray()
         val checked = all.map { it in frOpt.fromBase }.toBooleanArray()
         AlertDialog.Builder(this)
-            .setTitle("Zaznaczone = z BAZY, reszta z dawcy")
+            .setTitle(tr("Zaznaczone = z BAZY, reszta z dawcy", "Checked = from BASE, rest from donor"))
             .setMultiChoiceItems(labels, checked) { _, i, c -> checked[i] = c }
             .setPositiveButton("OK") { _, _ ->
                 frOpt.fromBase = all.filterIndexed { i, _ -> checked[i] }.toMutableSet()
                 frResult = null
                 saveFranken(null)
-                log("Franken: z bazy: ${frOpt.fromBase.sorted().joinToString().ifEmpty { "(nic)" }}; z dawcy: ${all.count { it !in frOpt.fromBase && it in nd } + 2} (z my_product i my_manifest*)")
+                log(tr("Franken: z bazy: ${frOpt.fromBase.sorted().joinToString().ifEmpty { "(nic)" }}; z dawcy: ${all.count { it !in frOpt.fromBase && it in nd } + 2} (z my_product i my_manifest*)", "Franken: from base: ${frOpt.fromBase.sorted().joinToString().ifEmpty { "(none)" }}; from donor: ${all.count { it !in frOpt.fromBase && it in nd } + 2} (incl. my_product and my_manifest*)"))
             }
-            .setNegativeButton("Anuluj", null)
+            .setNegativeButton(tr("Anuluj", "Cancel"), null)
             .show()
     }
 
     private fun flashFranken() {
-        val fw = frResult ?: run { log("Najpierw nacisnij Zbuduj Franken"); return }
+        val fw = frResult ?: run { log(tr("Najpierw nacisnij Zbuduj Franken", "Tap Build Franken first")); return }
         flashFolder(fw, "Flash Franken")
     }
 
@@ -667,34 +673,34 @@ class MainActivity : Activity() {
                 val t = pl.luki.frankenflasher.franken.erofsTools(this, ::log)
                 val work = File(getExternalFilesDir(null), "franken_test").apply { deleteRecursively(); mkdirs() }
                 val img = File(work, "in.img")
-                setStep("Kopiowanie obrazu")
+                setStep(tr("Kopiowanie obrazu", "Copying image"))
                 contentResolver.openInputStream(uri)!!.use { i -> img.outputStream().use { o -> i.copyTo(o, 1 shl 20) } }
                 if (write) {
-                    setStep("Zapis testowy do kopii")
+                    setStep(tr("Zapis testowy do kopii", "Test write to copy"))
                     val before = img.length()
                     pl.luki.frankenflasher.franken.ErofsPatcher(img).use { p ->
                         val dir = listOf("etc", "").first { it.isEmpty() || p.lookup(it) != null }
                         val path = (if (dir.isEmpty()) "" else "$dir/") + "franken_test.txt"
                         p.putFile(path, "Franken Flasher test\n".toByteArray())
-                        log("Dodano /$path, dopisano ${p.commit()} B (obraz ${before / 1024} KB -> ${img.length() / 1024} KB)")
+                        log(tr("Dodano /$path, dopisano ${p.commit()} B (obraz ${before / 1024} KB -> ${img.length() / 1024} KB)", "Added /$path, appended ${p.commit()} B (image ${before / 1024} KB -> ${img.length() / 1024} KB)"))
                     }
                     pl.luki.frankenflasher.franken.ErofsPatcher(img).use { p ->
                         val n = p.lookup("etc/franken_test.txt") ?: p.lookup("franken_test.txt")
-                        if (n != null) log("Etykieta nowego pliku: " + p.xattrs(p.inode(n)).joinToString())
+                        if (n != null) log(tr("Etykieta nowego pliku: ", "New file label: ") + p.xattrs(p.inode(n)).joinToString())
                     }
-                    log("fsck.erofs zmienionego obrazu:")
+                    log(tr("fsck.erofs zmienionego obrazu:", "fsck.erofs of modified image:"))
                     log("kod fsck: " + t.run(t.fsck.path, img.path))
                 }
-                log("Obraz: ${img.length() / (1 shl 20)} MB -> wypakowanie")
-                setStep("Wypakowanie EROFS")
+                log(tr("Obraz: ${img.length() / (1 shl 20)} MB -> wypakowanie", "Image: ${img.length() / (1 shl 20)} MB -> extracting"))
+                setStep(tr("Wypakowanie EROFS", "Extracting EROFS"))
                 val t0 = System.currentTimeMillis()
                 val out = File(work, "out")
                 val rc = t.extract(img, out)
                 var files = 0; var bytes = 0L
                 out.walkTopDown().forEach { if (it.isFile) { files++; bytes += it.length() } }
-                log("kod $rc, plikow: $files, ${bytes / (1 shl 20)} MB, ${(System.currentTimeMillis() - t0) / 1000} s")
+                log(tr("kod $rc, plikow: $files, ${bytes / (1 shl 20)} MB, ${(System.currentTimeMillis() - t0) / 1000} s", "code $rc, files: $files, ${bytes / (1 shl 20)} MB, ${(System.currentTimeMillis() - t0) / 1000} s"))
                 log("Folder: ${out.path}")
-                setStep("Gotowe")
+                setStep(tr("Gotowe", "Done"))
             } catch (e: Exception) { log("BLAD: ${e.message}") }
         }.start()
     }
@@ -703,7 +709,7 @@ class MainActivity : Activity() {
 
     @Suppress("DEPRECATION")
     private fun pickImage() {
-        if (fb == null) { log("Najpierw nacisnij Polacz"); return }
+        if (fb == null) { log(tr("Najpierw nacisnij Polacz", "Tap Connect first")); return }
         val i = Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*")
         startActivityForResult(i, REQ_IMAGE)
     }
@@ -715,8 +721,8 @@ class MainActivity : Activity() {
             data?.data?.let { u ->
                 try {
                     contentResolver.openOutputStream(u)?.use { it.write(logView.text.toString().toByteArray()) }
-                    log("Log zapisany")
-                } catch (e: Exception) { log("Nie zapisano logu: ${e.message}") }
+                    log(tr("Log zapisany", "Log saved"))
+                } catch (e: Exception) { log(tr("Nie zapisano logu: ${e.message}", "Log not saved: ${e.message}")) }
             }
             return
         }
@@ -740,8 +746,8 @@ class MainActivity : Activity() {
         if ((requestCode == REQ_FR_BASE || requestCode == REQ_FR_DONOR) && resultCode == RESULT_OK) {
             val u = data?.data ?: return
             val f = treeToFile(u)
-            if (f == null || !f.isDirectory) { log("Nie moge zamienic folderu na sciezke - wybierz folder w pamieci wewnetrznej"); return }
-            if (!File(f, "SYSTEM").isDirectory) log("UWAGA: brak podfolderu SYSTEM w ${f.path}")
+            if (f == null || !f.isDirectory) { log(tr("Nie moge zamienic folderu na sciezke - wybierz folder w pamieci wewnetrznej", "Cannot map folder to a path - pick a folder in internal storage")); return }
+            if (!File(f, "SYSTEM").isDirectory) log(tr("UWAGA: brak podfolderu SYSTEM w ${f.path}", "WARNING: no SYSTEM subfolder in ${f.path}"))
             if (requestCode == REQ_FR_BASE) { frBase = f; frBaseView.text = "Baza: ${f.path}" } else { frDonor = f; frDonorView.text = "Dawca: ${f.path}" }
             frResult = null
             saveFranken(null)
@@ -753,18 +759,18 @@ class MainActivity : Activity() {
         }
         if (requestCode != REQ_IMAGE || resultCode != RESULT_OK) return
         val uri = data?.data ?: return
-        val src = uriSource(uri) ?: run { log("Nie mozna odczytac pliku"); return }
+        val src = uriSource(uri) ?: run { log(tr("Nie mozna odczytac pliku", "Cannot read file")); return }
         val part = partEdit.text.toString().trim().ifEmpty { src.name.substringBeforeLast('.') }
         AlertDialog.Builder(this)
             .setTitle("Flash")
-            .setMessage("Wgrac ${src.name} (${src.size / (1 shl 20)} MB) na partycje \"$part\"?")
+            .setMessage(tr("Wgrac ${src.name} (${src.size / (1 shl 20)} MB) na partycje \"$part\"?", "Flash ${src.name} (${src.size / (1 shl 20)} MB) to partition \"$part\"?"))
             .setPositiveButton("Flash") { _, _ ->
                 withFb { f ->
                     f.flash(part, src, ::setProgress)
                     setProgress(0, 0)
                 }
             }
-            .setNegativeButton("Anuluj", null)
+            .setNegativeButton(tr("Anuluj", "Cancel"), null)
             .show()
     }
 

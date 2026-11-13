@@ -1,5 +1,6 @@
 package pl.luki.frankenflasher.firmware
 
+import pl.luki.frankenflasher.tr
 import pl.luki.frankenflasher.fastboot.Fastboot
 import pl.luki.frankenflasher.fastboot.FastbootException
 import pl.luki.frankenflasher.fastboot.ImageSource
@@ -44,7 +45,7 @@ class FirmwareFlasher(
                 last = e
                 val usb = e is java.io.IOException || (e.message ?: "").contains("USB") || (e.message ?: "").contains("timeout")
                 if (e is DeviceHungException || !usb || attempt == 3) throw e
-                log("$what: blad (${e.message}) - ponowne polaczenie i proba ${attempt + 1}/3")
+                log(tr("$what: blad (${e.message}) - ponowne polaczenie i proba ${attempt + 1}/3", "$what: error (${e.message}) - reconnecting, attempt ${attempt + 1}/3"))
                 fb = reconnect(120_000)
                 ensureAlive(what)
             }
@@ -56,8 +57,8 @@ class FirmwareFlasher(
     private fun ensureAlive(what: String) {
         try { fb.getVar("product") } catch (e: Exception) {
             throw DeviceHungException(
-                "Drugi telefon nie odpowiada po bledzie przy $what (${e.message}). PRZERWANO. " +
-                "Przytrzymaj Vol- + Power, wejdz do bootloadera i uruchom flash od nowa (nie uruchamiaj systemu)."
+                tr("Drugi telefon nie odpowiada po bledzie przy $what (${e.message}). PRZERWANO. ", "Second phone not responding after error at $what (${e.message}). ABORTED. ") +
+                tr("Przytrzymaj Vol- + Power, wejdz do bootloadera i uruchom flash od nowa (nie uruchamiaj systemu).", "Hold Vol- + Power, enter bootloader and start the flash again (do not boot the system).")
             )
         }
     }
@@ -66,13 +67,13 @@ class FirmwareFlasher(
         fb = initial
         // Jak FFF: wszystko w fastbootd
         if (fb.getVar("is-userspace").trim() != "yes") {
-            step("Restart do fastbootd")
+            step(tr("Restart do fastbootd", "Rebooting to fastbootd"))
             fb.command("reboot-fastboot", 30_000)
             fb = reconnect(180_000)
-            if (fb.getVar("is-userspace").trim() != "yes") throw FastbootException("Urzadzenie nie jest w fastbootd")
+            if (fb.getVar("is-userspace").trim() != "yes") throw FastbootException(tr("Urzadzenie nie jest w fastbootd", "Device is not in fastbootd"))
         }
-        try { fb.command("snapshot-update:cancel", 60_000); log("snapshot-update: anulowano") } catch (_: Exception) {}
-        try { log("fastbootd max-download-size: ${fb.maxDownloadSize() / (1 shl 20)} MB (czesci po ${Fastboot.PIECE_LIMIT / (1 shl 20)} MB)") } catch (_: Exception) {}
+        try { fb.command("snapshot-update:cancel", 60_000); log(tr("snapshot-update: anulowano", "snapshot-update: cancelled")) } catch (_: Exception) {}
+        try { log("fastbootd max-download-size: ${fb.maxDownloadSize() / (1 shl 20)} MB (" + tr("czesci po", "pieces of") + " ${Fastboot.PIECE_LIMIT / (1 shl 20)} MB)") } catch (_: Exception) {}
         val current = fb.getVar("current-slot").trim().removePrefix("_").ifEmpty { "a" }
         switching = opt.switchSlot && (current == "a" || current == "b")
         val slot = when {
@@ -82,19 +83,19 @@ class FirmwareFlasher(
         }
         if (switching) {
             // Jak FFF TrySwitchToOppositeSlotAsync: usun -cow, set_active na drugi slot, wszystko na niego.
-            step("Przelaczanie slotu $current -> $slot")
-            log("== Przelaczanie slotu: $current -> $slot (jak FFF) ==")
+            step(tr("Przelaczanie slotu $current -> $slot", "Switching slot $current -> $slot"))
+            log(tr("== Przelaczanie slotu: $current -> $slot (jak FFF) ==", "== Switching slot: $current -> $slot (like FFF) =="))
             try {
                 val cows = fb.getVarAll().mapNotNull { Regex("""is-logical:([^:]+-cow):\s*yes""").find(it)?.groupValues?.get(1) }
-                for (c in cows) try { fb.command("delete-logical-partition:$c", 60_000); log("usunieto $c") } catch (_: Exception) {}
+                for (c in cows) try { fb.command("delete-logical-partition:$c", 60_000); log(tr("usunieto $c", "deleted $c")) } catch (_: Exception) {}
             } catch (_: Exception) {}
             fb.command("set_active:$slot", 30_000)
             if (opt.freeOldSlotFirst) {
-                log("aktywny slot: $slot - usuwam partycje logiczne slotu $current (miejsce w super)")
+                log(tr("aktywny slot: $slot - usuwam partycje logiczne slotu $current (miejsce w super)", "active slot: $slot - deleting logical partitions of slot $current (space in super)"))
                 freeSlot(fb, current)
-            } else log("aktywny slot: $slot - partycje wgrywane na slot $slot, slot $current zostaje nietkniety")
+            } else log(tr("aktywny slot: $slot - partycje wgrywane na slot $slot, slot $current zostaje nietkniety", "active slot: $slot - flashing to slot $slot, slot $current left untouched"))
         } else {
-            log(if (opt.bothSlots) "== Fizyczne: oba sloty, logiczne: slot a ==" else "== Slot docelowy: $slot ==")
+            log(if (opt.bothSlots) tr("== Fizyczne: oba sloty, logiczne: slot a ==", "== Physical: both slots, logical: slot a ==") else tr("== Slot docelowy: $slot ==", "== Target slot: $slot =="))
         }
 
         // ---- partycje fizyczne ----
@@ -104,22 +105,22 @@ class FirmwareFlasher(
         if (opt.flashModem) fw["MODEM"].forEach { phys += it to false }
         fw["BOOTLOADER"].sortedBy { if (it.base.startsWith("vbmeta")) 1 else 0 }.forEach { phys += it to true }
         phys.forEachIndexed { i, (img, fatal) ->
-            step("Fizyczne ${i + 1}/${phys.size}: ${img.name}")
+            step(tr("Fizyczne ${i + 1}/${phys.size}: ${img.name}", "Physical ${i + 1}/${phys.size}: ${img.name}"))
             flashPhysical(img, slot, fatal)
         }
 
         val superEmpty = fw["SUPER"].firstOrNull { it.name.equals("super_empty.img", true) }
         if (opt.useSuperEmpty && superEmpty != null && !switching) {
-            step("super_empty.img -> nowy uklad super")
+            step(tr("super_empty.img -> nowy uklad super", "super_empty.img -> new super layout"))
             retry("super_empty") { it.downloadThen(superEmpty, "update-super:super:wipe", 180_000, progress) }
-            log("super: uklad wyczyszczony z super_empty.img")
+            log(tr("super: uklad wyczyszczony z super_empty.img", "super: layout wiped with super_empty.img"))
         } else {
             val other = if (slot == "a") "b" else "a"
             val logical = fb.getVarAll().mapNotNull { Regex("""is-logical:([^:]+):\s*yes""").find(it)?.groupValues?.get(1) }.toSet()
             for (p in logical.sorted()) {
                 if (p.endsWith("-cow") || (opt.deleteOtherSlot && !switching && p.endsWith("_$other"))) {
-                    try { fb.command("delete-logical-partition:$p", 60_000); log("usunieto $p") }
-                    catch (e: Exception) { log("nie usunieto $p: ${e.message}") }
+                    try { fb.command("delete-logical-partition:$p", 60_000); log(tr("usunieto $p", "deleted $p")) }
+                    catch (e: Exception) { log(tr("nie usunieto $p: ${e.message}", "not deleted $p: ${e.message}")) }
                 }
             }
         }
@@ -133,7 +134,7 @@ class FirmwareFlasher(
                 try { prepareLogical(f, target, size) } catch (e: FastbootException) {
                     if (!switching || freedOldSlot) throw e
                     // Brak miejsca w super na oba sloty - zwolnij stary slot i sprobuj jeszcze raz
-                    log("$target: ${e.message} - brak miejsca w super, usuwam partycje slotu $current")
+                    log(tr("$target: ${e.message} - brak miejsca w super, usuwam partycje slotu $current", "$target: ${e.message} - no space in super, deleting slot $current partitions"))
                     freeSlot(f, current)
                     prepareLogical(f, target, size)
                 }
@@ -144,14 +145,14 @@ class FirmwareFlasher(
         if (opt.wipeData) {
             // odpowiednik fastboot -w: po pustym metadata/userdata system sam je sformatuje przy starcie
             for (p in listOf("metadata", "userdata")) {
-                step("Czyszczenie $p")
-                try { fb.command("erase:$p", 10 * 60_000); log("wyczyszczono $p") }
-                catch (e: Exception) { log("UWAGA: nie wyczyszczono $p - ${e.message}") }
+                step(tr("Czyszczenie $p", "Wiping $p"))
+                try { fb.command("erase:$p", 10 * 60_000); log(tr("wyczyszczono $p", "wiped $p")) }
+                catch (e: Exception) { log(tr("UWAGA: nie wyczyszczono $p - ${e.message}", "WARNING: $p not wiped - ${e.message}")) }
             }
         }
 
         if (deferred.isNotEmpty()) {
-            step("Restart do bootloadera (${deferred.size} partycji)")
+            step(tr("Restart do bootloadera (${deferred.size} partycji)", "Rebooting to bootloader (${deferred.size} partitions)"))
             fb.command("reboot-bootloader", 30_000)
             fb = reconnect(180_000)
             log("== Bootloader: ${deferred.joinToString { it.second }} ==")
@@ -159,21 +160,21 @@ class FirmwareFlasher(
                 try { retry(target) { it.flash(target, src, progress) } }
                 catch (e: Exception) {
                     if (e is DeviceHungException) throw e
-                    log("UWAGA: nie wgrano $target - ${e.message}")
+                    log(tr("UWAGA: nie wgrano $target - ${e.message}", "WARNING: $target not flashed - ${e.message}"))
                 }
             }
         }
 
         if (!switching && opt.bothSlots && current != "a") {
-            try { fb.command("set_active:a", 30_000); log("aktywny slot: a") } catch (e: Exception) { log("UWAGA: set_active:a - ${e.message}") }
+            try { fb.command("set_active:a", 30_000); log(tr("aktywny slot: a", "active slot: a")) } catch (e: Exception) { log("UWAGA: set_active:a - ${e.message}") }
         }
 
         if (opt.rebootAtEnd) {
-            step("Restart do systemu")
+            step(tr("Restart do systemu", "Rebooting to system"))
             fb.command("reboot", 30_000)
         }
-        step("Gotowe")
-        log("== FLASH ZAKONCZONY ==")
+        step(tr("Gotowe", "Done"))
+        log(tr("== FLASH ZAKONCZONY ==", "== FLASH COMPLETE =="))
     }
 
     private var switching = false
@@ -181,7 +182,7 @@ class FirmwareFlasher(
 
     private fun prepareLogical(f: Fastboot, target: String, size: Long) {
         if (f.isLogical(target)) f.command("resize-logical-partition:$target:$size", 180_000)
-        else { f.command("create-logical-partition:$target:$size", 180_000); log("utworzono $target") }
+        else { f.command("create-logical-partition:$target:$size", 180_000); log(tr("utworzono $target", "created $target")) }
     }
 
     private fun freeSlot(f: Fastboot, s: String) {
@@ -191,7 +192,7 @@ class FirmwareFlasher(
         for (p in parts.filter { it.endsWith("_$s") }) {
             try { f.command("delete-logical-partition:$p", 60_000); del += p } catch (_: Exception) {}
         }
-        log("usunieto ${del.size} partycji slotu $s" + if (del.isNotEmpty()) ": ${del.joinToString()}" else "")
+        log(tr("usunieto ${del.size} partycji slotu $s", "deleted ${del.size} partitions of slot $s") + if (del.isNotEmpty()) ": ${del.joinToString()}" else "")
     }
 
     private fun flashPhysical(img: DocImage, slot: String, fatal: Boolean) {
@@ -209,11 +210,11 @@ class FirmwareFlasher(
                 if (e is DeviceHungException) throw e
                 if ((e.message ?: "").contains("not permitted", true)) {
                     deferred += src to target
-                    log("$target zablokowana w fastbootd - wgram ja na koncu w bootloaderze")
+                    log(tr("$target zablokowana w fastbootd - wgram ja na koncu w bootloaderze", "$target locked in fastbootd - will flash it in bootloader at the end"))
                     continue
                 }
                 if (fatal) throw e
-                log("UWAGA: pominieto $target - ${e.message}")
+                log(tr("UWAGA: pominieto $target - ${e.message}", "WARNING: skipped $target - ${e.message}"))
             }
         }
     }
@@ -222,11 +223,11 @@ class FirmwareFlasher(
     private fun patchVbmeta(img: DocImage): ImageSource {
         val data = img.open().use { it.readBytes() }
         if (data.size < 124 || String(data, 0, 4, Charsets.US_ASCII) != "AVB0") {
-            log("${img.name}: brak naglowka AVB0 - wgrywam bez zmian")
+            log(tr("${img.name}: brak naglowka AVB0 - wgrywam bez zmian", "${img.name}: no AVB0 header - flashing unchanged"))
             return img
         }
         data[123] = (data[123].toInt() or 0x03).toByte()
-        log("${img.name}: weryfikacja wylaczona (flagi AVB = 3)")
+        log(tr("${img.name}: weryfikacja wylaczona (flagi AVB = 3)", "${img.name}: verification disabled (AVB flags = 3)"))
         return BytesImage(img.name, data)
     }
 }

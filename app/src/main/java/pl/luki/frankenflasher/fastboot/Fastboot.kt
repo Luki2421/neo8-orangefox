@@ -1,5 +1,6 @@
 package pl.luki.frankenflasher.fastboot
 
+import pl.luki.frankenflasher.tr
 import pl.luki.frankenflasher.usb.UsbFastbootTransport
 import java.io.InputStream
 import java.util.Locale
@@ -28,7 +29,7 @@ class Fastboot(private val t: UsbFastbootTransport, private val log: (String) ->
         val deadline = System.currentTimeMillis() + timeoutMs
         while (true) {
             val left = deadline - System.currentTimeMillis()
-            if (left <= 0) throw FastbootException("Brak odpowiedzi (timeout)")
+            if (left <= 0) throw FastbootException(tr("Brak odpowiedzi (timeout)", "No response (timeout)"))
             val n = t.read(rbuf, minOf(left, 5_000L).toInt())
             if (n < 4) continue
             val s = String(rbuf, 0, n, Charsets.US_ASCII)
@@ -46,7 +47,7 @@ class Fastboot(private val t: UsbFastbootTransport, private val log: (String) ->
         send(cmd)
         val (c, p) = readResponse(timeoutMs)
         if (c == "FAIL") throw FastbootException("$cmd: FAILED ($p)")
-        if (c != "OKAY") throw FastbootException("$cmd: nieoczekiwana odpowiedz $c$p")
+        if (c != "OKAY") throw FastbootException(tr("$cmd: nieoczekiwana odpowiedz $c$p", "$cmd: unexpected response $c$p"))
         return p
     }
 
@@ -72,7 +73,7 @@ class Fastboot(private val t: UsbFastbootTransport, private val log: (String) ->
         send(String.format(Locale.ROOT, "download:%08x", size))
         val (c, p) = readResponse(15_000)
         if (c == "FAIL") throw FastbootException("download: FAILED ($p)")
-        if (c != "DATA") throw FastbootException("download: nieoczekiwana odpowiedz $c$p")
+        if (c != "DATA") throw FastbootException(tr("download: nieoczekiwana odpowiedz $c$p", "download: unexpected response $c$p"))
     }
 
     private fun finishDownload() {
@@ -219,17 +220,17 @@ class Fastboot(private val t: UsbFastbootTransport, private val log: (String) ->
         val buf = ByteArray(1 shl 20)
         var done = 0L
         if (src.size <= max) {
-            log("Wysylanie ${src.name} (${src.size / (1 shl 20)} MB) -> $partition")
+            log(tr("Wysylanie ${src.name} (${src.size / (1 shl 20)} MB) -> $partition", "Sending ${src.name} (${src.size / (1 shl 20)} MB) -> $partition"))
             downloadThen(src, "flash:$partition", 15 * 60_000, progress)
         } else if (!sparse) {
             val pieces = Sparse.plan(src.size, max)
             val total = pieces.sumOf { it.numBlk * Sparse.BLK }
-            log("${src.name}: ${src.size / (1 shl 20)} MB -> ${pieces.size} czesci sparse -> $partition")
+            log(tr("${src.name}: ${src.size / (1 shl 20)} MB -> ${pieces.size} czesci sparse -> $partition", "${src.name}: ${src.size / (1 shl 20)} MB -> ${pieces.size} sparse pieces -> $partition"))
             val pieceBuf = ByteArray((pieces.maxOf { it.numBlk } * Sparse.BLK).toInt())
             var zeroTotal = 0L
             src.open().use { input ->
                 pieces.forEachIndexed { i, p ->
-                    log("  czesc ${i + 1}/${pieces.size}")
+                    log(tr("  czesc ${i + 1}/${pieces.size}", "  piece ${i + 1}/${pieces.size}"))
                     val len = (p.numBlk * Sparse.BLK).toInt()
                     var got = 0
                     while (got < len) { val r = input.read(pieceBuf, got, len - got); if (r < 0) break; got += r }
@@ -239,15 +240,15 @@ class Fastboot(private val t: UsbFastbootTransport, private val log: (String) ->
                     command("flash:$partition", 15 * 60_000)
                 }
             }
-            if (zeroTotal > 0) log("  ${src.name}: ${zeroTotal / (1 shl 20)} MB zer wyslanych jako FILL (bez transferu)")
+            if (zeroTotal > 0) log(tr("  ${src.name}: ${zeroTotal / (1 shl 20)} MB zer wyslanych jako FILL (bez transferu)", "  ${src.name}: ${zeroTotal / (1 shl 20)} MB of zeros sent as FILL (no transfer)"))
         } else {
             val plan = src.open().use { SparseResplitter.plan(it, max) }
             val total = src.size
-            log("${src.name}: sparse ${src.size / (1 shl 20)} MB -> ${plan.pieces.size} czesci -> $partition")
+            log(tr("${src.name}: sparse ${src.size / (1 shl 20)} MB -> ${plan.pieces.size} czesci -> $partition", "${src.name}: sparse ${src.size / (1 shl 20)} MB -> ${plan.pieces.size} pieces -> $partition"))
             src.open().use { input ->
                 val pos = longArrayOf(0)
                 plan.pieces.forEachIndexed { i, p ->
-                    log("  czesc ${i + 1}/${plan.pieces.size}")
+                    log(tr("  czesc ${i + 1}/${plan.pieces.size}", "  piece ${i + 1}/${plan.pieces.size}"))
                     startDownload(p.byteSize(plan.totalBlocks))
                     val sink = Sink()
                     plan.writePiece(p, input, pos, { b, o, l -> sink.write(b, o, l) }) { n -> done += n; progress(done, total) }

@@ -1,5 +1,6 @@
 package pl.luki.frankenflasher.franken
 
+import pl.luki.frankenflasher.tr
 import java.io.File
 import java.io.IOException
 
@@ -42,8 +43,8 @@ class Franken(
     fun build(opt: Options = Options()): Result {
         val baseSys = File(baseDir, "SYSTEM")
         val donorSys = File(donorDir, "SYSTEM")
-        if (!baseSys.isDirectory) throw IOException("Brak folderu SYSTEM w bazie: $baseSys")
-        if (!donorSys.isDirectory) throw IOException("Brak folderu SYSTEM w dawcy: $donorSys")
+        if (!baseSys.isDirectory) throw IOException(tr("Brak folderu SYSTEM w bazie: $baseSys", "No SYSTEM folder in base: $baseSys"))
+        if (!donorSys.isDirectory) throw IOException(tr("Brak folderu SYSTEM w dawcy: $donorSys", "No SYSTEM folder in donor: $donorSys"))
         outDir.mkdirs(); work.deleteRecursively(); work.mkdirs()
         val outSys = File(outDir, "SYSTEM").apply { mkdirs() }
 
@@ -62,26 +63,26 @@ class Franken(
             val b = baseImgs[n]
             if (b != null) chosen[n] = b else if (donorImgs.containsKey(n)) missing += n
         }
-        log("Franken: z BAZY: " + hw.sorted().filter { baseImgs.containsKey(it) }.joinToString() + ", z DAWCY: " + donorImgs.keys.count { it !in hw })
-        if (missing.isNotEmpty()) log("Franken: UWAGA - brak w bazie: ${missing.joinToString()} (nie beda wgrane)")
+        log(tr("Franken: z BAZY: ", "Franken: from BASE: ") + hw.sorted().filter { baseImgs.containsKey(it) }.joinToString() + tr(", z DAWCY: ", ", from DONOR: ") + donorImgs.keys.count { it !in hw })
+        if (missing.isNotEmpty()) log(tr("Franken: UWAGA - brak w bazie: ${missing.joinToString()} (nie beda wgrane)", "Franken: WARNING - missing in base: ${missing.joinToString()} (will not be flashed)"))
         baseImgs["my_manifest"]?.let { chosen["my_manifest"] = it }
         // Jak "Flash base firmware first" w FFF: partycje, ktorych dawca nie ma, zostaja z bazy
         val baseOnly = baseImgs.keys.filter { it !in chosen && !(opt.skipMyPreload && it == "my_preload") }.sorted()
         for (n in baseOnly) chosen[n] = baseImgs.getValue(n)
-        if (baseOnly.isNotEmpty()) log("Franken: tylko w bazie (zostaja z bazy): ${baseOnly.joinToString()}")
+        if (baseOnly.isNotEmpty()) log(tr("Franken: tylko w bazie (zostaja z bazy): ${baseOnly.joinToString()}", "Franken: base only (kept from base): ${baseOnly.joinToString()}"))
 
         // --- my_product (dawca + konfiguracja bazy) ---
         if (opt.patchMyProduct) {
             val d = donorImgs["my_product"]; val b = baseImgs["my_product"]
             if (d != null && b != null) chosen["my_product"] = patchMyProduct(d, b, File(outSys, "my_product.img"), opt)
-            else log("my_product: brak obrazu w bazie lub dawcy - pomijam poprawki")
+            else log(tr("my_product: brak obrazu w bazie lub dawcy - pomijam poprawki", "my_product: image missing in base or donor - skipping fixes"))
         }
         // --- dzwonki ---
         if (opt.ringtones) {
             val prod = chosen["product"]
             val src = File(work, "donor_my_product")
             if (prod != null && src.isDirectory) addRingtones(prod, src, File(outSys, "product.img"))?.let { chosen["product"] = it }
-            else log("dzwonki: brak product.img albo wypakowanego my_product - pomijam")
+            else log(tr("dzwonki: brak product.img albo wypakowanego my_product - pomijam", "ringtones: no product.img or extracted my_product - skipping"))
         }
         // --- my_manifest (baza + wersja dawcy) ---
         if (opt.patchMyManifest) {
@@ -113,7 +114,7 @@ class Franken(
                 else -> ""
             }
         })
-        log("  * = poprawiony, (B) = z bazy, reszta z dawcy")
+        log(tr("  * = poprawiony, (B) = z bazy, reszta z dawcy", "  * = patched, (B) = from base, rest from donor"))
         work.deleteRecursively()
         return Result(groups)
     }
@@ -123,19 +124,19 @@ class Franken(
     // =====================================================================================
 
     private fun copyImage(src: File, dst: File) {
-        step("Kopiowanie ${src.name}")
+        step(tr("Kopiowanie ${src.name}", "Copying ${src.name}"))
         dst.parentFile?.mkdirs()
         src.inputStream().use { i -> dst.outputStream().use { o -> i.copyTo(o, 4 shl 20) } }
     }
 
     private fun patchMyProduct(donorImg: File, baseImg: File, out: File, opt: Options): File {
-        step("my_product: wypakowanie")
+        step(tr("my_product: wypakowanie", "my_product: extracting"))
         val baseRoot = File(work, "base_my_product")
         val donorRoot = File(work, "donor_my_product")
         tools.extractOrThrow(baseImg, baseRoot)
         tools.extractOrThrow(donorImg, donorRoot)
         copyImage(donorImg, out)
-        step("my_product: poprawki")
+        step(tr("my_product: poprawki", "my_product: patching"))
         ErofsPatcher(baseImg, readOnly = true).use { baseP ->
             ErofsPatcher(out).use { p ->
                 val t = Tree(p, donorRoot, baseP, baseRoot, "my_product")
@@ -159,23 +160,23 @@ class Franken(
                     if (bf.isFile) {
                         val bl = bf.readLines()
                         val n = PropPatches.patchDisplayProps(lines, bl)
-                        if (n > 0) { changed = true; log("my_product: $rel - wlasciwosci wyswietlacza/BT/audio z bazy: $n") }
+                        if (n > 0) { changed = true; log(tr("my_product: $rel - wlasciwosci wyswietlacza/BT/audio z bazy: $n", "my_product: $rel - display/BT/audio props from base: $n")) }
                         if (PropPatches.syncActionButton(lines, bl, log)) changed = true
                     }
                     if (PropPatches.forceProductBuildProps(lines) {}) { changed = true; forced++ }
                     val dups = PropPatches.dedupKeys(lines)
-                    if (dups > 0) { changed = true; log("my_product: $rel - usunieto duplikaty: $dups") }
+                    if (dups > 0) { changed = true; log(tr("my_product: $rel - usunieto duplikaty: $dups", "my_product: $rel - duplicates removed: $dups")) }
                     if (changed) t.writeText(rel, lines.joinToString("\n") + "\n")
                 }
-                if (forced > 0) log("my_product: speaker_geq=false / fusionlight=true w $forced plikach build.prop")
+                if (forced > 0) log(tr("my_product: speaker_geq=false / fusionlight=true w $forced plikach build.prop", "my_product: speaker_geq=false / fusionlight=true in $forced build.prop files"))
                 Features.transferDeviceFeatures(t, opt.fixVibration, log)
                 Features.removeBlacklisted(t)
                 val added = Features.ensureAppFeatures(t)
-                if (added > 0) log("my_product: app-features - dodano $added")
+                if (added > 0) log(tr("my_product: app-features - dodano $added", "my_product: app-features - added $added"))
                 Features.removeAppFeaturesMissingInBase(t, log)
                 if (opt.displayOverlayFromBase) displayOverlay(t)
                 val n = p.commit()
-                log("my_product: zapisano zmiany (+${n / 1024} KB)")
+                log(tr("my_product: zapisano zmiany (+${n / 1024} KB)", "my_product: changes written (+${n / 1024} KB)"))
             }
         }
         checkImage(out)
@@ -187,14 +188,14 @@ class Franken(
         val rx = Regex("""android_framework_res_overlay\.display\.product\..*\.apk""")
         val donor = t.donorRoot.walkTopDown().filter { it.isFile && rx.matches(it.name) }.toList()
         val base = t.baseRoot.walkTopDown().filter { it.isFile && rx.matches(it.name) }.toList()
-        if (donor.isEmpty()) { log("nakladka wyswietlacza: brak u dawcy - pomijam"); return }
-        if (base.isEmpty()) { log("nakladka wyswietlacza: brak w bazie - pomijam"); return }
+        if (donor.isEmpty()) { log(tr("nakladka wyswietlacza: brak u dawcy - pomijam", "display overlay: none in donor - skipping")); return }
+        if (base.isEmpty()) { log(tr("nakladka wyswietlacza: brak w bazie - pomijam", "display overlay: none in base - skipping")); return }
         for (d in donor) {
             val b = base.firstOrNull { it.name == d.name } ?: base.singleOrNull()
-            if (b == null) { log("nakladka wyswietlacza: brak pary dla ${d.name}"); continue }
+            if (b == null) { log(tr("nakladka wyswietlacza: brak pary dla ${d.name}", "display overlay: no match for ${d.name}")); continue }
             val rel = d.relativeTo(t.donorRoot).invariantSeparatorsPath
             t.writeBytes(rel, b.readBytes())
-            log("nakladka wyswietlacza: $rel <- baza ${b.name}")
+            log(tr("nakladka wyswietlacza: $rel <- baza ${b.name}", "display overlay: $rel <- base ${b.name}"))
         }
     }
 
@@ -209,19 +210,19 @@ class Franken(
     // =====================================================================================
 
     private fun addRingtones(productImg: File, myProductRoot: File, out: File): File? {
-        step("dzwonki")
+        step(tr("dzwonki", "ringtones"))
         val hr = File(myProductRoot, "res/audio/haptic_ringtone")
         val dirs = listOf(File(hr, "output122HZ")) + hr.listFiles { f -> f.isDirectory }.orEmpty().sortedBy { it.name }
         fun oggs(d: File, prefix: String) = d.listFiles { f -> f.isFile && f.name.startsWith(prefix) && f.name.endsWith(".ogg") }.orEmpty().sortedBy { it.name }
         val src = dirs.firstOrNull { it.isDirectory && oggs(it, "ringtone_").isNotEmpty() }
             ?: dirs.firstOrNull { it.isDirectory && oggs(it, "notification_").isNotEmpty() }
-        if (src == null) { log("dzwonki: brak plikow w my_product/res/audio/haptic_ringtone - pomijam"); return null }
+        if (src == null) { log(tr("dzwonki: brak plikow w my_product/res/audio/haptic_ringtone - pomijam", "ringtones: no files in my_product/res/audio/haptic_ringtone - skipping")); return null }
         val plan = LinkedHashMap<String, File>()
         oggs(src, "ringtone_").forEach { plan["media/audio/ringtones/${it.name}"] = it; plan["media/audio/alarms/${it.name}"] = it }
         oggs(src, "notification_").forEach { plan["media/audio/notifications/${it.name}"] = it }
         oggs(src, "alarm_").forEach { plan["media/audio/alarms/${it.name}"] = it }
         val todo = ErofsPatcher(productImg, readOnly = true).use { p -> plan.filterKeys { !p.exists(it) } }
-        if (todo.isEmpty()) { log("dzwonki: product ma juz wszystkie pliki - bez zmian"); return null }
+        if (todo.isEmpty()) { log(tr("dzwonki: product ma juz wszystkie pliki - bez zmian", "ringtones: product already has all files - unchanged")); return null }
         copyImage(productImg, out)
         ErofsPatcher(out).use { p ->
             fun ensureDir(path: String) {
@@ -239,7 +240,7 @@ class Franken(
             }
             p.commit()
         }
-        log("dzwonki: dodano ${todo.size} plikow z ${src.name} (dzwonki: ${oggs(src, "ringtone_").size}, powiadomienia: ${oggs(src, "notification_").size})")
+        log(tr("dzwonki: dodano ${todo.size} plikow z ${src.name} (dzwonki: ${oggs(src, "ringtone_").size}, powiadomienia: ${oggs(src, "notification_").size})", "ringtones: added ${todo.size} files from ${src.name} (ringtones: ${oggs(src, "ringtone_").size}, notifications: ${oggs(src, "notification_").size})"))
         checkImage(out)
         return out
     }
@@ -260,7 +261,7 @@ class Franken(
                 }
             }
         }
-        log("my_manifest: klucze wersji z dawcy: " + (donorProps.keys.sorted().joinToString().ifEmpty { "(brak)" }))
+        log(tr("my_manifest: klucze wersji z dawcy: ", "my_manifest: version keys from donor: ") + (donorProps.keys.sorted().joinToString().ifEmpty { tr("(brak)", "(none)") }))
         if (donorProps.isEmpty()) return null
         val edits = LinkedHashMap<String, String>()
         catAll(baseImg, "build.prop").forEach { (rel, b) ->
@@ -278,13 +279,13 @@ class Franken(
             }
             if (changed) edits[rel] = lines.joinToString("\n") + "\n"
         }
-        if (edits.isEmpty()) { log("my_manifest: bez zmian"); return null }
+        if (edits.isEmpty()) { log(tr("my_manifest: bez zmian", "my_manifest: unchanged")); return null }
         copyImage(baseImg, out)
         ErofsPatcher(out).use { p ->
             edits.forEach { (rel, txt) -> p.putFile(rel, txt.toByteArray()) }
             p.commit()
         }
-        log("my_manifest: wersja z dawcy w ${edits.keys.joinToString()}")
+        log(tr("my_manifest: wersja z dawcy w ${edits.keys.joinToString()}", "my_manifest: donor version in ${edits.keys.joinToString()}"))
         checkImage(out)
         return out
     }
@@ -314,15 +315,15 @@ class Franken(
     }
 
     private fun patchOdmIdentity(baseImg: File, donorImg: File, out: File): File? {
-        step("odm: tozsamosc")
+        step(tr("odm: tozsamosc", "odm: identity"))
         val baseFiles = catAll(baseImg, "build.prop")
         val bp = props(baseFiles); val dp = props(catAll(donorImg, "build.prop"))
         fun pick(m: Map<String, String>, what: String) =
             m["ro.product.odm.$what"] ?: m["ro.product.vendor.$what"] ?: m["ro.product.$what"]
         val dMan = pick(dp, "manufacturer"); val dBrand = pick(dp, "brand")
         val bMan = pick(bp, "manufacturer"); val bBrand = pick(bp, "brand")
-        if (dMan == null || dBrand == null) { log("odm: brak manufacturer/brand u dawcy - pomijam"); return null }
-        if (dMan == bMan && dBrand == bBrand) { log("odm: producent/marka zgodne ($bMan/$bBrand) - bez zmian"); return null }
+        if (dMan == null || dBrand == null) { log(tr("odm: brak manufacturer/brand u dawcy - pomijam", "odm: no manufacturer/brand in donor - skipping")); return null }
+        if (dMan == bMan && dBrand == bBrand) { log(tr("odm: producent/marka zgodne ($bMan/$bBrand) - bez zmian", "odm: manufacturer/brand match ($bMan/$bBrand) - unchanged")); return null }
         log("odm: manufacturer '$bMan'->'$dMan', brand '$bBrand'->'$dBrand'")
         val edits = LinkedHashMap<String, String>()
         baseFiles.forEach { (rel, b) ->
@@ -379,17 +380,17 @@ class Franken(
             for (pkg in APP_V2_ENABLE) nt = Regex("""<disable(\s+pkg="${Regex.escape(pkg)}"[^>]*?)/>""").replace(nt, "<enable$1/>")
             if (nt != txt) edits[rel] = nt
         }
-        if (edits.isEmpty()) { log("app_v2: ${src.name} - nic do odblokowania"); return null }
+        if (edits.isEmpty()) { log(tr("app_v2: ${src.name} - nic do odblokowania", "app_v2: ${src.name} - nothing to unlock")); return null }
         copyImage(src, out)
         ErofsPatcher(out).use { p -> edits.forEach { (rel, txt) -> p.putFile(rel, txt.toByteArray()) }; p.commit() }
-        log("app_v2: ${src.name} - odblokowano pakiety w ${edits.keys.joinToString()}")
+        log(tr("app_v2: ${src.name} - odblokowano pakiety w ${edits.keys.joinToString()}", "app_v2: ${src.name} - packages unlocked in ${edits.keys.joinToString()}"))
         checkImage(out)
         return out
     }
 
     private fun checkImage(img: File) {
         val rc = tools.check(img)
-        if (rc != 0) throw IOException("fsck.erofs ${img.name}: kod $rc - obraz niepoprawny, przerwano")
+        if (rc != 0) throw IOException(tr("fsck.erofs ${img.name}: kod $rc - obraz niepoprawny, przerwano", "fsck.erofs ${img.name}: code $rc - invalid image, aborted"))
         log("fsck ${img.name}: OK")
     }
 
@@ -424,7 +425,7 @@ class Franken(
             for (part in parts) {
                 cur = if (cur.isEmpty()) part else "$cur/$part"
                 if (!p.exists(cur)) {
-                    val t = baseP.templateOf(cur) ?: throw IOException("$label: brak katalogu $cur w bazie i dawcy")
+                    val t = baseP.templateOf(cur) ?: throw IOException(tr("$label: brak katalogu $cur w bazie i dawcy", "$label: directory $cur missing in base and donor"))
                     p.mkdir(cur, t)
                 }
             }

@@ -1,5 +1,6 @@
 package pl.luki.frankenflasher.franken
 
+import pl.luki.frankenflasher.tr
 import java.io.File
 
 /** Poprawki build.prop (odpowiedniki metod ErofsImagePatcher z FFF, z wyjatkiem min_settings z v5). */
@@ -74,7 +75,7 @@ object PropPatches {
         val prefix = "$key="
         if (baseVal == null) {
             val removed = donor.removeAll { it.trimStart().startsWith(prefix) }
-            if (removed) log("my_product: $key usuniety (brak w bazie)")
+            if (removed) log(tr("my_product: $key usuniety (brak w bazie)", "my_product: $key removed (not in base)"))
             return removed
         }
         val want = "$key=$baseVal"
@@ -90,7 +91,7 @@ object PropPatches {
             i++
         }
         if (!found) { donor.add(want); changed = true }
-        if (changed) log("my_product: $want (z bazy)")
+        if (changed) log(tr("my_product: $want (z bazy)", "my_product: $want (from base)"))
         return changed
     }
 
@@ -183,18 +184,18 @@ object Features {
                 if (at < 0) at = lines.size
                 lines.addAll(at, baseLines + preserved)
                 added += baseLines.size
-                if (gone.isNotEmpty()) log("funkcje: ${f.name} - usuniete (brak w bazie): ${gone.joinToString()}")
+                if (gone.isNotEmpty()) log(tr("funkcje: ${f.name} - usuniete (brak w bazie): ${gone.joinToString()}", "features: ${f.name} - removed (not in base): ${gone.joinToString()}"))
             } else {
                 val gone = lines.filter { isTarget(it) && nameOf(it).lowercase() !in baseNames && nameOf(it) !in PRESERVED }
                 if (gone.isNotEmpty()) {
                     lines.removeAll { it in gone }
                     removed += gone.size
-                    log("funkcje: ${f.name} - usuniete (brak w bazie): ${gone.joinToString { nameOf(it) }}")
+                    log(tr("funkcje: ${f.name} - usuniete (brak w bazie): ${gone.joinToString { nameOf(it) }}", "features: ${f.name} - removed (not in base): ${gone.joinToString { nameOf(it) }}"))
                 }
             }
             if (lines != orig) t.writeText("$d/${f.name}", lines.joinToString("\n") + "\n")
         }
-        log("funkcje sprzetowe z bazy: przeniesiono $added, usunieto $removed" + if (fixVibration) " (z wibracjami)" else "")
+        log(tr("funkcje sprzetowe z bazy: przeniesiono $added, usunieto $removed", "hardware features from base: transferred $added, removed $removed") + if (fixVibration) tr(" (z wibracjami)", " (incl. vibration)") else "")
     }
 
     fun removeBlacklisted(t: Franken.Tree) {
@@ -238,6 +239,6 @@ object Features {
                 if (nt != text) { t.writeText("$d/${f.name}", nt); n++ }
             }
         }
-        if (n > 0) log("my_product: app-features - usunieto $n (brak w bazie)")
+        if (n > 0) log(tr("my_product: app-features - usunieto $n (brak w bazie)", "my_product: app-features - removed $n (not in base)"))
     }
 }

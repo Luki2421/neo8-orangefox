@@ -1,5 +1,6 @@
 package pl.luki.frankenflasher.ota
 
+import pl.luki.frankenflasher.tr
 import android.content.Context
 import android.net.Uri
 import android.provider.DocumentsContract
@@ -49,10 +50,10 @@ class OtaExtractor(
     class Result(val tree: Uri, val folderDocId: String)
 
     private fun openPayload(input: Uri, inputName: String): Pair<android.os.ParcelFileDescriptor, PayloadInfo> {
-        val pfd = ctx.contentResolver.openFileDescriptor(input, "r") ?: throw java.io.IOException("Nie mozna otworzyc $inputName")
+        val pfd = ctx.contentResolver.openFileDescriptor(input, "r") ?: throw java.io.IOException(tr("Nie mozna otworzyc $inputName", "Cannot open $inputName"))
         val ch = FileInputStream(pfd.fileDescriptor).channel
         val base = if (inputName.endsWith(".zip", true)) {
-            ZipLocator.findStored(ch, "payload.bin") ?: throw IllegalArgumentException("W ZIP nie ma payload.bin")
+            ZipLocator.findStored(ch, "payload.bin") ?: throw IllegalArgumentException(tr("W ZIP nie ma payload.bin", "No payload.bin in the ZIP"))
         } else 0L
         return pfd to PayloadParser.parse(ch, base)
     }
@@ -76,11 +77,11 @@ class OtaExtractor(
         for (p in info.parts) {
             val u = images[p.name]
             when {
-                u == null -> bad += "${p.name}: brak pliku"
-                p.hash == null -> log("  ${p.name}: brak sumy w OTA - pominieto")
+                u == null -> bad += tr("${p.name}: brak pliku", "${p.name}: file missing")
+                p.hash == null -> log(tr("  ${p.name}: brak sumy w OTA - pominieto", "  ${p.name}: no checksum in OTA - skipped"))
                 else -> {
                     val h = sha256(u) { n -> done += n; progress(done, total) }
-                    if (h.contentEquals(p.hash)) log("  OK ${p.name}") else bad += "${p.name}: ZLA SUMA"
+                    if (h.contentEquals(p.hash)) log("  OK ${p.name}") else bad += tr("${p.name}: ZLA SUMA", "${p.name}: BAD CHECKSUM")
                 }
             }
         }
@@ -88,28 +89,28 @@ class OtaExtractor(
     }
 
     fun extract(input: Uri, inputName: String, outTree: Uri, threads: Int = 3): Result {
-        val pfd = ctx.contentResolver.openFileDescriptor(input, "r") ?: throw java.io.IOException("Nie mozna otworzyc $inputName")
+        val pfd = ctx.contentResolver.openFileDescriptor(input, "r") ?: throw java.io.IOException(tr("Nie mozna otworzyc $inputName", "Cannot open $inputName"))
         pfd.use {
             val ch = FileInputStream(pfd.fileDescriptor).channel
             val base = if (inputName.endsWith(".zip", true)) {
-                ZipLocator.findStored(ch, "payload.bin") ?: throw IllegalArgumentException("W ZIP nie ma payload.bin")
+                ZipLocator.findStored(ch, "payload.bin") ?: throw IllegalArgumentException(tr("W ZIP nie ma payload.bin", "No payload.bin in the ZIP"))
             } else 0L
             val info = PayloadParser.parse(ch, base)
-            log("payload: ${info.parts.size} partycji, blok ${info.blockSize}, logicznych: ${info.dynamic.size}")
+            log(tr("payload: ${info.parts.size} partycji, blok ${info.blockSize}, logicznych: ${info.dynamic.size}", "payload: ${info.parts.size} partitions, block ${info.blockSize}, logical: ${info.dynamic.size}"))
             for (p in info.parts) for (o in p.ops) {
                 if (o.type !in setOf(OpType.REPLACE, OpType.REPLACE_BZ, OpType.REPLACE_XZ, OpType.ZSTD, OpType.ZERO, OpType.DISCARD))
-                    throw IllegalArgumentException("${p.name}: operacja typu ${o.type} - to OTA przyrostowe, potrzebne pelne OTA")
+                    throw IllegalArgumentException(tr("${p.name}: operacja typu ${o.type} - to OTA przyrostowe, potrzebne pelne OTA", "${p.name}: operation type ${o.type} - incremental OTA, a full OTA is required"))
             }
 
             val cr = ctx.contentResolver
             val rootDoc = DocumentsContract.buildDocumentUriUsingTree(outTree, DocumentsContract.getTreeDocumentId(outTree))
             val outName = inputName.substringBeforeLast('.').ifEmpty { "firmware" }
             val outDir = DocumentsContract.createDocument(cr, rootDoc, DocumentsContract.Document.MIME_TYPE_DIR, outName)
-                ?: throw java.io.IOException("Nie mozna utworzyc folderu $outName")
+                ?: throw java.io.IOException(tr("Nie mozna utworzyc folderu $outName", "Cannot create folder $outName"))
             val groupDirs = HashMap<String, Uri>()
             for (g in listOf("BOOTLOADER", "CRITICAL", "EXTRA", "MODEM", "SYSTEM")) {
                 groupDirs[g] = DocumentsContract.createDocument(cr, outDir, DocumentsContract.Document.MIME_TYPE_DIR, g)
-                    ?: throw java.io.IOException("Nie mozna utworzyc $g")
+                    ?: throw java.io.IOException(tr("Nie mozna utworzyc $g", "Cannot create $g"))
             }
 
             val total = info.parts.sumOf { it.size }
@@ -122,13 +123,13 @@ class OtaExtractor(
                     futures += pool.submit(Runnable {
                         val g = Classifier.folder(p.name, info.dynamic)
                         val doc = DocumentsContract.createDocument(cr, groupDirs[g]!!, "application/octet-stream", "${p.name}.img")
-                            ?: throw java.io.IOException("Nie mozna utworzyc ${p.name}.img")
+                            ?: throw java.io.IOException(tr("Nie mozna utworzyc ${p.name}.img", "Cannot create ${p.name}.img"))
                         writePartition(ch, info, p, doc) { n -> progress(done.addAndGet(n), total) }
                         val ok = p.hash?.let { sha256(doc) {}.contentEquals(it) }
                         when (ok) {
-                            true -> log("  $g/${p.name}.img (${p.size / (1 shl 20)} MB) - suma OK")
-                            false -> { synchronized(bad) { bad += p.name }; log("  $g/${p.name}.img - ZLA SUMA SHA-256!") }
-                            null -> log("  $g/${p.name}.img (${p.size / (1 shl 20)} MB) - brak sumy w OTA")
+                            true -> log(tr("  $g/${p.name}.img (${p.size / (1 shl 20)} MB) - suma OK", "  $g/${p.name}.img (${p.size / (1 shl 20)} MB) - checksum OK"))
+                            false -> { synchronized(bad) { bad += p.name }; log(tr("  $g/${p.name}.img - ZLA SUMA SHA-256!", "  $g/${p.name}.img - BAD SHA-256 CHECKSUM!")) }
+                            null -> log(tr("  $g/${p.name}.img (${p.size / (1 shl 20)} MB) - brak sumy w OTA", "  $g/${p.name}.img (${p.size / (1 shl 20)} MB) - no checksum in OTA"))
                         }
                     })
                 }
@@ -136,15 +137,15 @@ class OtaExtractor(
             } finally {
                 pool.shutdownNow()
             }
-            if (bad.isNotEmpty()) throw IllegalStateException("Bledne sumy: ${bad.joinToString()} - NIE flashuj, rozpakuj ponownie")
-            log("Rozpakowano do: $outName - wszystkie sumy SHA-256 zgodne")
+            if (bad.isNotEmpty()) throw IllegalStateException(tr("Bledne sumy: ${bad.joinToString()} - NIE flashuj, rozpakuj ponownie", "Bad checksums: ${bad.joinToString()} - DO NOT flash, extract again"))
+            log(tr("Rozpakowano do: $outName - wszystkie sumy SHA-256 zgodne", "Extracted to: $outName - all SHA-256 checksums match"))
             return Result(outTree, DocumentsContract.getDocumentId(outDir))
         }
     }
 
     private fun writePartition(src: FileChannel, info: PayloadInfo, p: PartUpdate, doc: Uri, onBytes: (Long) -> Unit) {
         val bs = info.blockSize.toLong()
-        val opfd = ctx.contentResolver.openFileDescriptor(doc, "rw") ?: throw java.io.IOException("Zapis ${p.name} niemozliwy")
+        val opfd = ctx.contentResolver.openFileDescriptor(doc, "rw") ?: throw java.io.IOException(tr("Zapis ${p.name} niemozliwy", "Cannot write ${p.name}"))
         opfd.use {
             Os.ftruncate(opfd.fileDescriptor, p.size)
             val out = FileOutputStream(opfd.fileDescriptor).channel
