@@ -6,9 +6,12 @@ import android.provider.DocumentsContract
 import pl.luki.frankenflasher.fastboot.ImageSource
 import java.io.InputStream
 
-/** Obraz w folderze wybranym przez Storage Access Framework. */
-class DocImage(private val ctx: Context, val uri: Uri, override val name: String, override val size: Long) : ImageSource {
-    override fun open(): InputStream = ctx.contentResolver.openInputStream(uri) ?: throw java.io.IOException("Nie mozna otworzyc $name")
+/** Obraz firmware: z folderu SAF albo zwykly plik (Franken). */
+class DocImage(override val name: String, override val size: Long, private val opener: () -> InputStream) : ImageSource {
+    constructor(ctx: Context, uri: Uri, name: String, size: Long) :
+        this(name, size, { ctx.contentResolver.openInputStream(uri) ?: throw java.io.IOException("Nie mozna otworzyc $name") })
+    constructor(f: java.io.File) : this(f.name, f.length(), { f.inputStream() })
+    override fun open(): InputStream = opener()
     val base get() = name.substringBeforeLast('.')
 }
 

@@ -51,6 +51,8 @@ class MainActivity : Activity() {
         private const val REQ_OTA_OUT = 13
         private const val REQ_SAVE_LOG = 14
         private const val REQ_EROFS_TEST = 15
+        private const val REQ_FR_BASE = 16
+        private const val REQ_FR_DONOR = 17
     }
 
     private val usb by lazy { getSystemService(Context.USB_SERVICE) as UsbManager }
@@ -217,8 +219,21 @@ class MainActivity : Activity() {
         row(p3, "Flashuj firmware" to ::flashFirmware)
 
         val p4 = pages[3]
-        header(p4, "Franken (etap 3 - w budowie)")
-        row(p4, "Test narzedzi EROFS" to ::testErofsTools)
+        header(p4, "Franken: baza (sprzet) + dawca (system)")
+        frBaseView = TextView(this).apply { text = "Baza: -" }
+        frDonorView = TextView(this).apply { text = "Dawca: -" }
+        p4.addView(frBaseView); p4.addView(frDonorView)
+        row(p4, "Baza (Neo 8)" to { pickTree(REQ_FR_BASE) }, "Dawca (GT 8 Pro)" to { pickTree(REQ_FR_DONOR) })
+        p4.addView(chk("my_product: konfiguracja sprzetu z bazy", { frOpt.patchMyProduct }, { frOpt.patchMyProduct = it }))
+        p4.addView(chk("wibracje z bazy (bez qcom_lmvibrator)", { frOpt.fixVibration }, { frOpt.fixVibration = it }))
+        p4.addView(chk("nakladka wyswietlacza z bazy", { frOpt.displayOverlayFromBase }, { frOpt.displayOverlayFromBase = it }))
+        p4.addView(chk("my_manifest: wersja dawcy", { frOpt.patchMyManifest }, { frOpt.patchMyManifest = it }))
+        p4.addView(chk("odm: producent/marka dawcy", { frOpt.patchOdmIdentity }, { frOpt.patchOdmIdentity = it }))
+        p4.addView(chk("app_v2: odblokuj Telefon/Kontakty/SMS", { frOpt.unlockAppV2 }, { frOpt.unlockAppV2 = it }))
+        p4.addView(chk("pomin my_preload", { frOpt.skipMyPreload }, { frOpt.skipMyPreload = it }))
+        row(p4, "1. Zbuduj Franken" to ::buildFranken, "2. Flashuj Franken" to ::flashFranken)
+        header(p4, "Narzedzia / testy")
+        row(p4, "Dostep do plikow" to ::requestAllFiles, "Test narzedzi EROFS" to ::testErofsTools)
         row(p4, "Test: wypakuj obraz EROFS" to {
             erofsWriteTest = false
             @Suppress("DEPRECATION")
@@ -434,9 +449,13 @@ class MainActivity : Activity() {
 
     private fun flashFirmware() {
         val fw = firmware ?: run { log("Najpierw wybierz folder firmware"); return }
+        flashFolder(fw, "Flash firmware")
+    }
+
+    private fun flashFolder(fw: FirmwareFolder, title: String) {
         if (fb == null) { log("Najpierw nacisnij Polacz"); return }
         AlertDialog.Builder(this)
-            .setTitle("Flash firmware")
+            .setTitle(title)
             .setMessage(fw.summary() + "\n\nWgrac na podlaczony telefon (" + (if (opt.switchSlot) "przelaczenie na drugi slot" else if (opt.bothSlots) "oba sloty" else "aktualny slot") + ")? Wszystko w fastbootd. Nie odlaczaj kabla do konca." +
                 (if (opt.wipeData) "\n\nUWAGA: WSZYSTKIE DANE na telefonie (zdjecia, aplikacje, konta) zostana USUNIETE." else ""))
             .setPositiveButton("Flash") { _, _ ->
@@ -497,7 +516,7 @@ class MainActivity : Activity() {
     // ---------------- Franken ----------------
 
     private fun testErofsTools() {
-        val t = pl.luki.frankenflasher.franken.ErofsTools(this, ::log)
+        val t = pl.luki.frankenflasher.franken.erofsTools(this, ::log)
         log("mkfs.erofs: ${t.mkfs.path} (wykonywalny: ${t.mkfs.canExecute()})")
         log("fsck.erofs: ${t.fsck.path} (wykonywalny: ${t.fsck.canExecute()})")
         Thread {
@@ -509,12 +528,78 @@ class MainActivity : Activity() {
     }
 
     private var erofsWriteTest = false
+    private lateinit var frBaseView: TextView
+    private lateinit var frDonorView: TextView
+    private var frBase: File? = null
+    private var frDonor: File? = null
+    private val frOpt = pl.luki.frankenflasher.franken.Franken.Options()
+    private var frResult: FirmwareFolder? = null
+
+    @Suppress("DEPRECATION")
+    private fun pickTree(req: Int) {
+        if (!hasAllFiles()) { requestAllFiles(); return }
+        startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), req)
+    }
+
+    private fun hasAllFiles() = Build.VERSION.SDK_INT < 30 || android.os.Environment.isExternalStorageManager()
+
+    private fun requestAllFiles() {
+        if (hasAllFiles()) { log("Dostep do wszystkich plikow: jest"); return }
+        log("Franken potrzebuje dostepu do wszystkich plikow (narzedzia EROFS czytaja obrazy bezposrednio). Wlacz go i wroc.")
+        try {
+            startActivity(Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:$packageName")))
+        } catch (_: Exception) {
+            startActivity(Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+        }
+    }
+
+    /** content://...tree/primary%3ADownload%2Ffw -> /storage/emulated/0/Download/fw */
+    private fun treeToFile(u: Uri): File? {
+        val id = try { android.provider.DocumentsContract.getTreeDocumentId(u) } catch (_: Exception) { return null }
+        val i = id.indexOf(':')
+        if (i < 0) return null
+        val vol = id.substring(0, i); val path = id.substring(i + 1)
+        val root = if (vol.equals("primary", true)) android.os.Environment.getExternalStorageDirectory() else File("/storage/$vol")
+        return if (path.isEmpty()) root else File(root, path)
+    }
+
+    private fun buildFranken() {
+        val b = frBase ?: run { log("Wybierz folder bazy (Neo 8)"); return }
+        val d = frDonor ?: run { log("Wybierz folder dawcy (GT 8 Pro)"); return }
+        if (!hasAllFiles()) { requestAllFiles(); return }
+        val out = File(android.os.Environment.getExternalStorageDirectory(), "FrankenFlasher/franken")
+        exec.execute {
+            try {
+                val need = listOf("my_product", "my_stock", "my_region").sumOf { File(File(d, "SYSTEM"), "$it.img").length() } +
+                    File(File(b, "SYSTEM"), "my_product.img").length() * 3
+                val free = android.os.Environment.getExternalStorageDirectory().usableSpace
+                log("Franken: wolne miejsce ${free / (1 shl 30)} GB, potrzeba ok. ${need / (1 shl 30) + 1} GB")
+                if (free < need) throw java.io.IOException("Za malo miejsca")
+                out.deleteRecursively()
+                val t0 = System.currentTimeMillis()
+                val tools = pl.luki.frankenflasher.franken.erofsTools(this, ::log)
+                val r = pl.luki.frankenflasher.franken.Franken(b, d, out, tools, ::log, ::setStep).build(frOpt)
+                val fw = FirmwareFolder(r.groups.mapValues { (_, l) -> l.map { DocImage(it) } })
+                frResult = fw
+                log("== FRANKEN GOTOWY (${(System.currentTimeMillis() - t0) / 1000} s) ==\n" + fw.summary())
+                setStep("Franken gotowy - podlacz drugi telefon i nacisnij Flashuj Franken")
+            } catch (e: Exception) {
+                log("BLAD Franken: ${e.message}")
+                setStep("BLAD: ${e.message}")
+            }
+        }
+    }
+
+    private fun flashFranken() {
+        val fw = frResult ?: run { log("Najpierw nacisnij Zbuduj Franken"); return }
+        flashFolder(fw, "Flash Franken")
+    }
 
     private fun erofsExtractTest(uri: Uri) {
         val write = erofsWriteTest
         Thread {
             try {
-                val t = pl.luki.frankenflasher.franken.ErofsTools(this, ::log)
+                val t = pl.luki.frankenflasher.franken.erofsTools(this, ::log)
                 val work = File(getExternalFilesDir(null), "franken_test").apply { deleteRecursively(); mkdirs() }
                 val img = File(work, "in.img")
                 setStep("Kopiowanie obrazu")
@@ -585,6 +670,15 @@ class MainActivity : Activity() {
                 otaOut = u
                 updateOtaView()
             }
+            return
+        }
+        if ((requestCode == REQ_FR_BASE || requestCode == REQ_FR_DONOR) && resultCode == RESULT_OK) {
+            val u = data?.data ?: return
+            val f = treeToFile(u)
+            if (f == null || !f.isDirectory) { log("Nie moge zamienic folderu na sciezke - wybierz folder w pamieci wewnetrznej"); return }
+            if (!File(f, "SYSTEM").isDirectory) log("UWAGA: brak podfolderu SYSTEM w ${f.path}")
+            if (requestCode == REQ_FR_BASE) { frBase = f; frBaseView.text = "Baza: ${f.path}" } else { frDonor = f; frDonorView.text = "Dawca: ${f.path}" }
+            frResult = null
             return
         }
         if (requestCode == REQ_EROFS_TEST && resultCode == RESULT_OK) {

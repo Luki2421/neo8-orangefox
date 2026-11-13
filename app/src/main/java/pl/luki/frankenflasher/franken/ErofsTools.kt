@@ -1,13 +1,10 @@
 package pl.luki.frankenflasher.franken
 
-import android.content.Context
 import java.io.File
+import java.io.IOException
 
-/** Natywne erofs-utils (budowane w CI ze zrodel) - wypakowane jako lib*.so w nativeLibraryDir. */
-class ErofsTools(ctx: Context, private val log: (String) -> Unit) {
-    private val dir = File(ctx.applicationInfo.nativeLibraryDir)
-    val mkfs = File(dir, "libmkfs_erofs.so")
-    val fsck = File(dir, "libfsck_erofs.so")
+/** Natywne erofs-utils (budowane w CI ze zrodel) - na telefonie jako lib*.so w nativeLibraryDir. */
+class ErofsTools(val mkfs: File, val fsck: File, val dump: File, private val log: (String) -> Unit) {
 
     fun available() = mkfs.canExecute() && fsck.canExecute()
 
@@ -22,7 +19,16 @@ class ErofsTools(ctx: Context, private val log: (String) -> Unit) {
 
     /** Wypakowuje obraz EROFS do katalogu (bez wlascicieli - aplikacja nie jest rootem). */
     fun extract(img: File, out: File): Int {
+        out.deleteRecursively()
         out.mkdirs()
-        return run(fsck.path, "--extract=${out.path}", "--no-preserve", "--force", img.path)
+        return run(fsck.path, "--extract=${out.path}", "--no-preserve", "--force", "--overwrite", img.path)
     }
+
+    fun extractOrThrow(img: File, out: File) {
+        val rc = extract(img, out)
+        if (rc != 0) throw IOException("fsck.erofs --extract ${img.name}: kod $rc")
+    }
+
+    /** fsck obrazu: 0 = OK. */
+    fun check(img: File): Int = run(fsck.path, img.path)
 }

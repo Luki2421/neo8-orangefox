@@ -1,0 +1,460 @@
+package pl.luki.frankenflasher.franken
+
+import java.io.File
+import java.io.IOException
+
+/**
+ * Franken jak w FastbootFirmwareFlasher (z poprawkami v6):
+ *  - partycje fizyczne (CRITICAL/EXTRA/MODEM/BOOTLOADER) i sprzetowe logiczne z BAZY,
+ *  - system z DAWCY,
+ *  - my_product dawcy poprawiony konfiguracja sprzetowa bazy,
+ *  - my_manifest bazy z wersja dawcy,
+ *  - app_v2 (Telefon, Kontakty, ...) odblokowane w my_stock / my_region dawcy.
+ * Obrazy sa edytowane przez [ErofsPatcher] (etykiety SELinux zostaja).
+ */
+class Franken(
+    private val baseDir: File,
+    private val donorDir: File,
+    private val outDir: File,
+    private val tools: ErofsTools,
+    private val log: (String) -> Unit,
+    private val step: (String) -> Unit = {},
+) {
+    class Options(
+        var patchMyProduct: Boolean = true,
+        var patchMyManifest: Boolean = true,
+        var patchOdmIdentity: Boolean = true,
+        var unlockAppV2: Boolean = true,
+        var fixVibration: Boolean = true,
+        var displayOverlayFromBase: Boolean = true,
+        var skipMyPreload: Boolean = false,
+    )
+
+    /** Wynik: obraz -> plik (SYSTEM z bazy/dawcy/poprawiony), grupy fizyczne z bazy. */
+    class Result(val groups: Map<String, List<File>>)
+
+    private val work = File(outDir, "work")
+
+    fun build(opt: Options = Options()): Result {
+        val baseSys = File(baseDir, "SYSTEM")
+        val donorSys = File(donorDir, "SYSTEM")
+        if (!baseSys.isDirectory) throw IOException("Brak folderu SYSTEM w bazie: $baseSys")
+        if (!donorSys.isDirectory) throw IOException("Brak folderu SYSTEM w dawcy: $donorSys")
+        outDir.mkdirs(); work.mkdirs()
+        val outSys = File(outDir, "SYSTEM").apply { mkdirs() }
+
+        // --- wybor partycji (FrankenBaseHardwareSystem) ---
+        val donorImgs = donorSys.listFiles { f -> f.name.endsWith(".img", true) }.orEmpty().associateBy { it.name.removeSuffix(".img") }
+        val baseImgs = baseSys.listFiles { f -> f.name.endsWith(".img", true) }.orEmpty().associateBy { it.name.removeSuffix(".img") }
+        val chosen = LinkedHashMap<String, File>()
+        for ((n, f) in donorImgs.toSortedMap()) {
+            if (n in HW_FROM_BASE) continue
+            if (opt.skipMyPreload && n == "my_preload") continue
+            chosen[n] = f
+        }
+        val missing = ArrayList<String>()
+        for (n in HW_FROM_BASE) {
+            val b = baseImgs[n]
+            if (b != null) chosen[n] = b else if (donorImgs.containsKey(n)) missing += n
+        }
+        log("Franken: z BAZY (sprzet): " + HW_FROM_BASE.filter { baseImgs.containsKey(it) }.joinToString())
+        if (missing.isNotEmpty()) log("Franken: UWAGA - brak w bazie: ${missing.joinToString()} (nie beda wgrane)")
+        baseImgs["my_manifest"]?.let { chosen["my_manifest"] = it }
+
+        // --- my_product (dawca + konfiguracja bazy) ---
+        if (opt.patchMyProduct) {
+            val d = donorImgs["my_product"]; val b = baseImgs["my_product"]
+            if (d != null && b != null) chosen["my_product"] = patchMyProduct(d, b, File(outSys, "my_product.img"), opt)
+            else log("my_product: brak obrazu w bazie lub dawcy - pomijam poprawki")
+        }
+        // --- my_manifest (baza + wersja dawcy) ---
+        if (opt.patchMyManifest) {
+            val b = baseImgs["my_manifest"]; val d = donorImgs["my_manifest"]
+            if (b != null && d != null) patchMyManifest(b, d, File(outSys, "my_manifest.img"))?.let { chosen["my_manifest"] = it }
+        }
+        // --- odm (baza, tozsamosc dawcy) ---
+        if (opt.patchOdmIdentity) {
+            val b = baseImgs["odm"]; val d = donorImgs["odm"]
+            if (b != null && d != null) patchOdmIdentity(b, d, File(outSys, "odm.img"))?.let { chosen["odm"] = it }
+        }
+        // --- app_v2 ---
+        if (opt.unlockAppV2) {
+            for (n in listOf("my_stock", "my_region")) {
+                val src = chosen[n] ?: continue
+                unlockAppV2(src, File(outSys, "$n.img"))?.let { chosen[n] = it }
+            }
+        }
+
+        val groups = LinkedHashMap<String, List<File>>()
+        for (g in listOf("CRITICAL", "EXTRA", "MODEM", "BOOTLOADER")) {
+            groups[g] = File(baseDir, g).listFiles { f -> f.name.endsWith(".img", true) && f.length() > 0 }.orEmpty().sortedBy { it.name }
+        }
+        groups["SYSTEM"] = chosen.values.sortedBy { it.name }
+        log("Franken: SYSTEM = " + chosen.entries.joinToString { (n, f) ->
+            n + when {
+                f.parentFile == outSys -> "*"
+                f.parentFile == baseSys -> "(B)"
+                else -> ""
+            }
+        })
+        log("  * = poprawiony, (B) = z bazy, reszta z dawcy")
+        work.deleteRecursively()
+        return Result(groups)
+    }
+
+    // =====================================================================================
+    // my_product
+    // =====================================================================================
+
+    private fun copyImage(src: File, dst: File) {
+        step("Kopiowanie ${src.name}")
+        dst.parentFile?.mkdirs()
+        src.inputStream().use { i -> dst.outputStream().use { o -> i.copyTo(o, 4 shl 20) } }
+    }
+
+    private fun patchMyProduct(donorImg: File, baseImg: File, out: File, opt: Options): File {
+        step("my_product: wypakowanie")
+        val baseRoot = File(work, "base_my_product")
+        val donorRoot = File(work, "donor_my_product")
+        tools.extractOrThrow(baseImg, baseRoot)
+        tools.extractOrThrow(donorImg, donorRoot)
+        copyImage(donorImg, out)
+        step("my_product: poprawki")
+        ErofsPatcher(baseImg, readOnly = true).use { baseP ->
+            ErofsPatcher(out).use { p ->
+                val t = Tree(p, donorRoot, baseP, baseRoot, "my_product")
+                // ReplaceSubtreeFromBase (ostatni argument: usun u dawcy, gdy brak w bazie)
+                t.replaceSubtreeFromBase("vendor/etc", false)
+                t.replaceSubtreeFromBase("etc/fusionlight_profile", false)
+                t.replaceSubtreeFromBase("etc/camera", false)
+                t.replaceSubtreeFromBase("etc/vibrator_service_config", true)
+                t.replaceSubtreeFromBase("etc/vibrator", true)
+                t.replaceSubtreeFromBase("etc/AILightPerceptionConfig", false) // v6: czujnik pod ekranem
+                for (f in REPLACE_FILES) t.replaceFileFromBase(f)
+                t.mergeNamedElementsFromBase("etc/extension/feature_com.android.battery.xml", "app_feature")
+                t.mergeNamedElementsFromBase("etc/extension/config_product_com.android.providers.settings.xml", "settings_item")
+                // build.prop
+                donorRoot.walkTopDown().filter { it.isFile && it.name == "build.prop" }.forEach { f ->
+                    val rel = f.relativeTo(donorRoot).invariantSeparatorsPath
+                    val bf = File(baseRoot, rel)
+                    var lines = f.readLines().toMutableList()
+                    var changed = false
+                    if (bf.isFile) {
+                        val bl = bf.readLines()
+                        val n = PropPatches.patchDisplayProps(lines, bl)
+                        if (n > 0) { changed = true; log("my_product: $rel - wlasciwosci wyswietlacza/BT/audio z bazy: $n") }
+                        if (PropPatches.syncActionButton(lines, bl, log)) changed = true
+                    }
+                    if (PropPatches.forceProductBuildProps(lines, log)) changed = true
+                    val dups = PropPatches.dedupKeys(lines)
+                    if (dups > 0) { changed = true; log("my_product: $rel - usunieto duplikaty: $dups") }
+                    if (changed) t.writeText(rel, lines.joinToString("\n") + "\n")
+                }
+                Features.transferDeviceFeatures(t, opt.fixVibration, log)
+                Features.removeBlacklisted(t)
+                val added = Features.ensureAppFeatures(t)
+                if (added > 0) log("my_product: app-features - dodano $added")
+                Features.removeAppFeaturesMissingInBase(t, log)
+                if (opt.displayOverlayFromBase) displayOverlay(t)
+                val n = p.commit()
+                log("my_product: zapisano zmiany (+${n / 1024} KB)")
+            }
+        }
+        checkImage(out)
+        return out
+    }
+
+    /** Zamiast przebudowy APK (apktool w FFF): nakladka wyswietlacza dawcy dostaje zawartosc nakladki bazy. */
+    private fun displayOverlay(t: Tree) {
+        val rx = Regex("""android_framework_res_overlay\.display\.product\..*\.apk""")
+        val donor = t.donorRoot.walkTopDown().filter { it.isFile && rx.matches(it.name) }.toList()
+        val base = t.baseRoot.walkTopDown().filter { it.isFile && rx.matches(it.name) }.toList()
+        if (donor.isEmpty()) { log("nakladka wyswietlacza: brak u dawcy - pomijam"); return }
+        if (base.isEmpty()) { log("nakladka wyswietlacza: brak w bazie - pomijam"); return }
+        for (d in donor) {
+            val b = base.firstOrNull { it.name == d.name } ?: base.singleOrNull()
+            if (b == null) { log("nakladka wyswietlacza: brak pary dla ${d.name}"); continue }
+            val rel = d.relativeTo(t.donorRoot).invariantSeparatorsPath
+            t.writeBytes(rel, b.readBytes())
+            log("nakladka wyswietlacza: $rel <- baza ${b.name}")
+        }
+    }
+
+    // =====================================================================================
+    // my_manifest
+    // =====================================================================================
+
+    private fun patchMyManifest(baseImg: File, donorImg: File, out: File): File? {
+        step("my_manifest")
+        val baseRoot = File(work, "base_my_manifest"); val donorRoot = File(work, "donor_my_manifest")
+        tools.extractOrThrow(baseImg, baseRoot)
+        tools.extractOrThrow(donorImg, donorRoot)
+        val donorProps = HashMap<String, String>()
+        donorRoot.walkTopDown().filter { it.isFile && it.name == "build.prop" }.forEach { f ->
+            f.readLines().forEach { l ->
+                val s = l.trim(); val i = s.indexOf('=')
+                if (s.isNotEmpty() && !s.startsWith("#") && i > 0) {
+                    val k = s.substring(0, i).trim()
+                    if (isManifestVersionKey(k)) donorProps[k] = s.substring(i + 1).trim()
+                }
+            }
+        }
+        log("my_manifest: klucze wersji z dawcy: " + (donorProps.keys.sorted().joinToString().ifEmpty { "(brak)" }))
+        if (donorProps.isEmpty()) return null
+        val edits = LinkedHashMap<String, String>()
+        baseRoot.walkTopDown().filter { it.isFile && it.name == "build.prop" }.forEach { f ->
+            val lines = f.readLines().toMutableList()
+            var changed = false
+            for (i in lines.indices) {
+                val s = lines[i].trim(); val eq = s.indexOf('=')
+                if (s.isEmpty() || s.startsWith("#") || eq <= 0) continue
+                val k = s.substring(0, eq).trim()
+                val dv = donorProps[k] ?: continue
+                val v = mergeVersion(k, s.substring(eq + 1).trim(), dv)
+                val nl = "$k=$v"
+                if (lines[i] != nl) { lines[i] = nl; changed = true }
+            }
+            if (changed) edits[f.relativeTo(baseRoot).invariantSeparatorsPath] = lines.joinToString("\n") + "\n"
+        }
+        if (edits.isEmpty()) { log("my_manifest: bez zmian"); return null }
+        copyImage(baseImg, out)
+        ErofsPatcher(out).use { p ->
+            edits.forEach { (rel, txt) -> p.putFile(rel, txt.toByteArray()) }
+            p.commit()
+        }
+        log("my_manifest: wersja z dawcy w ${edits.keys.joinToString()}")
+        checkImage(out)
+        return out
+    }
+
+    private fun isManifestVersionKey(k: String) = k in MANIFEST_WHOLE || k in MANIFEST_PREFIXED || k == "ro.build.display.full_id"
+
+    /** Dla ro.build.display.id*: prefiks modelu z bazy (do pierwszego '_'), reszta z dawcy - jak MergeAfterFirstUnderscore w FFF. */
+    private fun mergeVersion(k: String, baseV: String, donorV: String): String {
+        if (k in MANIFEST_WHOLE) return donorV
+        val bi = baseV.indexOf('_'); val di = donorV.indexOf('_')
+        return if (bi > 0 && di > 0) baseV.substring(0, bi) + donorV.substring(di) else donorV
+    }
+
+    // =====================================================================================
+    // odm: producent/marka jak u dawcy
+    // =====================================================================================
+
+    private fun readProps(img: File, root: File): Map<String, String> {
+        tools.extractOrThrow(img, root)
+        val m = HashMap<String, String>()
+        root.walkTopDown().filter { it.isFile && it.name == "build.prop" }.forEach { f ->
+            f.readLines().forEach { l ->
+                val s = l.trim(); val i = s.indexOf('=')
+                if (s.isNotEmpty() && !s.startsWith("#") && i > 0) m[s.substring(0, i).trim()] = s.substring(i + 1).trim()
+            }
+        }
+        return m
+    }
+
+    private fun patchOdmIdentity(baseImg: File, donorImg: File, out: File): File? {
+        step("odm: tozsamosc")
+        val baseRoot = File(work, "base_odm"); val donorRoot = File(work, "donor_odm")
+        val bp = readProps(baseImg, baseRoot); val dp = readProps(donorImg, donorRoot)
+        fun pick(m: Map<String, String>, what: String) =
+            m["ro.product.odm.$what"] ?: m["ro.product.vendor.$what"] ?: m["ro.product.$what"]
+        val dMan = pick(dp, "manufacturer"); val dBrand = pick(dp, "brand")
+        val bMan = pick(bp, "manufacturer"); val bBrand = pick(bp, "brand")
+        if (dMan == null || dBrand == null) { log("odm: brak manufacturer/brand u dawcy - pomijam"); return null }
+        if (dMan == bMan && dBrand == bBrand) { log("odm: producent/marka zgodne ($bMan/$bBrand) - bez zmian"); return null }
+        log("odm: manufacturer '$bMan'->'$dMan', brand '$bBrand'->'$dBrand'")
+        val edits = LinkedHashMap<String, String>()
+        baseRoot.walkTopDown().filter { it.isFile && it.name == "build.prop" }.forEach { f ->
+            val lines = f.readLines().toMutableList(); var changed = false
+            for (i in lines.indices) {
+                val s = lines[i].trim(); val eq = s.indexOf('=')
+                if (s.startsWith("#") || eq <= 0) continue
+                val k = s.substring(0, eq).trim()
+                val nv = when {
+                    k.startsWith("ro.product.") && k.endsWith(".manufacturer") || k == "ro.product.manufacturer" -> dMan
+                    k.startsWith("ro.product.") && k.endsWith(".brand") || k == "ro.product.brand" -> dBrand
+                    else -> null
+                } ?: continue
+                if (s.substring(eq + 1).trim() != nv) { lines[i] = "$k=$nv"; changed = true }
+            }
+            if (changed) edits[f.relativeTo(baseRoot).invariantSeparatorsPath] = lines.joinToString("\n") + "\n"
+        }
+        if (edits.isEmpty()) return null
+        copyImage(baseImg, out)
+        ErofsPatcher(out).use { p -> edits.forEach { (rel, txt) -> p.putFile(rel, txt.toByteArray()) }; p.commit() }
+        checkImage(out)
+        return out
+    }
+
+    // =====================================================================================
+    // app_v2: <disable pkg="com.android.contacts" .../> -> <enable .../>
+    // =====================================================================================
+
+    private fun findFiles(p: ErofsPatcher, name: String): List<String> {
+        val out = ArrayList<String>()
+        fun walk(path: String, nid: Long, depth: Int) {
+            if (depth > 12) return
+            for (e in p.readDir(nid)) {
+                if (e.name == "." || e.name == "..") continue
+                val child = if (path.isEmpty()) e.name else "$path/${e.name}"
+                if (e.type == ErofsPatcher.FT_DIR) walk(child, e.nid, depth + 1)
+                else if (e.name == name) out += child
+            }
+        }
+        walk("", p.rootNid, 0)
+        return out
+    }
+
+    private fun unlockAppV2(src: File, out: File): File? {
+        step("app_v2: ${src.name}")
+        val paths = ErofsPatcher(src, readOnly = true).use { findFiles(it, "app_v2.xml") }
+        if (paths.isEmpty()) return null
+        val root = File(work, "appv2_" + src.name.removeSuffix(".img"))
+        tools.extractOrThrow(src, root)
+        val edits = LinkedHashMap<String, String>()
+        for (rel in paths) {
+            val f = File(root, rel)
+            if (!f.isFile) continue
+            val txt = f.readText()
+            var nt = txt
+            for (pkg in APP_V2_ENABLE) nt = Regex("""<disable(\s+pkg="${Regex.escape(pkg)}"[^>]*?)/>""").replace(nt, "<enable$1/>")
+            if (nt != txt) edits[rel] = nt
+        }
+        root.deleteRecursively()
+        if (edits.isEmpty()) { log("app_v2: ${src.name} - nic do odblokowania"); return null }
+        copyImage(src, out)
+        ErofsPatcher(out).use { p -> edits.forEach { (rel, txt) -> p.putFile(rel, txt.toByteArray()) }; p.commit() }
+        log("app_v2: ${src.name} - odblokowano pakiety w ${edits.keys.joinToString()}")
+        checkImage(out)
+        return out
+    }
+
+    private fun checkImage(img: File) {
+        val rc = tools.check(img)
+        if (rc != 0) throw IOException("fsck.erofs ${img.name}: kod $rc - obraz niepoprawny, przerwano")
+        log("fsck ${img.name}: OK")
+    }
+
+    // =====================================================================================
+
+    /**
+     * Drzewo dawcy: zawartosc z wypakowanego katalogu, zapis przez ErofsPatcher,
+     * atrybuty (SELinux, uid/gid, tryb) nowych wpisow - z obrazu bazy.
+     */
+    class Tree(
+        val p: ErofsPatcher, val donorRoot: File,
+        val baseP: ErofsPatcher, val baseRoot: File, val label: String,
+    ) {
+        fun donorFile(rel: String) = File(donorRoot, rel)
+        fun baseFile(rel: String) = File(baseRoot, rel)
+
+        fun writeText(rel: String, text: String) = writeBytes(rel, text.toByteArray())
+
+        fun writeBytes(rel: String, data: ByteArray) {
+            val f = donorFile(rel)
+            f.parentFile?.mkdirs()
+            f.writeBytes(data)
+            ensureParents(rel)
+            if (p.exists(rel)) p.putFile(rel, data)
+            else p.putFile(rel, data, baseP.templateOf(rel))
+        }
+
+        /** Tworzy brakujace katalogi nadrzedne (atrybuty z bazy). */
+        private fun ensureParents(rel: String) {
+            val parts = rel.split('/').dropLast(1)
+            var cur = ""
+            for (part in parts) {
+                cur = if (cur.isEmpty()) part else "$cur/$part"
+                if (!p.exists(cur)) {
+                    val t = baseP.templateOf(cur) ?: throw IOException("$label: brak katalogu $cur w bazie i dawcy")
+                    p.mkdir(cur, t)
+                }
+            }
+        }
+
+        fun replaceFileFromBase(rel: String) {
+            val bf = baseFile(rel)
+            val nid = baseP.lookup(rel)
+            if (!bf.isFile || nid == null) return
+            val data = bf.readBytes()
+            donorFile(rel).apply { parentFile?.mkdirs(); writeBytes(data) }
+            ensureParents(rel)
+            if (p.exists(rel)) p.delete(rel)
+            p.putFile(rel, data, baseP.attrsOf(nid))
+        }
+
+        fun replaceSubtreeFromBase(rel: String, removeIfMissingInBase: Boolean) {
+            val nid = baseP.lookup(rel)
+            if (nid == null || !baseP.inode(nid).isDir) {
+                if (removeIfMissingInBase && p.exists(rel)) {
+                    p.delete(rel); donorFile(rel).deleteRecursively()
+                }
+                return
+            }
+            if (baseP.list(rel).isNullOrEmpty()) return // pusty w bazie - dawca zostaje
+            ensureParents(rel)
+            if (p.exists(rel)) p.delete(rel)
+            donorFile(rel).deleteRecursively()
+            copyDir(rel, nid)
+        }
+
+        private fun copyDir(rel: String, nid: Long) {
+            p.mkdir(rel, baseP.attrsOf(nid))
+            donorFile(rel).mkdirs()
+            for (e in baseP.readDir(nid)) {
+                if (e.name == "." || e.name == "..") continue
+                val child = "$rel/${e.name}"
+                val ino = baseP.inode(e.nid)
+                when {
+                    ino.isDir -> copyDir(child, e.nid)
+                    ino.isLink -> p.putFile(child, baseP.readFlat(ino), baseP.attrsOf(e.nid))
+                    ino.isReg -> {
+                        val data = baseFile(child).readBytes()
+                        donorFile(child).writeBytes(data)
+                        p.putFile(child, data, baseP.attrsOf(e.nid))
+                    }
+                }
+            }
+        }
+
+        fun mergeNamedElementsFromBase(rel: String, tag: String) {
+            val bf = baseFile(rel)
+            if (!bf.isFile) return
+            val df = donorFile(rel)
+            if (!df.isFile) { replaceFileFromBase(rel); return }
+            val rx = Regex("<" + Regex.escape(tag) + """\b[^>]*\bname\s*=\s*"([^"]+)"[^>]*/?>""", RegexOption.IGNORE_CASE)
+            val have = rx.findAll(df.readText()).map { it.groupValues[1] }.toHashSet()
+            val add = ArrayList<String>()
+            for (m in rx.findAll(bf.readText())) if (have.add(m.groupValues[1])) add += m.value.trim()
+            if (add.isEmpty()) return
+            val lines = df.readLines().toMutableList()
+            var idx = lines.indexOfLast { it.trimStart().startsWith("</") }
+            if (idx < 0) idx = lines.size
+            lines.addAll(idx, add.map { "    $it" })
+            writeText(rel, lines.joinToString("\n") + "\n")
+        }
+    }
+
+    companion object {
+        val HW_FROM_BASE = listOf("odm", "odm_dlkm", "vendor", "vendor_dlkm", "system_dlkm")
+
+        val REPLACE_FILES = listOf(
+            "etc/hw/usb_params.json", "etc/oplus_vrr_config.json", "etc/refresh_rate_config.xml",
+            "etc/sys_perf_config.json", "etc/sys_resolution_switch_config.xml", "etc/dolby_vision.cfg",
+            "etc/sar_config.xml", "etc/wifi_product_config.xml", "etc/wifiedccaconfig.xml", "etc/wifisarconfig.xml",
+            "etc/permissions/oplus.features.connectivity.xml", "etc/extension/com.oplus.oplus-feature.xml",
+            "etc/permissions/oplus.product.display_features.xml", "etc/permissions/oplus.product.feature_multimedia_unique.xml",
+            "etc/extension/camera_enhance_curve_config.xml",
+            "etc/audio_policy_configuration.xml", "etc/audio_policy_volumes.xml", "etc/default_volume_tables.xml",
+            "etc/Multimedia_Feedback_List.xml",
+        )
+
+        val MANIFEST_WHOLE = setOf("ro.build.version.oplusrom", "ro.build.version.oplusrom.confidential", "ro.build.version.oplusrom.display")
+        val MANIFEST_PREFIXED = listOf("ro.build.display.id", "ro.build.display.id.show")
+
+        val APP_V2_ENABLE = listOf(
+            "com.android.contacts", "com.android.incallui", "com.android.mms", "com.oplus.blacklistapp",
+            "com.oplus.aiassistant", "com.oplus.aimemory", "com.oplus.aipaint", "com.oplus.aiwidgets",
+        )
+    }
+}

@@ -12,7 +12,7 @@ import java.nio.ByteOrder
  * a istniejace i-wezly przepinane na nie. Wszystko inne (etykiety SELinux, kompresja,
  * uprawnienia) zostaje bajt w bajt jak w oryginale.
  */
-class ErofsPatcher(file: File) : AutoCloseable {
+class ErofsPatcher(file: File, readOnly: Boolean = false) : AutoCloseable {
 
     class Xattr(val index: Int, val name: ByteArray, val value: ByteArray) {
         val key get() = "$index:" + String(name, Charsets.ISO_8859_1)
@@ -34,7 +34,7 @@ class ErofsPatcher(file: File) : AutoCloseable {
 
     class Dirent(val name: String, val nid: Long, val type: Int)
 
-    private val raf = RandomAccessFile(file, "rw")
+    private val raf = RandomAccessFile(file, if (readOnly) "r" else "rw")
     private val sb = ByteArray(128)
     val blkBits: Int
     val blk: Int
@@ -143,6 +143,20 @@ class ErofsPatcher(file: File) : AutoCloseable {
         return out
     }
 
+    /** Wpisy katalogu (bez . i ..) albo null, gdy sciezka nie istnieje / nie jest katalogiem. */
+    fun list(path: String): List<Dirent>? {
+        val nid = lookup(path) ?: return null
+        if (!inode(nid).isDir) return null
+        return readDir(nid).filter { it.name != "." && it.name != ".." }
+    }
+
+    /** Wzor atrybutow (tryb, uid, gid, xattry) i-wezla. */
+    fun attrsOf(nid: Long): Node {
+        val i = inode(nid)
+        val x = xattrs(i)
+        return if (i.isDir) NewDir(i.mode, i.uid, i.gid, x) else NewFile(i.mode, i.uid, i.gid, x, ByteArray(0))
+    }
+
     fun lookup(path: String): Long? {
         var nid = rootNid
         for (part in path.split('/').filter { it.isNotEmpty() }) {
@@ -209,12 +223,18 @@ class ErofsPatcher(file: File) : AutoCloseable {
         return if (i < 0) "" to p else p.substring(0, i) to p.substring(i + 1)
     }
 
+    /** Dziecko katalogu z uwzglednieniem zmian (Long = istniejacy nid, Node = nowy, null = brak). */
+    private fun childOf(dirNid: Long, name: String): Any? {
+        val e = dirEdits[dirNid]
+        return if (e != null) e[name] else readDir(dirNid).firstOrNull { it.name == name }?.nid
+    }
+
     /** Zwraca obiekt katalogu nadrzednego (Long = istniejacy nid, NewDir = nowy). */
     private fun resolveDir(path: String): Any? {
         var cur: Any = rootNid
         for (part in path.split('/').filter { it.isNotEmpty() }) {
             cur = when (cur) {
-                is Long -> (dirEdits[cur]?.get(part) ?: readDir(cur).firstOrNull { it.name == part }?.nid) ?: return null
+                is Long -> childOf(cur, part) ?: return null
                 is NewDir -> cur.children[part] ?: return null
                 else -> return null
             }
@@ -226,7 +246,7 @@ class ErofsPatcher(file: File) : AutoCloseable {
     fun exists(path: String): Boolean {
         val (d, n) = splitPath(path)
         return when (val dir = resolveDir(d)) {
-            is Long -> (dirEdits[dir]?.containsKey(n)) ?: readDir(dir).any { it.name == n }
+            is Long -> childOf(dir, n) != null
             is NewDir -> dir.children.containsKey(n)
             else -> false
         }
@@ -237,17 +257,20 @@ class ErofsPatcher(file: File) : AutoCloseable {
         val (d, n) = splitPath(path)
         when (val dir = resolveDir(d) ?: throw IOException("Brak katalogu: $d")) {
             is Long -> {
-                val existing = (dirEdits[dir]?.get(n)) ?: readDir(dir).firstOrNull { it.name == n }?.nid
+                val existing = childOf(dir, n)
                 if (existing is Long) {
                     if (!inode(existing).isReg) throw IOException("$path nie jest plikiem")
                     replaced[existing] = data
+                } else if (existing is NewFile) {
+                    editableDir(dir)[n] = NewFile(existing.mode, existing.uid, existing.gid, existing.xattrs, data)
                 } else {
                     val t = template ?: siblingTemplate(dir) ?: throw IOException("Brak wzoru atrybutow dla $path")
                     editableDir(dir)[n] = NewFile(t.mode, t.uid, t.gid, t.xattrs, data)
                 }
             }
             is NewDir -> {
-                val t = template ?: dir.children.values.firstOrNull { it is NewFile } ?: NewFile(0x81A4, dir.uid, dir.gid, dir.xattrs, data)
+                val prev = dir.children[n]
+                val t = template ?: (prev as? NewFile) ?: dir.children.values.firstOrNull { it is NewFile } ?: NewFile(0x81A4, dir.uid, dir.gid, dir.xattrs, data)
                 dir.children[n] = NewFile(t.mode, t.uid, t.gid, t.xattrs, data)
             }
         }
@@ -273,12 +296,7 @@ class ErofsPatcher(file: File) : AutoCloseable {
     }
 
     /** Atrybuty istniejacego wpisu jako wzor dla nowych plikow/katalogow. */
-    fun templateOf(path: String): Node? {
-        val nid = lookup(path) ?: return null
-        val i = inode(nid)
-        val x = xattrs(i)
-        return if (i.isDir) NewDir(i.mode, i.uid, i.gid, x) else NewFile(i.mode, i.uid, i.gid, x, ByteArray(0))
-    }
+    fun templateOf(path: String): Node? = lookup(path)?.let { attrsOf(it) }
 
     private fun siblingTemplate(dirNid: Long): Node? {
         val f = readDir(dirNid).firstOrNull { it.type == FT_REG } ?: return null
