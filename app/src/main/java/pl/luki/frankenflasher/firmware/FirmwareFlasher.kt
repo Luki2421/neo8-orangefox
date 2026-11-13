@@ -16,6 +16,8 @@ class FlashOptions(
     var bothSlots: Boolean = true,
     /** Jak FFF "SwitchSlot": set_active na drugi slot na poczatku i wszystko na ten slot. */
     var switchSlot: Boolean = true,
+    /** Przy przelaczaniu: od razu usun partycje logiczne starego slotu (super nie miesci dwoch systemow). */
+    var freeOldSlotFirst: Boolean = true,
 )
 
 /** Flash calego folderu firmware: fizyczne w bootloaderze, logiczne w fastbootd. */
@@ -87,7 +89,10 @@ class FirmwareFlasher(
                 for (c in cows) try { fb.command("delete-logical-partition:$c", 60_000); log("usunieto $c") } catch (_: Exception) {}
             } catch (_: Exception) {}
             fb.command("set_active:$slot", 30_000)
-            log("aktywny slot: $slot - partycje wgrywane na slot $slot, slot $current zostaje nietkniety")
+            if (opt.freeOldSlotFirst) {
+                log("aktywny slot: $slot - usuwam partycje logiczne slotu $current (miejsce w super)")
+                freeSlot(fb, current)
+            } else log("aktywny slot: $slot - partycje wgrywane na slot $slot, slot $current zostaje nietkniety")
         } else {
             log(if (opt.bothSlots) "== Fizyczne: oba sloty, logiczne: slot a ==" else "== Slot docelowy: $slot ==")
         }
@@ -182,9 +187,11 @@ class FirmwareFlasher(
     private fun freeSlot(f: Fastboot, s: String) {
         freedOldSlot = true
         val parts = f.getVarAll().mapNotNull { Regex("""is-logical:([^:]+):\s*yes""").find(it)?.groupValues?.get(1) }
+        val del = ArrayList<String>()
         for (p in parts.filter { it.endsWith("_$s") }) {
-            try { f.command("delete-logical-partition:$p", 60_000); log("usunieto $p") } catch (_: Exception) {}
+            try { f.command("delete-logical-partition:$p", 60_000); del += p } catch (_: Exception) {}
         }
+        log("usunieto ${del.size} partycji slotu $s" + if (del.isNotEmpty()) ": ${del.joinToString()}" else "")
     }
 
     private fun flashPhysical(img: DocImage, slot: String, fatal: Boolean) {

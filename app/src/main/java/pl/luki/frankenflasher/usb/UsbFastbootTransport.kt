@@ -6,6 +6,8 @@ import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbEndpoint
 import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
+import android.hardware.usb.UsbRequest
+import java.nio.ByteBuffer
 import android.os.Build
 import java.io.IOException
 
@@ -25,6 +27,11 @@ class UsbFastbootTransport private constructor(
         @Volatile var chunkIdx = 0
         val chunkSize: Int get() = CHUNKS[chunkIdx]
         var onChunkDowngrade: ((Int) -> Unit)? = null
+        /** Szybki zapis: kilka asynchronicznych zadan USB naraz (UsbRequest). Wylaczany automatycznie przy bledzie. */
+        @Volatile var asyncEnabled = true
+        var onAsyncDisabled: ((String) -> Unit)? = null
+        private const val ASYNC_SIZE = 256 * 1024
+        private const val ASYNC_DEPTH = 4
 
         fun findInterface(dev: UsbDevice): UsbInterface? {
             for (i in 0 until dev.interfaceCount) {
@@ -56,7 +63,65 @@ class UsbFastbootTransport private constructor(
         }
     }
 
+    private var reqs: List<Pair<UsbRequest, ByteBuffer>>? = null
+
+    private fun asyncPool(): List<Pair<UsbRequest, ByteBuffer>>? {
+        reqs?.let { return it }
+        return try {
+            List(ASYNC_DEPTH) {
+                val r = UsbRequest()
+                if (!r.initialize(conn, epOut)) throw IOException("initialize")
+                r to ByteBuffer.allocateDirect(ASYNC_SIZE)
+            }.also { reqs = it }
+        } catch (e: Exception) { null }
+    }
+
+    /**
+     * Zapis potokowy: do ASYNC_DEPTH paczek po 256 KB w locie. Zwraca false, gdy pierwsza paczka
+     * zostala odrzucona (nic nie wyslano) - wtedy wolajacy przechodzi na zwykly bulkTransfer.
+     */
+    private fun writeAsync(buf: ByteArray, off: Int, len: Int, timeoutMs: Int): Boolean {
+        val pool = asyncPool() ?: return false
+        val free = ArrayDeque(pool)
+        var inFlight = 0
+        var o = off; val end = off + len
+        var sentAny = false
+        while (o < end || inFlight > 0) {
+            while (o < end && free.isNotEmpty()) {
+                val (r, bb) = free.removeFirst()
+                val n = minOf(ASYNC_SIZE, end - o)
+                bb.clear(); bb.put(buf, o, n); bb.flip()
+                @Suppress("DEPRECATION")
+                val ok = if (Build.VERSION.SDK_INT >= 26) r.queue(bb) else r.queue(bb, n)
+                if (!ok) {
+                    if (!sentAny && inFlight == 0) return false
+                    clearHalt()
+                    throw IOException("Blad kolejki USB po ${(o - off) / 1024} KB z ${len / 1024} KB")
+                }
+                r.clientData = bb
+                o += n; inFlight++; sentAny = true
+            }
+            val done = try {
+                if (Build.VERSION.SDK_INT >= 26) conn.requestWait(timeoutMs.toLong()) else conn.requestWait()
+            } catch (e: java.util.concurrent.TimeoutException) {
+                null
+            } ?: run {
+                pool.forEach { try { it.first.cancel() } catch (_: Exception) {} }
+                clearHalt()
+                throw IOException("Blad zapisu USB (async) po ${(o - off) / 1024} KB z ${len / 1024} KB")
+            }
+            val pair = pool.first { it.first === done }
+            free.addLast(pair); inFlight--
+        }
+        return true
+    }
+
     fun write(buf: ByteArray, off: Int, len: Int, timeoutMs: Int = 30_000) {
+        if (asyncEnabled && len >= 64 * 1024 && Build.VERSION.SDK_INT >= 26) {
+            if (writeAsync(buf, off, len, timeoutMs)) return
+            asyncEnabled = false
+            onAsyncDisabled?.invoke("kontroler nie przyjal zadan asynchronicznych")
+        }
         var o = off
         var rem = len
         while (rem > 0) {
@@ -91,6 +156,8 @@ class UsbFastbootTransport private constructor(
         conn.bulkTransfer(epIn, buf, 0, buf.size, timeoutMs)
 
     override fun close() {
+        reqs?.forEach { try { it.first.close() } catch (_: Exception) {} }
+        reqs = null
         try { conn.releaseInterface(intf) } catch (_: Exception) {}
         conn.close()
     }

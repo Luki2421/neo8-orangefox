@@ -86,7 +86,7 @@ class Fastboot(private val t: UsbFastbootTransport, private val log: (String) ->
      * (np. 40-bajtowy naglowek) przyjdzie w srodku pobierania.
      */
     private inner class Sink {
-        private val b = ByteArray(1 shl 20)
+        private val b = ByteArray(4 shl 20)
         private var n = 0
         fun write(src: ByteArray, off: Int, len: Int) {
             var o = off; var l = len
@@ -147,6 +147,59 @@ class Fastboot(private val t: UsbFastbootTransport, private val log: (String) ->
     fun isLogical(part: String): Boolean = try { getVar("is-logical:$part").trim() == "yes" } catch (_: Exception) { false }
     fun partitionExists(part: String): Boolean = try { getVar("partition-size:$part").isNotBlank() } catch (_: Exception) { false }
 
+    /**
+     * Wysyla kawalek obrazu raw jako sparse: bloki zerowe jako FILL(0) - telefon sam zapisuje zera,
+     * przez USB idzie tylko 16 B zamiast 4 KB na blok. Zwraca liczbe bajtow zer.
+     */
+    private fun sendSparsePiece(p: Sparse.Piece, data: ByteArray): Long {
+        val blk = Sparse.BLK
+        val n = p.numBlk.toInt()
+        // biegi: true = zera
+        val runs = ArrayList<Pair<Boolean, Int>>()
+        fun isZero(b: Int): Boolean { val o = b * blk; for (k in o until o + blk) if (data[k].toInt() != 0) return false; return true }
+        var b = 0
+        while (b < n) {
+            val z = isZero(b)
+            var e = b + 1
+            while (e < n && isZero(e) == z) e++
+            // krotkie biegi zer (<16 blokow) wysylamy jako RAW - mniej chunkow
+            if (z && e - b < 16 && runs.isNotEmpty() && !runs.last().first) runs[runs.size - 1] = false to (runs.last().second + (e - b))
+            else if (!z && runs.isNotEmpty() && !runs.last().first) runs[runs.size - 1] = false to (runs.last().second + (e - b))
+            else runs += z to (e - b)
+            b = e
+        }
+        val before = p.startBlk > 0
+        val after = p.startBlk + p.numBlk < p.totalBlk
+        val chunks = runs.size + (if (before) 1 else 0) + (if (after) 1 else 0)
+        var size = 28L
+        if (before) size += 12
+        if (after) size += 12
+        for ((z, c) in runs) size += if (z) 16 else 12L + c.toLong() * blk
+        startDownload(size)
+        val sink = Sink()
+        val hdr = java.nio.ByteBuffer.allocate(28).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        hdr.putInt(Sparse.MAGIC).putShort(1).putShort(0).putShort(28).putShort(12)
+            .putInt(blk).putInt(p.totalBlk.toInt()).putInt(chunks).putInt(0)
+        sink.write(hdr.array(), 0, 28)
+        fun ch(type: Int, blocks: Long, total: Long, extra: ByteArray? = null) {
+            val c = java.nio.ByteBuffer.allocate(12 + (extra?.size ?: 0)).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            c.putShort(type.toShort()).putShort(0).putInt(blocks.toInt()).putInt(total.toInt())
+            if (extra != null) c.put(extra)
+            sink.write(c.array(), 0, c.capacity())
+        }
+        if (before) ch(0xCAC3, p.startBlk, 12)
+        var pos = 0; var zeros = 0L
+        for ((z, c) in runs) {
+            if (z) { ch(0xCAC2, c.toLong(), 16, ByteArray(4)); zeros += c.toLong() * blk }
+            else { ch(0xCAC1, c.toLong(), 12L + c.toLong() * blk); sink.write(data, pos * blk, c * blk) }
+            pos += c
+        }
+        if (after) ch(0xCAC3, p.totalBlk - p.startBlk - p.numBlk, 12)
+        sink.flush()
+        finishDownload()
+        return zeros
+    }
+
     /** Wysyla caly obraz (<= max-download-size) i wykonuje [then]. */
     fun downloadThen(src: ImageSource, then: String, timeoutMs: Long, progress: (Long, Long) -> Unit): String {
         val buf = ByteArray(1 shl 20)
@@ -172,21 +225,21 @@ class Fastboot(private val t: UsbFastbootTransport, private val log: (String) ->
             val pieces = Sparse.plan(src.size, max)
             val total = pieces.sumOf { it.numBlk * Sparse.BLK }
             log("${src.name}: ${src.size / (1 shl 20)} MB -> ${pieces.size} czesci sparse -> $partition")
+            val pieceBuf = ByteArray((pieces.maxOf { it.numBlk } * Sparse.BLK).toInt())
+            var zeroTotal = 0L
             src.open().use { input ->
                 pieces.forEachIndexed { i, p ->
                     log("  czesc ${i + 1}/${pieces.size}")
-                    val head = Sparse.head(p)
-                    val tail = Sparse.tail(p)
-                    startDownload(p.byteSize)
-                    val sink = Sink()
-                    sink.write(head, 0, head.size)
-                    copyTo(sink, input, p.numBlk * Sparse.BLK, buf) { n -> done += n; progress(done, total) }
-                    if (tail.isNotEmpty()) sink.write(tail, 0, tail.size)
-                    sink.flush()
-                    finishDownload()
+                    val len = (p.numBlk * Sparse.BLK).toInt()
+                    var got = 0
+                    while (got < len) { val r = input.read(pieceBuf, got, len - got); if (r < 0) break; got += r }
+                    if (got < len) java.util.Arrays.fill(pieceBuf, got, len, 0)
+                    zeroTotal += sendSparsePiece(p, pieceBuf)
+                    done += len; progress(done, total)
                     command("flash:$partition", 15 * 60_000)
                 }
             }
+            if (zeroTotal > 0) log("  ${src.name}: ${zeroTotal / (1 shl 20)} MB zer wyslanych jako FILL (bez transferu)")
         } else {
             val plan = src.open().use { SparseResplitter.plan(it, max) }
             val total = src.size

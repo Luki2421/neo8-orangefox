@@ -101,6 +101,7 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        UsbFastbootTransport.onAsyncDisabled = { log("USB: szybki zapis wylaczony ($it) - zwykly tryb") }
         UsbFastbootTransport.onChunkDowngrade = { log("USB: kontroler odrzucil duza paczke, przechodze na ${it / 1024} KB") }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         logFile = try {
@@ -206,6 +207,7 @@ class MainActivity : Activity() {
         p3.addView(fwSummary)
         row(p3, "Wybierz folder" to ::pickFirmware)
         p3.addView(chk("przelacz na drugi slot i wgraj na niego (jak FFF)", { opt.switchSlot }, { opt.switchSlot = it }))
+        p3.addView(chk("od razu usun system starego slotu (szybciej)", { opt.freeOldSlotFirst }, { opt.freeOldSlotFirst = it }))
         p3.addView(chk("bez przelaczania: oba sloty (fizyczne a+b, logiczne a)", { opt.bothSlots }, { opt.bothSlots = it }))
         p3.addView(chk("vbmeta off (wylacz weryfikacje)", { opt.disableVbmeta }, { opt.disableVbmeta = it }))
         p3.addView(chk("CRITICAL + EXTRA", { opt.flashCritical }, { opt.flashCritical = it; opt.flashExtra = it }))
@@ -266,6 +268,7 @@ class MainActivity : Activity() {
         root.addView(scroll, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
 
         showTab(0)
+        restoreState()
         // Android 15+ rysuje pod paskami systemowymi - odsun tresc o ich wysokosc
         @Suppress("DEPRECATION")
         root.setOnApplyWindowInsetsListener { v, ins ->
@@ -387,7 +390,44 @@ class MainActivity : Activity() {
         startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), REQ_FIRMWARE)
     }
 
-    private fun loadFirmware(tree: Uri) {
+    private val prefs by lazy { getSharedPreferences("ff", MODE_PRIVATE) }
+
+    /** Przywraca foldery i ostatni zbudowany Franken z poprzedniego uruchomienia. */
+    private fun restoreState() {
+        prefs.getString("fwTree", null)?.let { u ->
+            val uri = Uri.parse(u)
+            if (contentResolver.persistedUriPermissions.any { it.uri == uri }) loadFirmware(uri, save = false)
+        }
+        prefs.getString("frBase", null)?.let { File(it) }?.takeIf { it.isDirectory }?.let { frBase = it; frBaseView.text = "Baza: ${it.path}" }
+        prefs.getString("frDonor", null)?.let { File(it) }?.takeIf { it.isDirectory }?.let { frDonor = it; frDonorView.text = "Dawca: ${it.path}" }
+        prefs.getString("frFromBase", null)?.let { v -> frOpt.fromBase = v.split(',').filter { it.isNotBlank() }.toMutableSet() }
+        prefs.getString("frResult", null)?.let { txt ->
+            val groups = LinkedHashMap<String, MutableList<pl.luki.frankenflasher.firmware.DocImage>>()
+            var ok = true
+            txt.lines().filter { it.contains('|') }.forEach { l ->
+                val (g, path) = l.split('|', limit = 2)
+                val f = File(path)
+                if (!f.isFile) ok = false else groups.getOrPut(g) { ArrayList() } += pl.luki.frankenflasher.firmware.DocImage(f)
+            }
+            if (ok && groups.isNotEmpty()) {
+                frResult = FirmwareFolder(groups)
+                log("Ostatni Franken gotowy do flashowania (bez ponownego budowania):\n" + frResult!!.summary())
+            }
+        }
+    }
+
+    private fun saveFranken(r: pl.luki.frankenflasher.franken.Franken.Result?) {
+        val e = prefs.edit()
+        frBase?.let { e.putString("frBase", it.path) }
+        frDonor?.let { e.putString("frDonor", it.path) }
+        e.putString("frFromBase", frOpt.fromBase.joinToString(","))
+        if (r != null) e.putString("frResult", r.groups.flatMap { (g, l) -> l.map { "$g|${it.path}" } }.joinToString("\n"))
+        else e.remove("frResult")
+        e.apply()
+    }
+
+    private fun loadFirmware(tree: Uri, save: Boolean = true) {
+        if (save) prefs.edit().putString("fwTree", tree.toString()).apply()
         try { contentResolver.takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
         exec.execute {
             try {
@@ -583,6 +623,7 @@ class MainActivity : Activity() {
                 val r = pl.luki.frankenflasher.franken.Franken(b, d, out, File(filesDir, "franken_work"), tools, ::log, ::setStep).build(frOpt)
                 val fw = FirmwareFolder(r.groups.mapValues { (_, l) -> l.map { pl.luki.frankenflasher.firmware.DocImage(it) } })
                 frResult = fw
+                saveFranken(r)
                 log("== FRANKEN GOTOWY (${(System.currentTimeMillis() - t0) / 1000} s) ==\n" + fw.summary())
                 setStep("Franken gotowy - podlacz drugi telefon i nacisnij Flashuj Franken")
             } catch (e: Exception) {
@@ -607,6 +648,7 @@ class MainActivity : Activity() {
             .setPositiveButton("OK") { _, _ ->
                 frOpt.fromBase = all.filterIndexed { i, _ -> checked[i] }.toMutableSet()
                 frResult = null
+                saveFranken(null)
                 log("Franken: z bazy: ${frOpt.fromBase.sorted().joinToString().ifEmpty { "(nic)" }}; z dawcy: ${all.count { it !in frOpt.fromBase && it in nd } + 2} (z my_product i my_manifest*)")
             }
             .setNegativeButton("Anuluj", null)
@@ -702,6 +744,7 @@ class MainActivity : Activity() {
             if (!File(f, "SYSTEM").isDirectory) log("UWAGA: brak podfolderu SYSTEM w ${f.path}")
             if (requestCode == REQ_FR_BASE) { frBase = f; frBaseView.text = "Baza: ${f.path}" } else { frDonor = f; frDonorView.text = "Dawca: ${f.path}" }
             frResult = null
+            saveFranken(null)
             return
         }
         if (requestCode == REQ_EROFS_TEST && resultCode == RESULT_OK) {
