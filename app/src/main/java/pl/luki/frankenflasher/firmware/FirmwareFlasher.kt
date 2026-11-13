@@ -12,6 +12,7 @@ class FlashOptions(
     var useSuperEmpty: Boolean = true,
     var deleteOtherSlot: Boolean = true,
     var rebootAtEnd: Boolean = true,
+    var wipeData: Boolean = false,
 )
 
 /** Flash calego folderu firmware: fizyczne w bootloaderze, logiczne w fastbootd. */
@@ -75,6 +76,15 @@ class FirmwareFlasher(
             if (fb.isLogical(target)) fb.command("resize-logical-partition:$target:$size", 180_000)
             else { fb.command("create-logical-partition:$target:$size", 180_000); log("utworzono $target") }
             fb.flash(target, img, progress)
+        }
+
+        if (opt.wipeData) {
+            // odpowiednik fastboot -w: po pustym metadata/userdata system sam je sformatuje przy starcie
+            for (p in listOf("metadata", "userdata")) {
+                step("Czyszczenie $p")
+                try { fb.command("erase:$p", 10 * 60_000); log("wyczyszczono $p") }
+                catch (e: Exception) { log("UWAGA: nie wyczyszczono $p - ${e.message}") }
+            }
         }
 
         if (opt.rebootAtEnd) {

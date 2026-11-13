@@ -169,6 +169,11 @@ class MainActivity : Activity() {
         o2.addView(chk("usun 2. slot", { opt.deleteOtherSlot }, { opt.deleteOtherSlot = it }), LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
         o2.addView(chk("restart", { opt.rebootAtEnd }, { opt.rebootAtEnd = it }), LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
         root.addView(o2)
+        val o3 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; isBaselineAligned = false }
+        o3.addView(chk("wyczysc dane (userdata + metadata)", { opt.wipeData }, { opt.wipeData = it }).apply {
+            setTextColor(android.graphics.Color.rgb(255, 120, 110))
+        }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        root.addView(o3)
         row("Wybierz folder" to ::pickFirmware, "Flashuj firmware" to ::flashFirmware)
         stepView = TextView(this).apply { textSize = 13f; setTypeface(typeface, Typeface.BOLD) }
         root.addView(stepView)
@@ -344,7 +349,8 @@ class MainActivity : Activity() {
         if (fb == null) { log("Najpierw nacisnij Polacz"); return }
         AlertDialog.Builder(this)
             .setTitle("Flash firmware")
-            .setMessage(fw.summary() + "\n\nWgrac na podlaczony telefon (aktualny slot)? Nie odlaczaj kabla do konca.")
+            .setMessage(fw.summary() + "\n\nWgrac na podlaczony telefon (aktualny slot)? Nie odlaczaj kabla do konca." +
+                (if (opt.wipeData) "\n\nUWAGA: WSZYSTKIE DANE na telefonie (zdjecia, aplikacje, konta) zostana USUNIETE." else ""))
             .setPositiveButton("Flash") { _, _ ->
                 withFb { f ->
                     try {
