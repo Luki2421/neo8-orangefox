@@ -70,6 +70,7 @@ class MainActivity : Activity() {
     private lateinit var otaView: TextView
     private val opt = FlashOptions()
     @Volatile private var permLatch: CountDownLatch? = null
+    @Volatile private var busy = false
     private var logFile: java.io.File? = null
     private val logLock = Any()
 
@@ -80,11 +81,12 @@ class MainActivity : Activity() {
                 ACTION_PERM -> {
                     val l = permLatch
                     if (l != null) l.countDown()
+                    else if (busy) Unit
                     else if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false) && dev != null) openDevice(dev)
                     else log("Brak zgody na dostep USB")
                 }
                 UsbManager.ACTION_USB_DEVICE_DETACHED -> {
-                    if (dev != null && dev.deviceName == transport?.device?.deviceName) {
+                    if (dev != null && dev.deviceName == transport?.device?.deviceName && !busy) {
                         log("Urzadzenie odlaczone")
                         closeDevice()
                     }
@@ -118,7 +120,9 @@ class MainActivity : Activity() {
     }
 
     private fun handleIntent(i: Intent?) {
-        if (i?.action == UsbManager.ACTION_USB_DEVICE_ATTACHED) i.usbDevice()?.let { requestOrOpen(it) }
+        if (i?.action != UsbManager.ACTION_USB_DEVICE_ATTACHED) return
+        if (busy) return // w trakcie operacji polaczeniem zarzadza sama operacja
+        i.usbDevice()?.let { requestOrOpen(it) }
     }
 
     override fun onDestroy() {
@@ -309,7 +313,8 @@ class MainActivity : Activity() {
     private fun withFb(block: (Fastboot) -> Unit) {
         val f = fb ?: run { log("Najpierw nacisnij Polacz"); return }
         exec.execute {
-            try { block(f) } catch (e: Exception) { log("BLAD: ${e.message}") }
+            busy = true
+            try { block(f) } catch (e: Exception) { log("BLAD: ${e.message}") } finally { busy = false }
         }
     }
 

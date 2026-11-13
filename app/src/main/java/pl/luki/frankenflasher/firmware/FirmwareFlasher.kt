@@ -25,8 +25,25 @@ class FirmwareFlasher(
     private val progress: (Long, Long) -> Unit,
     private val reconnect: (Long) -> Fastboot,
 ) {
+    private lateinit var fb: Fastboot
+
+    /** Jak FFF: przy bledzie USB polacz ponownie (fastbootd) i powtorz. */
+    private fun <T> retry(what: String, block: (Fastboot) -> T): T {
+        var last: Exception? = null
+        for (attempt in 1..3) {
+            try { return block(fb) } catch (e: Exception) {
+                last = e
+                val usb = e is java.io.IOException || (e.message ?: "").contains("USB") || (e.message ?: "").contains("timeout")
+                if (!usb || attempt == 3) throw e
+                log("$what: blad (${e.message}) - ponowne polaczenie i proba ${attempt + 1}/3")
+                fb = reconnect(120_000)
+            }
+        }
+        throw last!!
+    }
+
     fun run(initial: Fastboot) {
-        var fb = initial
+        fb = initial
         // Jak FFF: wszystko w fastbootd
         if (fb.getVar("is-userspace").trim() != "yes") {
             step("Restart do fastbootd")
@@ -47,13 +64,13 @@ class FirmwareFlasher(
         fw["BOOTLOADER"].sortedBy { if (it.base.startsWith("vbmeta")) 1 else 0 }.forEach { phys += it to true }
         phys.forEachIndexed { i, (img, fatal) ->
             step("Fizyczne ${i + 1}/${phys.size}: ${img.name}")
-            flashPhysical(fb, img, slot, fatal)
+            flashPhysical(img, slot, fatal)
         }
 
         val superEmpty = fw["SUPER"].firstOrNull { it.name.equals("super_empty.img", true) }
         if (opt.useSuperEmpty && superEmpty != null) {
             step("super_empty.img -> nowy uklad super")
-            fb.downloadThen(superEmpty, "update-super:super:wipe", 180_000, progress)
+            retry("super_empty") { it.downloadThen(superEmpty, "update-super:super:wipe", 180_000, progress) }
             log("super: uklad wyczyszczony z super_empty.img")
         } else {
             val other = if (slot == "a") "b" else "a"
@@ -71,9 +88,11 @@ class FirmwareFlasher(
             step("fastbootd ${i + 1}/${sys.size}: ${img.name}")
             val target = if (img.base.endsWith("_a") || img.base.endsWith("_b")) img.base else "${img.base}_$slot"
             val size = fb.logicalSize(img)
-            if (fb.isLogical(target)) fb.command("resize-logical-partition:$target:$size", 180_000)
-            else { fb.command("create-logical-partition:$target:$size", 180_000); log("utworzono $target") }
-            fb.flash(target, img, progress)
+            retry(target) { f ->
+                if (f.isLogical(target)) f.command("resize-logical-partition:$target:$size", 180_000)
+                else { f.command("create-logical-partition:$target:$size", 180_000); log("utworzono $target") }
+                f.flash(target, img, progress)
+            }
         }
 
         if (opt.wipeData) {
@@ -97,7 +116,7 @@ class FirmwareFlasher(
         log("== FLASH ZAKONCZONY ==")
     }
 
-    private fun flashPhysical(fb: Fastboot, img: DocImage, slot: String, fatal: Boolean) {
+    private fun flashPhysical(img: DocImage, slot: String, fatal: Boolean) {
         val b = img.base
         val targets = when {
             b.endsWith("_a") || b.endsWith("_b") -> listOf(b)
@@ -107,7 +126,7 @@ class FirmwareFlasher(
         val src: ImageSource = if (opt.disableVbmeta && b.startsWith("vbmeta")) patchVbmeta(img) else img
         for (target in targets) {
             try {
-                fb.flash(target, src, progress)
+                retry(target) { it.flash(target, src, progress) }
             } catch (e: Exception) {
                 if (fatal) throw e
                 log("UWAGA: pominieto $target - ${e.message}")
