@@ -183,15 +183,20 @@ class FirmwareFlasher(
 
     private var switching = false
 
-    /** Super flasher (jak flasher z FFF / Flasher_Builder): bootloader, fizyczne na oba sloty, super.img, slot a. */
+    /**
+     * Super flasher jak w FFF: wszystko w fastbootd - partycje fizyczne na oba sloty,
+     * na koniec super.img (slot a). Zablokowane w fastbootd (np. modem aktywnego slotu) - w bootloaderze.
+     */
     private fun runSuper(superImg: DocImage) {
-        if (fb.getVar("is-userspace").trim() == "yes") {
-            step(tr("Restart do bootloadera", "Rebooting to bootloader"))
-            fb.command("reboot-bootloader", 30_000)
+        if (fb.getVar("is-userspace").trim() != "yes") {
+            step(tr("Restart do fastbootd", "Rebooting to fastbootd"))
+            fb.command("reboot-fastboot", 30_000)
             fb = reconnect(180_000)
+            if (fb.getVar("is-userspace").trim() != "yes") throw FastbootException(tr("Urzadzenie nie jest w fastbootd", "Device is not in fastbootd"))
         }
-        log(tr("== Super flasher: bootloader, partycje fizyczne na oba sloty, super.img, slot a ==",
-            "== Super flasher: bootloader, physical partitions to both slots, super.img, slot a =="))
+        try { fb.command("snapshot-update:cancel", 60_000); log(tr("snapshot-update: anulowano", "snapshot-update: cancelled")) } catch (_: Exception) {}
+        log(tr("== Super flasher (jak FFF): fastbootd, partycje fizyczne na oba sloty, na koniec super.img ==",
+            "== Super flasher (like FFF): fastbootd, physical partitions to both slots, super.img last =="))
         try {
             val dev = fb.getVar("partition-size:super").trim()
             val devSize = if (dev.startsWith("0x", true)) dev.substring(2).toLong(16) else dev.toLong()
@@ -203,22 +208,31 @@ class FirmwareFlasher(
             }
             log("super: " + tr("telefon", "phone") + " ${devSize / (1 shl 20)} MB, super.img ${imgSize / (1 shl 20)} MB")
             if (imgSize != devSize) throw FastbootException(tr(
-                "Rozmiar super.img (${imgSize}) rozny od partycji super w telefonie (${devSize}) - zbuduj super.img dla tego telefonu",
-                "super.img size (${imgSize}) differs from the phone's super partition (${devSize}) - build super.img for this phone"))
+                "Rozmiar super.img (${imgSize}) rozny od partycji super w telefonie (${devSize}) - to OTA innego modelu?",
+                "super.img size (${imgSize}) differs from the phone's super partition (${devSize}) - OTA for another model?"))
         } catch (e: FastbootException) { throw e } catch (_: Exception) {}
         val phys = ArrayList<Pair<DocImage, Boolean>>()
         if (opt.flashCritical) fw["CRITICAL"].forEach { phys += it to false }
         if (opt.flashExtra) fw["EXTRA"].forEach { phys += it to false }
         if (opt.flashModem) fw["MODEM"].forEach { phys += it to false }
         fw["BOOTLOADER"].sortedBy { if (it.base.startsWith("vbmeta")) 1 else 0 }.forEach { phys += it to true }
-        val saveSwitch = switching; switching = false
+        switching = false
         phys.forEachIndexed { i, (img, fatal) ->
             step(tr("Fizyczne ${i + 1}/${phys.size}: ${img.name}", "Physical ${i + 1}/${phys.size}: ${img.name}"))
             flashPhysical(img, "a", fatal)
         }
-        switching = saveSwitch
         step("super.img")
         retry("super") { it.flash("super", superImg, progress) }
+        if (deferred.isNotEmpty()) {
+            step(tr("Restart do bootloadera (${deferred.size} partycji)", "Rebooting to bootloader (${deferred.size} partitions)"))
+            fb.command("reboot-bootloader", 30_000)
+            fb = reconnect(180_000)
+            log("== Bootloader: ${deferred.joinToString { it.second }} ==")
+            for ((src, target) in deferred) {
+                try { retry(target) { it.flash(target, src, progress) } }
+                catch (e: Exception) { if (e is DeviceHungException) throw e; log(tr("UWAGA: nie wgrano $target - ${e.message}", "WARNING: $target not flashed - ${e.message}")) }
+            }
+        }
         try { fb.command("set_active:a", 30_000); log(tr("aktywny slot: a", "active slot: a")) } catch (e: Exception) { log("set_active:a - ${e.message}") }
         if (opt.wipeData) for (p in listOf("metadata", "userdata")) {
             step(tr("Czyszczenie $p", "Wiping $p"))
@@ -229,6 +243,7 @@ class FirmwareFlasher(
         step(tr("Gotowe", "Done"))
         log(tr("== FLASH ZAKONCZONY ==", "== FLASH COMPLETE =="))
     }
+
     private var freedOldSlot = false
 
     private fun prepareLogical(f: Fastboot, target: String, size: Long) {

@@ -10,20 +10,53 @@ import java.io.IOException
  */
 class SuperFlasher(private val log: (String) -> Unit, private val progress: (Long, Long) -> Unit = { _, _ -> }) {
 
-    fun build(folder: File, superSize: Long): File {
+    class Def(val superSize: Long, val group: String, val groupMax: Long)
+
+    companion object {
+        /** META/super_def.json z OTA (jak "Parse" w Super Builderze FFF): rozmiar super i grupa. */
+        fun parseDef(json: String): Def? {
+            fun objects(arrayKey: String): List<String> {
+                val i = json.indexOf("\"$arrayKey\"")
+                if (i < 0) return emptyList()
+                val a = json.indexOf('[', i); if (a < 0) return emptyList()
+                val out = ArrayList<String>(); var depth = 0; var start = -1
+                for (k in a + 1 until json.length) {
+                    when (json[k]) {
+                        '{' -> { if (depth == 0) start = k; depth++ }
+                        '}' -> { depth--; if (depth == 0 && start >= 0) out += json.substring(start, k + 1) }
+                        ']' -> if (depth == 0) return out
+                    }
+                }
+                return out
+            }
+            fun field(o: String, k: String) = Regex("\"$k\"\\s*:\\s*\"?([^\",}]+)").find(o)?.groupValues?.get(1)?.trim()
+            val size = objects("block_devices").firstOrNull { field(it, "name") == "super" }?.let { field(it, "size")?.toLongOrNull() }
+                ?: return null
+            val g = objects("groups").map { (field(it, "name") ?: "") to (field(it, "maximum_size")?.toLongOrNull() ?: 0L) }
+                .filter { it.first.isNotEmpty() && it.first != "default" }.maxByOrNull { it.second }
+            val name = (g?.first ?: "qti_dynamic_partitions").removeSuffix("_a").removeSuffix("_b")
+            return Def(size, name, g?.second?.takeIf { it > 0 } ?: (size - (4L shl 20)))
+        }
+    }
+
+    fun build(folder: File, superSizeIn: Long?): File {
+        val def = File(folder, "super_def.json").takeIf { it.isFile }?.let { parseDef(it.readText()) }
+        val superSize = def?.superSize ?: superSizeIn
+            ?: throw IOException(tr("Brak super_def.json w folderze i nie podano rozmiaru super", "No super_def.json in the folder and no super size given"))
+        if (def != null) log(tr("super_def.json: super ${def.superSize} B, grupa ${def.group} ${def.groupMax} B", "super_def.json: super ${def.superSize} B, group ${def.group} ${def.groupMax} B"))
         val sys = File(folder, "SYSTEM")
         val images = sys.listFiles { f -> f.isFile && f.name.endsWith(".img") && f.length() > 0 }.orEmpty()
             .associateBy { it.name.removeSuffix(".img") }
         if (images.isEmpty()) throw IOException(tr("Brak obrazow w ${sys.path}", "No images in ${sys.path}"))
         // grupa z OTA (super_groups.txt zapisany przy rozpakowaniu)
-        var group = "qti_dynamic_partitions"
-        var groupMax = superSize - (4L shl 20)
+        var group = def?.group ?: "qti_dynamic_partitions"
+        var groupMax = def?.groupMax ?: (superSize - (4L shl 20))
         val gf = File(folder, "super_groups.txt")
-        if (gf.isFile) {
+        if (def == null && gf.isFile) {
             val g = gf.readLines().map { it.trim().split(' ') }.filter { it.size >= 2 }.maxByOrNull { it[1].toLongOrNull() ?: 0 }
             if (g != null) { group = g[0].removeSuffix("_a").removeSuffix("_b"); g[1].toLongOrNull()?.takeIf { it > 0 }?.let { groupMax = it } }
             log(tr("super: grupa z OTA: $group (${groupMax / (1 shl 20)} MB)", "super: group from OTA: $group (${groupMax / (1 shl 20)} MB)"))
-        } else log(tr("super: brak super_groups.txt - grupa $group, ${groupMax / (1 shl 20)} MB", "super: no super_groups.txt - group $group, ${groupMax / (1 shl 20)} MB"))
+        } else if (def == null) log(tr("super: brak super_groups.txt - grupa $group, ${groupMax / (1 shl 20)} MB", "super: no super_groups.txt - group $group, ${groupMax / (1 shl 20)} MB"))
         if (groupMax > superSize) groupMax = superSize - (4L shl 20)
         val free = folder.usableSpace
         val need = images.values.sumOf { it.length() } + (64L shl 20)
@@ -47,6 +80,7 @@ class SuperFlasher(private val log: (String) -> Unit, private val progress: (Lon
         bat.append("@echo off\r\ncd /d \"%~dp0\"\r\nset FB=fastboot\r\nif exist platform-tools\\fastboot.exe set FB=platform-tools\\fastboot.exe\r\n")
         bat.append("echo Super flasher - telefon w trybie BOOTLOADER (fastboot), nie fastbootd\r\n%FB% devices\r\npause\r\n")
         for ((g, n) in imgs) bat.append("%FB% flash --slot=all ${n.removeSuffix(".img")} \"$g\\$n\" || goto err\r\n")
+        bat.append("echo Ostatni etap w fastbootd / last stage in fastbootd\r\n%FB% reboot fastboot\r\n")
         bat.append("%FB% flash super \"SUPER\\super.img\" || goto err\r\n%FB% --set-active=a\r\n")
         bat.append("set /p W=Wyczyscic dane / wipe data? (t/n): \r\nif /i \"%W%\"==\"t\" %FB% -w\r\nif /i \"%W%\"==\"y\" %FB% -w\r\n")
         bat.append("%FB% reboot\r\necho OK\r\npause\r\nexit /b 0\r\n:err\r\necho BLAD / ERROR\r\npause\r\nexit /b 1\r\n")
@@ -54,6 +88,7 @@ class SuperFlasher(private val log: (String) -> Unit, private val progress: (Lon
         val sh = StringBuilder("#!/bin/sh\nset -e\ncd \"$(dirname \"$0\")\"\nFB=fastboot\n[ -x platform-tools/fastboot ] && FB=platform-tools/fastboot\n")
         sh.append("echo 'Super flasher - telefon w trybie BOOTLOADER (fastboot), nie fastbootd'\n\$FB devices\n")
         for ((g, n) in imgs) sh.append("\$FB flash --slot=all ${n.removeSuffix(".img")} \"$g/$n\"\n")
+        sh.append("echo 'Ostatni etap w fastbootd / last stage in fastbootd'\n\$FB reboot fastboot\n")
         sh.append("\$FB flash super SUPER/super.img\n\$FB --set-active=a\nprintf 'Wipe data? (y/n): '; read W\n[ \"\$W\" = y ] || [ \"\$W\" = t ] && \$FB -w\n\$FB reboot\necho OK\n")
         File(folder, "flash_all.sh").apply { writeText(sh.toString()); setExecutable(true) }
     }

@@ -263,11 +263,10 @@ class MainActivity : Activity() {
         ui.row(p3, ui.button(tr("Flashuj firmware", "Flash firmware"), B, ::flashFirmware))
 
         val cSup = ui.card(p3, "Super flasher")
-        cSup.addView(ui.body(tr("Z rozpakowanego OTA: SYSTEM -> SUPER/super.img + skrypty flash_all.bat/.sh na PC. Flash w bootloaderze, bez fastbootd.",
-            "From an extracted OTA: SYSTEM -> SUPER/super.img + flash_all.bat/.sh scripts for PC. Flashes in bootloader, no fastbootd.")), ui.lp(bottom = 10))
-        superEdit = ui.input(tr("rozmiar super w bajtach (z telefonu: Polacz)", "super size in bytes (from phone: Connect)"))
+        cSup.addView(ui.body(tr("Z rozpakowanego OTA: SYSTEM -> SUPER/super.img + skrypty flash_all.bat/.sh na PC. Rozmiar super z OTA - telefon niepotrzebny.",
+            "From an extracted OTA: SYSTEM -> SUPER/super.img + flash_all.bat/.sh scripts for PC. Super size from the OTA - no phone needed.")), ui.lp(bottom = 10))
+        superEdit = ui.input(tr("rozmiar super (puste = z OTA, META/super_def.json)", "super size (empty = from OTA, META/super_def.json)"))
         superEdit.inputType = android.text.InputType.TYPE_CLASS_NUMBER
-        prefs.getLong("superSize", 0L).takeIf { it > 0 }?.let { superEdit.setText(it.toString()) }
         cSup.addView(superEdit, ui.lp(bottom = 10))
         ui.row(cSup, ui.button(tr("Zbuduj super.img", "Build super.img"), G, ::buildSuperFlasher))
         ui.toggle(cSup, tr("flashuj przez super.img, jesli jest w folderze", "flash via super.img if present in the folder"), { opt.useSuperImage }, { opt.useSuperImage = it })
@@ -619,7 +618,6 @@ class MainActivity : Activity() {
             if (v == "partition-size:super") r.trim().let { t ->
                 (if (t.startsWith("0x", true)) t.substring(2).toLongOrNull(16) else t.toLongOrNull())?.takeIf { it > 0 }?.let { sz ->
                     prefs.edit().putLong("superSize", sz).apply()
-                    runOnUiThread { superEdit.setText(sz.toString()) }
                 }
             }
             log("  $v: $r")
@@ -763,12 +761,22 @@ class MainActivity : Activity() {
         val folder = u?.let { treeToFile(it) }
         if (folder == null || !folder.isDirectory) { log(tr("Najpierw wybierz folder firmware (rozpakowane OTA)", "Pick a firmware folder first (extracted OTA)")); return }
         if (!hasAllFiles()) { requestAllFiles(); return }
-        val size = superEdit.text.toString().trim().toLongOrNull()
-        if (size == null || size <= 0) { log(tr("Podaj rozmiar super - podlacz telefon i nacisnij Polacz (odczyt partition-size:super)", "Enter super size - connect the phone and tap Connect (reads partition-size:super)")); return }
-        prefs.edit().putLong("superSize", size).apply()
+        val size = superEdit.text.toString().trim().toLongOrNull()?.takeIf { it > 0 }
         exec.execute {
             busy = true
             try {
+                // rozmiar super z OTA: META/super_def.json (zapisany przy rozpakowaniu albo z wybranego ZIP)
+                val defFile = File(folder, "super_def.json")
+                if (!defFile.isFile) otaUri?.takeIf { otaName.endsWith(".zip", true) }?.let { zu ->
+                    contentResolver.openFileDescriptor(zu, "r")?.use { pfd ->
+                        val ch = java.io.FileInputStream(pfd.fileDescriptor).channel
+                        pl.luki.frankenflasher.ota.ZipLocator.readEntry(ch) { n -> n.contains("META/") && n.substringAfterLast('/').startsWith("super_def") && n.endsWith(".json") }
+                            ?.let { (n, b) -> defFile.writeBytes(b); log(tr("super_def.json z $otaName ($n)", "super_def.json from $otaName ($n)")) }
+                    }
+                }
+                if (!defFile.isFile && size == null) throw java.io.IOException(tr(
+                    "Brak META/super_def.json - rozpakuj OTA ponownie w tej wersji, wybierz OTA zip w zakladce OTA albo wpisz rozmiar super",
+                    "No META/super_def.json - extract the OTA again with this version, pick the OTA zip in the OTA tab or enter the super size"))
                 val t0 = System.currentTimeMillis()
                 setStep(tr("Budowanie super.img", "Building super.img"))
                 pl.luki.frankenflasher.franken.SuperFlasher(::log, ::setProgress).build(folder, size)

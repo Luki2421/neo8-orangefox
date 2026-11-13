@@ -96,6 +96,10 @@ class OtaExtractor(
                 ZipLocator.findStored(ch, "payload.bin") ?: throw IllegalArgumentException(tr("W ZIP nie ma payload.bin", "No payload.bin in the ZIP"))
             } else 0L
             val info = PayloadParser.parse(ch, base)
+            val superDef = if (inputName.endsWith(".zip", true)) try {
+                ZipLocator.readEntry(ch) { n -> n.replace('\\', '/').contains("META/") && n.substringAfterLast('/').startsWith("super_def") && n.endsWith(".json") }
+            } catch (_: Exception) { null } else null
+            if (superDef != null) log(tr("OTA: znaleziono ${superDef.first} (uklad partycji super)", "OTA: found ${superDef.first} (super partition layout)"))
             log(tr("payload: ${info.parts.size} partycji, blok ${info.blockSize}, logicznych: ${info.dynamic.size}", "payload: ${info.parts.size} partitions, block ${info.blockSize}, logical: ${info.dynamic.size}"))
             for (p in info.parts) for (o in p.ops) {
                 if (o.type !in setOf(OpType.REPLACE, OpType.REPLACE_BZ, OpType.REPLACE_XZ, OpType.ZSTD, OpType.ZERO, OpType.DISCARD))
@@ -138,6 +142,11 @@ class OtaExtractor(
                 pool.shutdownNow()
             }
             if (bad.isNotEmpty()) throw IllegalStateException(tr("Bledne sumy: ${bad.joinToString()} - NIE flashuj, rozpakuj ponownie", "Bad checksums: ${bad.joinToString()} - DO NOT flash, extract again"))
+            if (superDef != null) try {
+                DocumentsContract.createDocument(cr, outDir, "application/octet-stream", "super_def.json")?.let { u ->
+                    cr.openOutputStream(u)?.use { it.write(superDef.second) }
+                }
+            } catch (_: Exception) {}
             // uklad super z OTA (grupy i rozmiary) - dla budowania super flashera
             if (info.groups.isNotEmpty()) try {
                 val txt = info.groups.joinToString("\n") { g -> "${g.name} ${g.size} ${g.partitions.joinToString(",")}" } + "\n"

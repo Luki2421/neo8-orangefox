@@ -140,7 +140,48 @@ object PayloadParser {
 object ZipLocator {
     private fun le(b: ByteArray) = ByteBuffer.wrap(b).order(ByteOrder.LITTLE_ENDIAN)
 
+    /** Plik z ZIP (STORED albo DEFLATE) po nazwie - dla malych plikow typu META/super_def.json. */
+    fun readEntry(ch: FileChannel, match: (String) -> Boolean): Pair<String, ByteArray>? {
+        var found: Pair<String, ByteArray>? = null
+        scan(ch) { name, method, comp, uncomp, lho ->
+            if (!match(name) || uncomp > (16 shl 20)) return@scan false
+            val lh = le(PayloadParser.readAt(ch, lho, 30))
+            if (lh.getInt(0) != 0x04034b50) return@scan false
+            val data = lho + 30 + (lh.getShort(26).toInt() and 0xFFFF) + (lh.getShort(28).toInt() and 0xFFFF)
+            val raw = PayloadParser.readAt(ch, data, comp.toInt())
+            val bytes = when (method) {
+                0 -> raw
+                8 -> {
+                    val inf = java.util.zip.Inflater(true)
+                    inf.setInput(raw)
+                    val out = ByteArray(uncomp.toInt())
+                    var n = 0
+                    while (n < out.size && !inf.finished()) { val r = inf.inflate(out, n, out.size - n); if (r == 0 && inf.needsInput()) break; n += r }
+                    inf.end(); out
+                }
+                else -> return@scan false
+            }
+            found = name to bytes
+            true
+        }
+        return found
+    }
+
     fun findStored(ch: FileChannel, entry: String): Long? {
+        var res: Long? = null
+        scan(ch) { name, method, _, _, lho ->
+            if (name != entry) return@scan false
+            if (method != 0) throw IllegalArgumentException("$entry w ZIP jest skompresowany - rozpakuj ZIP i wybierz sam payload.bin")
+            val lh = le(PayloadParser.readAt(ch, lho, 30))
+            if (lh.getInt(0) != 0x04034b50) throw IllegalArgumentException("Uszkodzony naglowek ZIP")
+            res = lho + 30 + (lh.getShort(26).toInt() and 0xFFFF) + (lh.getShort(28).toInt() and 0xFFFF)
+            true
+        }
+        return res
+    }
+
+    /** Przechodzi katalog centralny; visit zwraca true, aby zakonczyc. */
+    private fun scan(ch: FileChannel, visit: (String, Int, Long, Long, Long) -> Boolean) {
         val size = ch.size()
         val tailLen = minOf(size, 65_557L).toInt()
         val tail = PayloadParser.readAt(ch, size - tailLen, tailLen)
@@ -148,7 +189,7 @@ object ZipLocator {
         for (i in tailLen - 22 downTo 0) {
             if (tail[i] == 0x50.toByte() && tail[i + 1] == 0x4b.toByte() && tail[i + 2] == 0x05.toByte() && tail[i + 3] == 0x06.toByte()) { e = i; break }
         }
-        if (e < 0) return null
+        if (e < 0) return
         val eb = le(tail)
         var entries = (eb.getShort(e + 10).toInt() and 0xFFFF).toLong()
         var cdSize = eb.getInt(e + 12).toLong() and 0xFFFFFFFFL
@@ -186,14 +227,8 @@ object ZipLocator {
                 }
                 x += 4 + sz
             }
-            if (name == entry) {
-                if (method != 0) throw IllegalArgumentException("$entry w ZIP jest skompresowany - rozpakuj ZIP i wybierz sam payload.bin")
-                val lh = le(PayloadParser.readAt(ch, lho, 30))
-                if (lh.getInt(0) != 0x04034b50) throw IllegalArgumentException("Uszkodzony naglowek ZIP")
-                return lho + 30 + (lh.getShort(26).toInt() and 0xFFFF) + (lh.getShort(28).toInt() and 0xFFFF)
-            }
+            if (visit(name, method, comp, uncomp, lho)) return
             p += 46 + nameLen + extraLen + commLen
         }
-        return null
     }
 }
