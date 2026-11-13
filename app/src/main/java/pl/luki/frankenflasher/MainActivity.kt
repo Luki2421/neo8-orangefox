@@ -141,147 +141,226 @@ class MainActivity : Activity() {
 
     // ---------------- UI ----------------
 
+    private lateinit var slotChip: TextView
+    private lateinit var stateChip: TextView
+    private lateinit var connDot: android.view.View
+
+    private fun setConn(connected: Boolean, name: String? = null) = runOnUiThread {
+        status.text = if (connected) (name ?: tr("Polaczono", "Connected")) else tr("Nie polaczono", "Not connected")
+        (connDot.background as android.graphics.drawable.GradientDrawable).setColor(if (connected) Ui.OK else Ui.MUTED)
+        if (!connected) slotChip.text = tr("Slot -", "Slot -")
+    }
+
     private fun buildUi() {
-        val pad = (8 * resources.displayMetrics.density).toInt()
-        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad, pad, pad) }
-        status = TextView(this).apply { text = tr("Nie polaczono  (v", "Not connected  (v") + BuildConfigCompat.version(this@MainActivity) + ")"; textSize = 15f; setTypeface(typeface, Typeface.BOLD) }
-        root.addView(status)
+        val ui = Ui(this)
+        val bg = ui.background()
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        bg.addView(root, android.widget.FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
 
-        // --- zakladki ---
-        val tabNames = listOf("Fastboot", "OTA", "Firmware", "Franken")
-        val pages = tabNames.map { LinearLayout(this).apply { orientation = LinearLayout.VERTICAL } }
-        val pageScroll = ScrollView(this)
-        val tabBar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; isBaselineAligned = false }
-        val tabButtons = ArrayList<Button>()
-        fun showTab(i: Int) {
-            pageScroll.removeAllViews()
-            pageScroll.addView(pages[i])
-            pageScroll.scrollTo(0, 0)
-            tabButtons.forEachIndexed { k, btn -> btn.alpha = if (k == i) 1f else 0.5f }
-        }
-        tabNames.forEachIndexed { i, n ->
-            val btn = Button(this).apply { text = n; isAllCaps = false; setOnClickListener { showTab(i) } }
-            tabButtons += btn
-            tabBar.addView(btn, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
-        }
-        root.addView(tabBar)
-
-        fun row(page: LinearLayout, vararg b: Pair<String, () -> Unit>) {
-            val r = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; isBaselineAligned = false }
-            b.forEach { (label, action) ->
-                r.addView(Button(this).apply { text = label; isAllCaps = false; setOnClickListener { action() } },
-                    LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        // --- naglowek ---
+        val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL; setPadding(ui.dp(20), ui.dp(14), ui.dp(20), ui.dp(14)) }
+        val logo = android.widget.ImageView(this).apply {
+            setImageResource(R.drawable.ic_nav_franken)
+            imageTintList = android.content.res.ColorStateList.valueOf(Ui.ACCENT)
+            setPadding(ui.dp(11), ui.dp(11), ui.dp(11), ui.dp(11))
+            background = ui.glass(14f, tint = Ui.ACCENT, alphaTop = 30, alphaBottom = 8, stroke = 0).also {
+                (it.getDrawable(0) as android.graphics.drawable.GradientDrawable).setStroke(ui.dp(1.5f), Ui.ACCENT)
             }
-            page.addView(r)
         }
-        fun header(page: LinearLayout, t: String) =
-            page.addView(TextView(this).apply { text = t; textSize = 15f; setTypeface(typeface, Typeface.BOLD); setPadding(0, pad, 0, 0) })
-        fun chk(label: String, get: () -> Boolean, set: (Boolean) -> Unit) =
-            CheckBox(this).apply { text = label; isChecked = get(); textSize = 13f; setOnCheckedChangeListener { _, c -> set(c) } }
+        head.addView(logo, LinearLayout.LayoutParams(ui.dp(48), ui.dp(48)))
+        head.addView(TextView(this).apply {
+            text = "FRANKEN FLASHER"; textSize = 19f; letterSpacing = 0.04f; setTextColor(Ui.TEXT)
+            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD); setPadding(ui.dp(14), 0, 0, 0)
+        }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        head.addView(TextView(this).apply {
+            text = BuildConfigCompat.version(this@MainActivity) + "  ·  " + (if (I18n.en) "EN" else "PL")
+            textSize = 13f; setTextColor(Ui.TEXT2); setPadding(ui.dp(12), ui.dp(8), ui.dp(12), ui.dp(8))
+            background = ui.glass(14f, alphaTop = 20, alphaBottom = 8)
+            setOnClickListener {
+                I18n.en = !I18n.en
+                prefs.edit().putString("lang", if (I18n.en) "en" else "pl").apply()
+                recreate()
+            }
+        })
+        root.addView(head)
+
+        // --- pasek stanu: polaczenie | slot | stan ---
+        val strip = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL
+            background = ui.glass(18f); setPadding(ui.dp(14), ui.dp(12), ui.dp(14), ui.dp(12))
+        }
+        fun divider() = android.view.View(this).apply { setBackgroundColor(android.graphics.Color.argb(40, 255, 255, 255)) }
+        val c1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL }
+        connDot = android.view.View(this).apply { background = android.graphics.drawable.GradientDrawable().apply { shape = android.graphics.drawable.GradientDrawable.OVAL; setColor(Ui.MUTED) } }
+        c1.addView(connDot, LinearLayout.LayoutParams(ui.dp(9), ui.dp(9)))
+        status = TextView(this).apply { textSize = 13.5f; setTextColor(Ui.TEXT); setPadding(ui.dp(8), 0, 0, 0); isSingleLine = true; ellipsize = android.text.TextUtils.TruncateAt.END }
+        c1.addView(status)
+        strip.addView(c1, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1.3f))
+        strip.addView(divider(), LinearLayout.LayoutParams(ui.dp(1), ui.dp(22)).apply { marginEnd = ui.dp(12) })
+        slotChip = TextView(this).apply { textSize = 13.5f; setTextColor(Ui.TEXT2); isSingleLine = true; text = "Slot -" }
+        strip.addView(slotChip, LinearLayout.LayoutParams(0, WRAP_CONTENT, 0.8f))
+        strip.addView(divider(), LinearLayout.LayoutParams(ui.dp(1), ui.dp(22)).apply { marginEnd = ui.dp(12) })
+        stateChip = TextView(this).apply { textSize = 13.5f; setTextColor(Ui.TEXT2); isSingleLine = true; ellipsize = android.text.TextUtils.TruncateAt.END; text = tr("Gotowy", "Ready") }
+        strip.addView(stateChip, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        root.addView(strip, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { setMargins(ui.dp(16), 0, ui.dp(16), ui.dp(4)) })
+        setConn(false)
+
+        // --- strony ---
+        val pages = List(4) { LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(ui.dp(16), ui.dp(6), ui.dp(16), ui.dp(16)) } }
+        val pageScroll = ScrollView(this).apply { isVerticalScrollBarEnabled = false; overScrollMode = android.view.View.OVER_SCROLL_NEVER }
+        root.addView(pageScroll, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+        val B = Ui.Kind.PRIMARY; val G = Ui.Kind.GLASS; val D = Ui.Kind.DANGER
 
         // Strona 1: Fastboot
         val p1 = pages[0]
-        row(p1, tr("Polacz", "Connect") to ::connect, "Info" to ::info, "getvar all" to ::getvarAll)
-        row(p1, "-> fastbootd" to { simple("reboot-fastboot", true) },
-            "-> bootloader" to { simple("reboot-bootloader", true) },
-            "-> system" to { simple("reboot", true) })
-        row(p1, (if (I18n.en) "Polski" else "English") to {
-            I18n.en = !I18n.en
-            prefs.edit().putString("lang", if (I18n.en) "en" else "pl").apply()
-            recreate()
-        })
-        row(p1, "Slot A" to { simple("set_active:a", false) }, "Slot B" to { simple("set_active:b", false) })
-        row(p1, tr("Wyczysc dane (format)", "Wipe data (format)") to { confirmWipe() })
-        header(p1, tr("Pojedynczy obraz", "Single image"))
-        partEdit = EditText(this).apply { hint = tr("partycja (puste = z nazwy pliku, np. boot_a)", "partition (empty = from file name, e.g. boot_a)"); isSingleLine = true }
-        p1.addView(partEdit)
-        row(p1, tr("Wybierz obraz i flashuj", "Pick image and flash") to ::pickImage)
+        p1.addView(ui.title("Fastboot", tr("Drugi telefon przez kabel OTG", "Second phone over OTG cable")))
+        val cConn = ui.card(p1, tr("Polaczenie", "Connection"))
+        ui.row(cConn, ui.button(tr("Polacz", "Connect"), B, ::connect))
+        ui.row(cConn, ui.button("Info", G, ::info), ui.button("getvar all", G, ::getvarAll))
+        val cReb = ui.card(p1, tr("Restart", "Reboot"))
+        ui.row(cReb, ui.button("fastbootd", G) { simple("reboot-fastboot", true) }, ui.button("bootloader", G) { simple("reboot-bootloader", true) })
+        ui.row(cReb, ui.button("system", G) { simple("reboot", true) })
+        val cSlot = ui.card(p1, tr("Aktywny slot", "Active slot"))
+        ui.row(cSlot, ui.button("Slot A", G) { simple("set_active:a", false) }, ui.button("Slot B", G) { simple("set_active:b", false) })
+        val cImg = ui.card(p1, tr("Pojedynczy obraz", "Single image"))
+        partEdit = ui.input(tr("partycja (puste = z nazwy pliku, np. boot_a)", "partition (empty = from file name, e.g. boot_a)"))
+        cImg.addView(partEdit, ui.lp(bottom = 10))
+        ui.row(cImg, ui.button(tr("Wybierz obraz i flashuj", "Pick image and flash"), G, ::pickImage))
+        val cWipe = ui.card(p1, tr("Dane", "Data"))
+        ui.row(cWipe, ui.button(tr("Wyczysc dane (format)", "Wipe data (format)"), D) { confirmWipe() })
 
         // Strona 2: OTA
         val p2 = pages[1]
-        header(p2, tr("Rozpakuj OTA (zip / payload.bin)", "Extract OTA (zip / payload.bin)"))
-        otaView = TextView(this).apply { text = "OTA: -   " + tr("cel", "target") + ": -"; textSize = 13f }
-        p2.addView(otaView)
-        row(p2, tr("Wybierz OTA", "Pick OTA") to ::pickOta, "Cel" to ::pickOtaOut)
-        row(p2, tr("Rozpakuj", "Extract") to ::extractOta)
-        row(p2, tr("Sprawdz sumy folderu z OTA", "Verify folder checksums against OTA") to ::verifyOta)
+        p2.addView(ui.title("OTA", tr("Rozpakowanie payload.bin z sumami SHA-256", "Extract payload.bin with SHA-256 checks")))
+        val cOta = ui.card(p2, tr("Zrodlo i cel", "Source and target"))
+        otaView = ui.value("OTA: -   " + tr("cel", "target") + ": -")
+        cOta.addView(otaView, ui.lp(bottom = 12))
+        ui.row(cOta, ui.button(tr("Wybierz OTA", "Pick OTA"), G, ::pickOta), ui.button(tr("Cel", "Target"), G, ::pickOtaOut))
+        val cOta2 = ui.card(p2, tr("Akcja", "Action"))
+        ui.row(cOta2, ui.button(tr("Rozpakuj", "Extract"), B, ::extractOta))
+        ui.row(cOta2, ui.button(tr("Sprawdz sumy folderu z OTA", "Verify folder checksums against OTA"), G, ::verifyOta))
 
         // Strona 3: Firmware
         val p3 = pages[2]
-        header(p3, tr("Firmware (folder jak w FFF)", "Firmware (FFF-style folder)"))
-        fwSummary = TextView(this).apply { text = tr("Nie wybrano folderu", "No folder selected"); textSize = 13f }
-        p3.addView(fwSummary)
-        row(p3, tr("Wybierz folder", "Pick folder") to ::pickFirmware)
-        p3.addView(chk(tr("przelacz na drugi slot i wgraj na niego (jak FFF)", "switch to the other slot and flash it (like FFF)"), { opt.switchSlot }, { opt.switchSlot = it }))
-        p3.addView(chk(tr("od razu usun system starego slotu (szybciej)", "delete old slot system right away (faster)"), { opt.freeOldSlotFirst }, { opt.freeOldSlotFirst = it }))
-        p3.addView(chk(tr("bez przelaczania: oba sloty (fizyczne a+b, logiczne a)", "no switching: both slots (physical a+b, logical a)"), { opt.bothSlots }, { opt.bothSlots = it }))
-        p3.addView(chk(tr("vbmeta off (wylacz weryfikacje)", "vbmeta off (disable verification)"), { opt.disableVbmeta }, { opt.disableVbmeta = it }))
-        p3.addView(chk("CRITICAL + EXTRA", { opt.flashCritical }, { opt.flashCritical = it; opt.flashExtra = it }))
-        p3.addView(chk("MODEM", { opt.flashModem }, { opt.flashModem = it }))
-        p3.addView(chk(tr("super_empty.img (jesli jest)", "super_empty.img (if present)"), { opt.useSuperEmpty }, { opt.useSuperEmpty = it }))
-        p3.addView(chk(tr("usun partycje 2. slotu z super", "delete other-slot partitions from super"), { opt.deleteOtherSlot }, { opt.deleteOtherSlot = it }))
-        p3.addView(chk(tr("restart do systemu na koniec", "reboot to system at the end"), { opt.rebootAtEnd }, { opt.rebootAtEnd = it }))
-        p3.addView(chk(tr("wyczysc dane (userdata + metadata)", "wipe data (userdata + metadata)"), { opt.wipeData }, { opt.wipeData = it }).apply {
-            setTextColor(android.graphics.Color.rgb(255, 120, 110))
-        })
-        row(p3, tr("Flashuj firmware", "Flash firmware") to ::flashFirmware)
+        p3.addView(ui.title("Firmware", tr("Folder jak w FFF, wszystko w fastbootd", "FFF-style folder, everything in fastbootd")))
+        val cFw = ui.card(p3, tr("Folder", "Folder"))
+        fwSummary = ui.body(tr("Nie wybrano folderu", "No folder selected"), 14f, Ui.TEXT)
+        fwSummary.typeface = Typeface.MONOSPACE
+        cFw.addView(fwSummary, ui.lp(bottom = 12))
+        ui.row(cFw, ui.button(tr("Wybierz folder", "Pick folder"), G, ::pickFirmware))
+        val cOpt = ui.card(p3, tr("Opcje", "Options"))
+        ui.toggle(cOpt, tr("przelacz na drugi slot i wgraj na niego (jak FFF)", "switch to the other slot and flash it (like FFF)"), { opt.switchSlot }, { opt.switchSlot = it })
+        ui.toggle(cOpt, tr("od razu usun system starego slotu (szybciej)", "delete old slot system right away (faster)"), { opt.freeOldSlotFirst }, { opt.freeOldSlotFirst = it })
+        ui.toggle(cOpt, tr("bez przelaczania: oba sloty (fizyczne a+b, logiczne a)", "no switching: both slots (physical a+b, logical a)"), { opt.bothSlots }, { opt.bothSlots = it })
+        ui.toggle(cOpt, tr("vbmeta off (wylacz weryfikacje)", "vbmeta off (disable verification)"), { opt.disableVbmeta }, { opt.disableVbmeta = it })
+        ui.toggle(cOpt, "CRITICAL + EXTRA", { opt.flashCritical }, { opt.flashCritical = it; opt.flashExtra = it })
+        ui.toggle(cOpt, "MODEM", { opt.flashModem }, { opt.flashModem = it })
+        ui.toggle(cOpt, tr("super_empty.img (jesli jest)", "super_empty.img (if present)"), { opt.useSuperEmpty }, { opt.useSuperEmpty = it })
+        ui.toggle(cOpt, tr("usun partycje 2. slotu z super", "delete other-slot partitions from super"), { opt.deleteOtherSlot }, { opt.deleteOtherSlot = it })
+        ui.toggle(cOpt, tr("restart do systemu na koniec", "reboot to system at the end"), { opt.rebootAtEnd }, { opt.rebootAtEnd = it })
+        ui.toggle(cOpt, tr("wyczysc dane (userdata + metadata)", "wipe data (userdata + metadata)"), { opt.wipeData }, { opt.wipeData = it }, danger = true)
+        ui.row(p3, ui.button(tr("Flashuj firmware", "Flash firmware"), B, ::flashFirmware))
 
+        // Strona 4: Franken
         val p4 = pages[3]
-        header(p4, tr("Franken: baza (sprzet) + dawca (system)", "Franken: base (hardware) + donor (system)"))
-        frBaseView = TextView(this).apply { text = "Baza: -" }
-        frDonorView = TextView(this).apply { text = "Dawca: -" }
-        p4.addView(frBaseView); p4.addView(frDonorView)
-        row(p4, tr("Baza (Neo 8)", "Base (Neo 8)") to { pickTree(REQ_FR_BASE) }, tr("Dawca (GT 8 Pro)", "Donor (GT 8 Pro)") to { pickTree(REQ_FR_DONOR) })
-        row(p4, tr("Partycje: baza / dawca", "Partitions: base / donor") to ::choosePartitions)
-        p4.addView(chk(tr("my_product: konfiguracja sprzetu z bazy", "my_product: hardware config from base"), { frOpt.patchMyProduct }, { frOpt.patchMyProduct = it }))
-        p4.addView(chk(tr("wibracje z bazy (bez qcom_lmvibrator)", "vibration from base (no qcom_lmvibrator)"), { frOpt.fixVibration }, { frOpt.fixVibration = it }))
-        p4.addView(chk(tr("nakladka wyswietlacza z bazy", "display overlay from base"), { frOpt.displayOverlayFromBase }, { frOpt.displayOverlayFromBase = it }))
-        p4.addView(chk(tr("my_manifest: wersja dawcy", "my_manifest: donor version"), { frOpt.patchMyManifest }, { frOpt.patchMyManifest = it }))
-        p4.addView(chk(tr("odm: producent/marka dawcy", "odm: donor manufacturer/brand"), { frOpt.patchOdmIdentity }, { frOpt.patchOdmIdentity = it }))
-        p4.addView(chk(tr("app_v2: odblokuj Telefon/Kontakty/SMS", "app_v2: unlock Phone/Contacts/SMS"), { frOpt.unlockAppV2 }, { frOpt.unlockAppV2 = it }))
-        p4.addView(chk(tr("dzwonki z haptic_ringtone do product", "ringtones from haptic_ringtone to product"), { frOpt.ringtones }, { frOpt.ringtones = it }))
-        p4.addView(chk(tr("pomin my_preload", "skip my_preload"), { frOpt.skipMyPreload }, { frOpt.skipMyPreload = it }))
-        row(p4, tr("1. Zbuduj Franken", "1. Build Franken") to ::buildFranken, tr("2. Flashuj Franken", "2. Flash Franken") to ::flashFranken)
-        header(p4, tr("Narzedzia / testy", "Tools / tests"))
-        row(p4, tr("Dostep do plikow", "File access") to ::requestAllFiles, tr("Test narzedzi EROFS", "Test EROFS tools") to ::testErofsTools)
-        row(p4, tr("Test: wypakuj obraz EROFS", "Test: extract EROFS image") to {
+        p4.addView(ui.title("Franken", tr("Sprzet z bazy, system z dawcy", "Hardware from base, system from donor")))
+        val steps = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; isBaselineAligned = false }
+        steps.addView(ui.step(1, tr("Zbuduj", "Build"), true, ::buildFranken), LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        steps.addView(ui.step(2, tr("Flashuj", "Flash"), false, ::flashFranken), LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginStart = ui.dp(10) })
+        p4.addView(steps, ui.lp(bottom = 14))
+        val cSrc = ui.card(p4, tr("Firmware", "Firmware"))
+        cSrc.addView(ui.sectionLabel(tr("Baza (sprzet)", "Base (hardware)")).apply { setPadding(0, 0, 0, ui.dp(2)) })
+        frBaseView = ui.value("-")
+        cSrc.addView(frBaseView, ui.lp(bottom = 10))
+        cSrc.addView(ui.sectionLabel(tr("Dawca (system)", "Donor (system)")).apply { setPadding(0, 0, 0, ui.dp(2)) })
+        frDonorView = ui.value("-")
+        cSrc.addView(frDonorView, ui.lp(bottom = 12))
+        ui.row(cSrc, ui.button(tr("Baza (Neo 8)", "Base (Neo 8)"), G) { pickTree(REQ_FR_BASE) }, ui.button(tr("Dawca (GT 8 Pro)", "Donor (GT 8 Pro)"), G) { pickTree(REQ_FR_DONOR) })
+        ui.row(cSrc, ui.button(tr("Partycje: baza / dawca", "Partitions: base / donor"), G, ::choosePartitions))
+        val cFr = ui.card(p4, tr("Poprawki", "Fixes"))
+        ui.toggle(cFr, tr("my_product: konfiguracja sprzetu z bazy", "my_product: hardware config from base"), { frOpt.patchMyProduct }, { frOpt.patchMyProduct = it })
+        ui.toggle(cFr, tr("wibracje z bazy (bez qcom_lmvibrator)", "vibration from base (no qcom_lmvibrator)"), { frOpt.fixVibration }, { frOpt.fixVibration = it })
+        ui.toggle(cFr, tr("nakladka wyswietlacza z bazy", "display overlay from base"), { frOpt.displayOverlayFromBase }, { frOpt.displayOverlayFromBase = it })
+        ui.toggle(cFr, tr("my_manifest: wersja dawcy", "my_manifest: donor version"), { frOpt.patchMyManifest }, { frOpt.patchMyManifest = it })
+        ui.toggle(cFr, tr("odm: producent/marka dawcy", "odm: donor manufacturer/brand"), { frOpt.patchOdmIdentity }, { frOpt.patchOdmIdentity = it })
+        ui.toggle(cFr, tr("app_v2: odblokuj Telefon/Kontakty/SMS", "app_v2: unlock Phone/Contacts/SMS"), { frOpt.unlockAppV2 }, { frOpt.unlockAppV2 = it })
+        ui.toggle(cFr, tr("dzwonki z haptic_ringtone do product", "ringtones from haptic_ringtone to product"), { frOpt.ringtones }, { frOpt.ringtones = it })
+        ui.toggle(cFr, tr("pomin my_preload", "skip my_preload"), { frOpt.skipMyPreload }, { frOpt.skipMyPreload = it })
+        val cTools = ui.card(p4, tr("Narzedzia / testy", "Tools / tests"))
+        ui.row(cTools, ui.button(tr("Dostep do plikow", "File access"), G, ::requestAllFiles), ui.button(tr("Test narzedzi EROFS", "Test EROFS tools"), G, ::testErofsTools))
+        ui.row(cTools, ui.button(tr("Test: wypakuj obraz EROFS", "Test: extract EROFS image"), G) {
             erofsWriteTest = false
             @Suppress("DEPRECATION")
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), REQ_EROFS_TEST)
         })
-        row(p4, tr("Test: zapis do kopii obrazu", "Test: write to image copy") to {
+        ui.row(cTools, ui.button(tr("Test: zapis do kopii obrazu", "Test: write to image copy"), G) {
             erofsWriteTest = true
             @Suppress("DEPRECATION")
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), REQ_EROFS_TEST)
         })
 
-        root.addView(pageScroll, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1.1f))
+        // --- panel postepu i logu (szklo) ---
+        val act = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = ui.glass(20f); setPadding(ui.dp(14), ui.dp(10), ui.dp(14), ui.dp(10)) }
+        stepView = TextView(this).apply { textSize = 13.5f; setTextColor(Ui.TEXT); isSingleLine = true; ellipsize = android.text.TextUtils.TruncateAt.END; typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL) }
+        act.addView(stepView)
+        progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 1000
+            progressTintList = android.content.res.ColorStateList.valueOf(Ui.ACCENT)
+            progressBackgroundTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.argb(60, 255, 255, 255))
+        }
+        act.addView(progress, LinearLayout.LayoutParams(MATCH_PARENT, ui.dp(8)).apply { topMargin = ui.dp(4); bottomMargin = ui.dp(6) })
+        val logBar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL }
+        var expanded = false
+        logView = TextView(this).apply { typeface = Typeface.MONOSPACE; textSize = 10.5f; setTextColor(Ui.TEXT2); setTextIsSelectable(true) }
+        scroll = ScrollView(this).apply { addView(logView) }
+        logBar.addView(ui.sectionLabel("Log  ⌃").apply {
+            setPadding(0, ui.dp(4), 0, ui.dp(4))
+            setOnClickListener {
+                expanded = !expanded
+                scroll.layoutParams = scroll.layoutParams.apply { height = ui.dp(if (expanded) 420 else 120) }
+                text = if (expanded) "LOG  ⌄" else "LOG  ⌃"
+            }
+        }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        fun small(t: String, a: () -> Unit) = TextView(this).apply {
+            text = t; textSize = 12.5f; setTextColor(Ui.ACCENT); setPadding(ui.dp(10), ui.dp(4), ui.dp(10), ui.dp(4)); setOnClickListener { a() }
+        }
+        logBar.addView(small(tr("Zapisz", "Save")) { saveLog() })
+        logBar.addView(small(tr("Udostepnij", "Share")) { shareLog() })
+        logBar.addView(small(tr("Wyczysc", "Clear")) { logView.text = "" })
+        act.addView(logBar)
+        act.addView(scroll, LinearLayout.LayoutParams(MATCH_PARENT, ui.dp(120)))
+        root.addView(act, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { setMargins(ui.dp(12), ui.dp(4), ui.dp(12), ui.dp(8)) })
 
-        // --- postep + log (zawsze widoczne, przewijane) ---
-        stepView = TextView(this).apply { textSize = 13f; setTypeface(typeface, Typeface.BOLD) }
-        root.addView(stepView)
-        progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 1000 }
-        root.addView(progress)
-        val logBar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; isBaselineAligned = false }
-        logBar.addView(TextView(this).apply { text = "Log"; textSize = 13f; setTypeface(typeface, Typeface.BOLD) },
-            LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
-        logBar.addView(Button(this).apply { text = tr("Zapisz", "Save"); isAllCaps = false; textSize = 12f; setOnClickListener { saveLog() } })
-        logBar.addView(Button(this).apply { text = tr("Udostepnij", "Share"); isAllCaps = false; textSize = 12f; setOnClickListener { shareLog() } })
-        logBar.addView(Button(this).apply { text = tr("Wyczysc", "Clear"); isAllCaps = false; textSize = 12f; setOnClickListener { logView.text = "" } })
-        root.addView(logBar)
-        logView = TextView(this).apply { typeface = Typeface.MONOSPACE; textSize = 11f; setTextIsSelectable(true) }
-        scroll = ScrollView(this).apply { addView(logView); setBackgroundColor(android.graphics.Color.rgb(24, 24, 24)) }
-        root.addView(scroll, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+        // --- dolna nawigacja ---
+        val nav = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; background = ui.glass(26f, alphaTop = 30, alphaBottom = 14); setPadding(ui.dp(6), ui.dp(6), ui.dp(6), ui.dp(6)) }
+        val items = listOf(
+            ui.navItem(R.drawable.ic_nav_fastboot, "Fastboot"), ui.navItem(R.drawable.ic_nav_ota, "OTA"),
+            ui.navItem(R.drawable.ic_nav_firmware, "Firmware"), ui.navItem(R.drawable.ic_nav_franken, "Franken"),
+        )
+        fun showTab(i: Int) {
+            pageScroll.removeAllViews()
+            pageScroll.addView(pages[i])
+            pageScroll.scrollTo(0, 0)
+            items.forEachIndexed { k, it -> ui.setNavSelected(it, k == i) }
+            prefs.edit().putInt("tab", i).apply()
+        }
+        items.forEachIndexed { i, it ->
+            it.view.setOnClickListener { showTab(i) }
+            nav.addView(it.view, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { if (i > 0) marginStart = ui.dp(4) })
+        }
+        root.addView(nav, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { setMargins(ui.dp(12), 0, ui.dp(12), ui.dp(10)) })
 
-        showTab(0)
+        showTab(prefs.getInt("tab", 0).coerceIn(0, 3))
         restoreState()
         // Android 15+ rysuje pod paskami systemowymi - odsun tresc o ich wysokosc
         @Suppress("DEPRECATION")
         root.setOnApplyWindowInsetsListener { v, ins ->
-            v.setPadding(pad, pad + ins.systemWindowInsetTop, pad, pad + ins.systemWindowInsetBottom)
+            v.setPadding(0, ins.systemWindowInsetTop, 0, ins.systemWindowInsetBottom)
             ins
         }
-        setContentView(root)
+        window.statusBarColor = android.graphics.Color.TRANSPARENT
+        window.navigationBarColor = android.graphics.Color.TRANSPARENT
+        setContentView(bg)
     }
 
     private val timeFmt = SimpleDateFormat("HH:mm:ss", Locale.ROOT)
@@ -341,7 +420,7 @@ class MainActivity : Activity() {
             transport = t
             fb = Fastboot(t, ::log)
             log(tr("Polaczono: ${dev.manufacturerName ?: ""} ${dev.productName ?: ""} (${dev.deviceName})", "Connected: ${dev.manufacturerName ?: ""} ${dev.productName ?: ""} (${dev.deviceName})"))
-            runOnUiThread { status.text = tr("Polaczono: ${dev.productName ?: dev.deviceName}  (v", "Connected: ${dev.productName ?: dev.deviceName}  (v") + BuildConfigCompat.version(this) + ")" }
+            setConn(true, dev.productName ?: dev.deviceName)
             if (showInfo) info()
         } catch (e: Exception) {
             log(tr("Blad polaczenia: ${e.message}", "Connection error: ${e.message}"))
@@ -352,7 +431,7 @@ class MainActivity : Activity() {
         try { transport?.close() } catch (_: Exception) {}
         transport = null
         fb = null
-        runOnUiThread { status.text = tr("Nie polaczono  (v", "Not connected  (v") + BuildConfigCompat.version(this) + ")" }
+        setConn(false)
     }
 
     private fun withFb(block: (Fastboot) -> Unit) {
@@ -389,7 +468,7 @@ class MainActivity : Activity() {
         throw FastbootException(tr("Urzadzenie nie wrocilo po restarcie", "Device did not come back after reboot"))
     }
 
-    private fun setStep(s: String) = runOnUiThread { stepView.text = s }
+    private fun setStep(s: String) = runOnUiThread { stepView.text = s; stateChip.text = s.substringBefore(':').take(24) }
 
     @Suppress("DEPRECATION")
     private fun pickFirmware() {
@@ -404,8 +483,8 @@ class MainActivity : Activity() {
             val uri = Uri.parse(u)
             if (contentResolver.persistedUriPermissions.any { it.uri == uri }) loadFirmware(uri, save = false)
         }
-        prefs.getString("frBase", null)?.let { File(it) }?.takeIf { it.isDirectory }?.let { frBase = it; frBaseView.text = "Baza: ${it.path}" }
-        prefs.getString("frDonor", null)?.let { File(it) }?.takeIf { it.isDirectory }?.let { frDonor = it; frDonorView.text = "Dawca: ${it.path}" }
+        prefs.getString("frBase", null)?.let { File(it) }?.takeIf { it.isDirectory }?.let { frBase = it; frBaseView.text = it.path.removePrefix("/storage/emulated/0/") }
+        prefs.getString("frDonor", null)?.let { File(it) }?.takeIf { it.isDirectory }?.let { frDonor = it; frDonorView.text = it.path.removePrefix("/storage/emulated/0/") }
         prefs.getString("frFromBase", null)?.let { v -> frOpt.fromBase = v.split(',').filter { it.isNotBlank() }.toMutableSet() }
         prefs.getString("frResult", null)?.let { txt ->
             val groups = LinkedHashMap<String, MutableList<pl.luki.frankenflasher.firmware.DocImage>>()
@@ -525,6 +604,7 @@ class MainActivity : Activity() {
     private fun info() = withFb { f ->
         for (v in listOf("product", "current-slot", "is-userspace", "unlocked", "secure", "max-download-size", "version-bootloader")) {
             val r = try { f.getVar(v) } catch (e: Exception) { "-" }
+            if (v == "current-slot") runOnUiThread { slotChip.text = "Slot " + r.trim().removePrefix("_").uppercase() }
             log("  $v: $r")
         }
     }
@@ -748,7 +828,7 @@ class MainActivity : Activity() {
             val f = treeToFile(u)
             if (f == null || !f.isDirectory) { log(tr("Nie moge zamienic folderu na sciezke - wybierz folder w pamieci wewnetrznej", "Cannot map folder to a path - pick a folder in internal storage")); return }
             if (!File(f, "SYSTEM").isDirectory) log(tr("UWAGA: brak podfolderu SYSTEM w ${f.path}", "WARNING: no SYSTEM subfolder in ${f.path}"))
-            if (requestCode == REQ_FR_BASE) { frBase = f; frBaseView.text = "Baza: ${f.path}" } else { frDonor = f; frDonorView.text = "Dawca: ${f.path}" }
+            if (requestCode == REQ_FR_BASE) { frBase = f; frBaseView.text = f.path.removePrefix("/storage/emulated/0/") } else { frDonor = f; frDonorView.text = f.path.removePrefix("/storage/emulated/0/") }
             frResult = null
             saveFranken(null)
             return
