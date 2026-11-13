@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Buduje mkfs.erofs i fsck.erofs (z --extract) ze zrodel dla Androida arm64 (NDK, statycznie, z lz4).
 set -euo pipefail
-API=26
+API=34
 NDK="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
 TC="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
 export CC="$TC/aarch64-linux-android$API-clang"
@@ -15,9 +15,10 @@ git clone -q --depth 1 -b v1.8.10 https://git.kernel.org/pub/scm/linux/kernel/gi
 cd erofs-utils
 ./autogen.sh >/dev/null
 ./configure --host=aarch64-linux-android --disable-fuse --disable-multithreading \
-  --without-uuid --without-selinux --without-lzma --without-zlib --without-libdeflate --without-libzstd --without-qpl --without-xxhash \
-  --with-lz4-incdir=$W/lz4/lib --with-lz4-libdir=$W/lz4/lib \
-  LDFLAGS="-static" >/dev/null
+  --without-uuid --without-selinux --without-zlib --without-libdeflate --without-libzstd --without-qpl --without-xxhash \
+  LZ4_CFLAGS="-I$W/lz4/lib" LZ4_LIBS="-L$W/lz4/lib -llz4" \
+  LDFLAGS="-static" | grep -i "lz4" || true
+grep -n "LZ4" config.h || true
 make -s -j"$(nproc)"
 $STRIP mkfs/mkfs.erofs fsck/fsck.erofs
 
