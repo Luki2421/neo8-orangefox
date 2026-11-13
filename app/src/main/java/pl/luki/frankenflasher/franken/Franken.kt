@@ -63,6 +63,10 @@ class Franken(
         log("Franken: z BAZY: " + hw.sorted().filter { baseImgs.containsKey(it) }.joinToString() + ", z DAWCY: " + donorImgs.keys.count { it !in hw })
         if (missing.isNotEmpty()) log("Franken: UWAGA - brak w bazie: ${missing.joinToString()} (nie beda wgrane)")
         baseImgs["my_manifest"]?.let { chosen["my_manifest"] = it }
+        // Jak "Flash base firmware first" w FFF: partycje, ktorych dawca nie ma, zostaja z bazy
+        val baseOnly = baseImgs.keys.filter { it !in chosen && !(opt.skipMyPreload && it == "my_preload") }.sorted()
+        for (n in baseOnly) chosen[n] = baseImgs.getValue(n)
+        if (baseOnly.isNotEmpty()) log("Franken: tylko w bazie (zostaja z bazy): ${baseOnly.joinToString()}")
 
         // --- my_product (dawca + konfiguracja bazy) ---
         if (opt.patchMyProduct) {
