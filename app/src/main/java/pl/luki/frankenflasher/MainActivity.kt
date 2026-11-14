@@ -498,6 +498,10 @@ class MainActivity : Activity() {
 
     /** Przywraca foldery i ostatni zbudowany Franken z poprzedniego uruchomienia. */
     private fun restoreState() {
+        val perms = contentResolver.persistedUriPermissions.map { it.uri }
+        prefs.getString("otaUri", null)?.let { Uri.parse(it) }?.takeIf { it in perms }?.let { otaUri = it; otaName = prefs.getString("otaName", "") ?: "" }
+        prefs.getString("otaOut", null)?.let { Uri.parse(it) }?.takeIf { it in perms }?.let { otaOut = it }
+        if (otaUri != null || otaOut != null) updateOtaView()
         prefs.getString("fwTree", null)?.let { u ->
             val uri = Uri.parse(u)
             if (contentResolver.persistedUriPermissions.any { it.uri == uri }) loadFirmware(uri, save = false)
@@ -563,20 +567,34 @@ class MainActivity : Activity() {
         return if (path.isEmpty()) root else File(root, path)
     }
 
+    private fun isExtracted(d: File?) = d != null && File(d, "SYSTEM").isDirectory &&
+        (File(d, "extract_ok.txt").isFile || File(d, "super_groups.txt").isFile || File(d, "super_def.json").isFile)
+
+    /** Wczesniej rozpakowany folder tego OTA: zapamietany po rozpakowaniu albo w folderze docelowym (takze "nazwa (1)" itd.). */
+    private fun findExtracted(): File? {
+        val base = otaName.substringBeforeLast('.').ifEmpty { "firmware" }
+        val c = ArrayList<File?>()
+        if (otaName.isEmpty() || prefs.getString("lastExtractOta", null) == otaName) c += prefs.getString("lastExtract", null)?.let { File(it) }
+        treeToFile(otaOut ?: Uri.EMPTY)?.let { o ->
+            if (otaName.isNotEmpty()) { c += File(o, base); (1..5).forEach { c += File(o, "$base ($it)") } }
+            c += o
+        }
+        return c.firstOrNull { isExtracted(it) }
+    }
+
     private fun extractOta(thenHybrid: Boolean = false) {
-        val inUri = otaUri ?: run { log(tr("Najpierw wybierz plik OTA", "Pick an OTA file first")); return }
-        val out = otaOut ?: run { log(tr("Najpierw wybierz folder docelowy", "Pick a target folder first")); return }
         if (busy) { log(tr("Trwa inna operacja - poczekaj az sie skonczy", "Another operation is running - wait until it finishes")); return }
-        busy = true
-        // juz rozpakowane wczesniej (ten sam OTA, ten sam folder) - od razu buduj hybrid ZIP
-        val prev = treeToFile(out)?.let { File(it, otaName.substringBeforeLast('.').ifEmpty { "firmware" }) }
-        if (thenHybrid && prev != null && File(prev, "SYSTEM").isDirectory && (File(prev, "extract_ok.txt").isFile || File(prev, "super_groups.txt").isFile || File(prev, "super_def.json").isFile)) {
-            busy = false
-            log(tr("OTA juz rozpakowane w ${prev.name} - pomijam rozpakowanie, buduje hybrid ZIP", "OTA already extracted in ${prev.name} - skipping extraction, building hybrid ZIP"))
+        // juz rozpakowane wczesniej - od razu buduj hybrid ZIP (bez ponownego rozpakowania)
+        if (thenHybrid) findExtracted()?.let { prev ->
+            log(tr("OTA juz rozpakowane: ${prev.path.removePrefix("/storage/emulated/0/")} - pomijam rozpakowanie, buduje hybrid ZIP",
+                "OTA already extracted: ${prev.path.removePrefix("/storage/emulated/0/")} - skipping extraction, building hybrid ZIP"))
             superFolder = prev
             buildSuperFlasher(true)
             return
         }
+        val inUri = otaUri ?: run { log(tr("Najpierw wybierz plik OTA", "Pick an OTA file first")); return }
+        val out = otaOut ?: run { log(tr("Najpierw wybierz folder docelowy", "Pick a target folder first")); return }
+        busy = true
         exec.execute {
             var dir: File? = null
             try {
@@ -589,6 +607,7 @@ class MainActivity : Activity() {
                 runOnUiThread { fwSummary.text = fw.summary() }
                 log(tr("Gotowe w ${(System.currentTimeMillis() - t0) / 1000} s. Folder ustawiony do flashowania:\n", "Done in ${(System.currentTimeMillis() - t0) / 1000} s. Folder set for flashing:\n") + fw.summary())
                 setStep(tr("Rozpakowano - mozna flashowac", "Extracted - ready to flash"))
+                docIdToFile(r.folderDocId)?.takeIf { it.isDirectory }?.let { prefs.edit().putString("lastExtract", it.path).putString("lastExtractOta", otaName).apply() }
                 if (thenHybrid) {
                     dir = docIdToFile(r.folderDocId)
                     if (dir == null || !dir.isDirectory) { dir = null; log(tr("Nie moge znalezc rozpakowanego folderu jako sciezki - wybierz go w zakladce Firmware", "Cannot map the extracted folder to a path - pick it in the Firmware tab")) }
@@ -919,6 +938,8 @@ class MainActivity : Activity() {
             data?.data?.let { u ->
                 otaUri = u
                 otaName = contentResolver.query(u, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c -> if (c.moveToFirst()) c.getString(0) else null } ?: "payload.bin"
+                try { contentResolver.takePersistableUriPermission(u, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
+                prefs.edit().putString("otaUri", u.toString()).putString("otaName", otaName).apply()
                 updateOtaView()
             }
             return
@@ -927,6 +948,7 @@ class MainActivity : Activity() {
             data?.data?.let { u ->
                 try { contentResolver.takePersistableUriPermission(u, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION) } catch (_: Exception) {}
                 otaOut = u
+                prefs.edit().putString("otaOut", u.toString()).apply()
                 updateOtaView()
             }
             return
