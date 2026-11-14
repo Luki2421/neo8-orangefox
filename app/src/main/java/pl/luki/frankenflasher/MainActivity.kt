@@ -221,7 +221,10 @@ class MainActivity : Activity() {
         ui.row(cConn, ui.button("Info", G, ::info), ui.button("getvar all", G, ::getvarAll))
         val cReb = ui.card(p1, tr("Restart", "Reboot"))
         ui.row(cReb, ui.button("fastbootd", G) { simple("reboot-fastboot", true) }, ui.button("bootloader", G) { simple("reboot-bootloader", true) })
-        ui.row(cReb, ui.button("system", G) { simple("reboot", true) })
+        ui.row(cReb, ui.button("system", G) { simple("reboot", true) }, ui.button("recovery", G) { simple("reboot-recovery", true) })
+        val cSelf = ui.card(p1, tr("Restart tego telefonu (root)", "Reboot this phone (root)"))
+        ui.row(cSelf, ui.button("recovery", G) { selfReboot("recovery") }, ui.button("bootloader", G) { selfReboot("bootloader") })
+        ui.row(cSelf, ui.button("fastbootd", G) { selfReboot("fastboot") }, ui.button("system", G) { selfReboot("") })
         val cSlot = ui.card(p1, tr("Aktywny slot", "Active slot"))
         ui.row(cSlot, ui.button("Slot A", G) { simple("set_active:a", false) }, ui.button("Slot B", G) { simple("set_active:b", false) })
         val cImg = ui.card(p1, tr("Pojedynczy obraz", "Single image"))
@@ -679,6 +682,28 @@ class MainActivity : Activity() {
     }
 
     private fun getvarAll() = withFb { f -> f.getVarAll().forEach { log("  $it") } }
+
+    /** Restart telefonu, na ktorym dziala aplikacja - wymaga roota (Magisk/KernelSU/APatch). */
+    private fun selfReboot(mode: String) {
+        val label = mode.ifEmpty { "system" }
+        AlertDialog.Builder(this)
+            .setTitle(tr("Restart tego telefonu", "Reboot this phone"))
+            .setMessage(tr("Uruchomic ten telefon ponownie do: $label?", "Reboot this phone to: $label?"))
+            .setPositiveButton(tr("Restart", "Reboot")) { _, _ ->
+                Thread {
+                    try {
+                        val p = ProcessBuilder("su", "-c", if (mode.isEmpty()) "reboot" else "reboot $mode").redirectErrorStream(true).start()
+                        val out = p.inputStream.bufferedReader().readText().trim()
+                        val rc = p.waitFor()
+                        if (rc != 0) log(tr("Restart nieudany (kod $rc): $out - brak roota albo odmowa w menedzerze roota", "Reboot failed (code $rc): $out - no root or denied in the root manager"))
+                    } catch (e: Exception) {
+                        log(tr("Brak roota (su): ${e.message} - restart tego telefonu wymaga Magisk/KernelSU/APatch", "No root (su): ${e.message} - rebooting this phone needs Magisk/KernelSU/APatch"))
+                    }
+                }.start()
+            }
+            .setNegativeButton(tr("Anuluj", "Cancel"), null)
+            .show()
+    }
 
     private fun simple(cmd: String, reboot: Boolean) = withFb { f ->
         log("> $cmd")
