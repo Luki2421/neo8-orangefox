@@ -248,7 +248,10 @@ class MainActivity : Activity() {
         cOta.addView(otaView, ui.lp(bottom = 12))
         ui.row(cOta, ui.button(tr("Wybierz OTA", "Pick OTA"), G, ::pickOta), ui.button(tr("Cel", "Target"), G, ::pickOtaOut))
         val cOta2 = ui.card(p2, tr("Akcja", "Action"))
-        ui.row(cOta2, ui.button(tr("Rozpakuj", "Extract"), B) { extractOta(false) })
+        ui.row(cOta2, ui.button(tr("Rozpakuj jako BAZA", "Extract as BASE"), B) { extractRole(true) }, ui.button(tr("Rozpakuj jako DAWCA", "Extract as DONOR"), B) { extractRole(false) })
+        cOta2.addView(ui.body(tr("Bez wybierania celu: FrankenFlasher/Baza|Dawca/<wersja oprogramowania>, ustawia od razu baze/dawce Frankena.",
+            "No target needed: FrankenFlasher/Baza|Dawca/<firmware version>, sets the Franken base/donor right away.")), ui.lp(bottom = 10))
+        ui.row(cOta2, ui.button(tr("Rozpakuj do wybranego folderu", "Extract to chosen folder"), G) { extractOta(false) })
         ui.row(cOta2, ui.button(tr("OTA zip -> hybrid ZIP (super flasher)", "OTA zip -> hybrid ZIP (super flasher)"), G) { extractOta(true) })
         ui.row(cOta2, ui.button(tr("Sprawdz sumy folderu z OTA", "Verify folder checksums against OTA"), G, ::verifyOta))
 
@@ -625,6 +628,55 @@ class MainActivity : Activity() {
                 setStep(tr("BLAD rozpakowania", "EXTRACTION ERROR"))
             } finally { setProgress(0, 0); busy = false }
             dir?.let { d -> superFolder = d; runOnUiThread { buildSuperFlasher(true) } }
+        }
+    }
+
+    private fun dirFirmware(dir: File) = FirmwareFolder(FirmwareFolder.GROUPS.associateWith { g ->
+        File(dir, g).listFiles { f -> f.isFile && f.name.endsWith(".img") && f.length() > 0 }.orEmpty().sortedBy { it.name }
+            .map { pl.luki.frankenflasher.firmware.DocImage(it) }
+    }.filterValues { it.isNotEmpty() })
+
+    /** Rozpakowanie OTA do FrankenFlasher/Baza|Dawca/<wersja> (dostep do wszystkich plikow, bez wyboru folderu). */
+    private fun extractRole(base: Boolean) {
+        if (busy) { log(tr("Trwa inna operacja - poczekaj az sie skonczy", "Another operation is running - wait until it finishes")); return }
+        val inUri = otaUri ?: run { log(tr("Najpierw wybierz plik OTA", "Pick an OTA file first")); return }
+        if (!hasAllFiles()) { requestAllFiles(); return }
+        busy = true
+        exec.execute {
+            var dir: File? = null
+            try {
+                val ex = OtaExtractor(this, ::log, ::setProgress)
+                val name = ex.versionName(inUri, otaName)
+                val role = if (base) "Baza" else "Dawca"
+                val d = File(File(android.os.Environment.getExternalStorageDirectory(), "FrankenFlasher/$role"), name)
+                if (isExtracted(d) && File(d, "extract_ok.txt").takeIf { it.isFile }?.readText()?.trim().let { it == null || it == otaName }) {
+                    log(tr("$role: $name juz rozpakowane - pomijam rozpakowanie", "$role: $name already extracted - skipping extraction"))
+                } else {
+                    if (d.exists()) d.deleteRecursively()
+                    val free = android.os.Environment.getExternalStorageDirectory().usableSpace
+                    log(tr("Rozpakowywanie $otaName -> FrankenFlasher/$role/$name (wolne ${free / (1 shl 30)} GB)", "Extracting $otaName -> FrankenFlasher/$role/$name (free ${free / (1 shl 30)} GB)"))
+                    setStep(tr("Rozpakowywanie ($role)...", "Extracting ($role)..."))
+                    val t0 = System.currentTimeMillis()
+                    ex.extractToDir(inUri, otaName, d)
+                    log(tr("Gotowe w ${(System.currentTimeMillis() - t0) / 1000} s", "Done in ${(System.currentTimeMillis() - t0) / 1000} s"))
+                }
+                dir = d
+                val fw = dirFirmware(d)
+                firmware = fw
+                runOnUiThread { fwSummary.text = fw.summary() }
+                prefs.edit().putString("lastExtract", d.path).putString("lastExtractOta", otaName).apply()
+                superFolder = d
+                runOnUiThread {
+                    if (base) { frBase = d; frBaseView.text = d.path.removePrefix("/storage/emulated/0/") }
+                    else { frDonor = d; frDonorView.text = d.path.removePrefix("/storage/emulated/0/") }
+                    frResult = null
+                    saveFranken(null)
+                }
+                log(tr("Franken: ${if (base) "BAZA" else "DAWCA"} = FrankenFlasher/$role/$name\n", "Franken: ${if (base) "BASE" else "DONOR"} = FrankenFlasher/$role/$name\n") + fw.summary())
+                setStep(tr("Rozpakowano ($role: $name)", "Extracted ($role: $name)"))
+            } catch (e: Exception) {
+                log(tr("BLAD rozpakowania: ${e.message ?: e}", "EXTRACTION ERROR: ${e.message ?: e}")); setStep(tr("BLAD rozpakowania", "EXTRACTION ERROR"))
+            } finally { busy = false; setProgress(0, 0) }
         }
     }
 

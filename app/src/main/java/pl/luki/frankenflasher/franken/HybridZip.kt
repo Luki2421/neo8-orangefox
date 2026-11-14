@@ -269,6 +269,12 @@ ui "- Partycje fizyczne slot A / physical partitions slot A"
         for ((n, e) in physR) s.append("pa $n ${ddArgs(e.dataOffset, 0, e.size)}\n")
         s.append("ui \"- Partycje fizyczne slot B / physical partitions slot B\"\n")
         for ((n, e) in physR) s.append("pb $n ${ddArgs(e.dataOffset, 0, e.size)}\n")
+        // stare mapowania partycji logicznych (dm) - recovery (AERA) mogl je miec otwarte; po zmianie tablicy super
+        // zostalyby nieaktualne i odswiezanie partycji w recovery sie zawiesza
+        s.append("ui \"- super: odmapowanie starych partycji / unmapping old partitions\"\n")
+        s.append("for n in ${logical.joinToString(" ") { it.first }}; do for x in _a _b; do d=/dev/block/mapper/${'$'}n${'$'}x; [ -e ${'$'}d ] || continue; " +
+            "umount -l ${'$'}(grep \"${'$'}(readlink -f ${'$'}d) \" /proc/mounts | cut -d' ' -f2) 2>/dev/null; " +
+            "dmctl delete ${'$'}n${'$'}x >/dev/null 2>&1 || dmsetup remove ${'$'}n${'$'}x >/dev/null 2>&1; lg \"  unmap ${'$'}n${'$'}x\"; done; done\n")
         s.append("ui \"- super: metadane / metadata\"\n")
         s.append("w super ${ddArgs(meta.dataOffset, 0, meta.size)}\n")
         s.append("ui \"- super: partycje logiczne / logical partitions (slot a)\"\n")
@@ -277,6 +283,7 @@ ui "- Partycje fizyczne slot A / physical partitions slot A"
             s.append("ui \"  ${n}_a\"\nw super ${ddArgs(e.dataOffset, off, e.size)}\n")
         }
         s.append("""sync
+echo 3 > /proc/sys/vm/drop_caches 2>/dev/null
 if command -v bootctl >/dev/null 2>&1; then bootctl set-active-boot-slot 0 && ui "- Aktywny slot / active slot: a"; else ui "- Ustaw slot A w recovery (Reboot > Slot A) / set slot A"; fi
 if [ ${'$'}ERR = 0 ]; then ui "- GOTOWE / DONE. Przy zmianie systemu zrob Format Data / Format Data when changing system"; exit 0; fi
 ui "! Wystapily bledy / errors occurred"

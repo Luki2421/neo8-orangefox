@@ -88,7 +88,51 @@ class OtaExtractor(
         return bad
     }
 
+    /** Folder wyjsciowy: SAF albo zwykly katalog (dostep do wszystkich plikow). */
+    private interface Out {
+        fun sub(name: String): Out
+        fun create(name: String): android.os.ParcelFileDescriptor
+        fun input(name: String): InputStream
+        fun write(name: String, b: ByteArray)
+    }
+
+    private inner class SafOut(val uri: Uri) : Out {
+        private val files = java.util.concurrent.ConcurrentHashMap<String, Uri>()
+        private val cr get() = ctx.contentResolver
+        override fun sub(name: String) = SafOut(DocumentsContract.createDocument(cr, uri, DocumentsContract.Document.MIME_TYPE_DIR, name)
+            ?: throw java.io.IOException(tr("Nie mozna utworzyc $name", "Cannot create $name")))
+        override fun create(name: String): android.os.ParcelFileDescriptor {
+            val d = DocumentsContract.createDocument(cr, uri, "application/octet-stream", name) ?: throw java.io.IOException(tr("Nie mozna utworzyc $name", "Cannot create $name"))
+            files[name] = d
+            return cr.openFileDescriptor(d, "rw") ?: throw java.io.IOException(tr("Zapis $name niemozliwy", "Cannot write $name"))
+        }
+        override fun input(name: String) = cr.openInputStream(files.getValue(name)) ?: throw java.io.IOException("odczyt $name")
+        override fun write(name: String, b: ByteArray) { create(name).use { FileOutputStream(it.fileDescriptor).write(b) } }
+    }
+
+    private class FileOut(val dir: java.io.File) : Out {
+        init { dir.mkdirs() }
+        override fun sub(name: String) = FileOut(java.io.File(dir, name))
+        override fun create(name: String): android.os.ParcelFileDescriptor = android.os.ParcelFileDescriptor.open(java.io.File(dir, name),
+            android.os.ParcelFileDescriptor.MODE_READ_WRITE or android.os.ParcelFileDescriptor.MODE_CREATE or android.os.ParcelFileDescriptor.MODE_TRUNCATE)
+        override fun input(name: String): InputStream = java.io.File(dir, name).inputStream()
+        override fun write(name: String, b: ByteArray) = java.io.File(dir, name).writeBytes(b)
+    }
+
     fun extract(input: Uri, inputName: String, outTree: Uri, threads: Int = 3): Result {
+        val rootDoc = DocumentsContract.buildDocumentUriUsingTree(outTree, DocumentsContract.getTreeDocumentId(outTree))
+        val outName = inputName.substringBeforeLast('.').ifEmpty { "firmware" }
+        val outDir = SafOut(rootDoc).sub(outName)
+        extractTo(input, inputName, outDir, outName, threads)
+        return Result(outTree, DocumentsContract.getDocumentId(outDir.uri))
+    }
+
+    /** Rozpakowanie do zwyklego katalogu [dir] (tworzonego, jesli nie istnieje). */
+    fun extractToDir(input: Uri, inputName: String, dir: java.io.File, threads: Int = 3) {
+        extractTo(input, inputName, FileOut(dir), dir.name, threads)
+    }
+
+    private fun extractTo(input: Uri, inputName: String, outDir: Out, outName: String, threads: Int) {
         val pfd = ctx.contentResolver.openFileDescriptor(input, "r") ?: throw java.io.IOException(tr("Nie mozna otworzyc $inputName", "Cannot open $inputName"))
         pfd.use {
             val ch = FileInputStream(pfd.fileDescriptor).channel
@@ -105,17 +149,8 @@ class OtaExtractor(
                 if (o.type !in setOf(OpType.REPLACE, OpType.REPLACE_BZ, OpType.REPLACE_XZ, OpType.ZSTD, OpType.ZERO, OpType.DISCARD))
                     throw IllegalArgumentException(tr("${p.name}: operacja typu ${o.type} - to OTA przyrostowe, potrzebne pelne OTA", "${p.name}: operation type ${o.type} - incremental OTA, a full OTA is required"))
             }
-
-            val cr = ctx.contentResolver
-            val rootDoc = DocumentsContract.buildDocumentUriUsingTree(outTree, DocumentsContract.getTreeDocumentId(outTree))
-            val outName = inputName.substringBeforeLast('.').ifEmpty { "firmware" }
-            val outDir = DocumentsContract.createDocument(cr, rootDoc, DocumentsContract.Document.MIME_TYPE_DIR, outName)
-                ?: throw java.io.IOException(tr("Nie mozna utworzyc folderu $outName", "Cannot create folder $outName"))
-            val groupDirs = HashMap<String, Uri>()
-            for (g in listOf("BOOTLOADER", "CRITICAL", "EXTRA", "MODEM", "SYSTEM")) {
-                groupDirs[g] = DocumentsContract.createDocument(cr, outDir, DocumentsContract.Document.MIME_TYPE_DIR, g)
-                    ?: throw java.io.IOException(tr("Nie mozna utworzyc $g", "Cannot create $g"))
-            }
+            val groupDirs = HashMap<String, Out>()
+            for (g in listOf("BOOTLOADER", "CRITICAL", "EXTRA", "MODEM", "SYSTEM")) groupDirs[g] = outDir.sub(g)
 
             val total = info.parts.sumOf { it.size }
             val done = AtomicLong()
@@ -126,10 +161,9 @@ class OtaExtractor(
                 for (p in info.parts.sortedByDescending { it.size }) {
                     futures += pool.submit(Runnable {
                         val g = Classifier.folder(p.name, info.dynamic)
-                        val doc = DocumentsContract.createDocument(cr, groupDirs[g]!!, "application/octet-stream", "${p.name}.img")
-                            ?: throw java.io.IOException(tr("Nie mozna utworzyc ${p.name}.img", "Cannot create ${p.name}.img"))
-                        writePartition(ch, info, p, doc) { n -> progress(done.addAndGet(n), total) }
-                        val ok = p.hash?.let { sha256(doc) {}.contentEquals(it) }
+                        val gd = groupDirs[g]!!
+                        gd.create("${p.name}.img").use { opfd -> writePartition(ch, info, p, opfd) { n -> progress(done.addAndGet(n), total) } }
+                        val ok = p.hash?.let { h -> sha256(gd.input("${p.name}.img")).contentEquals(h) }
                         when (ok) {
                             true -> log(tr("  $g/${p.name}.img (${p.size / (1 shl 20)} MB) - suma OK", "  $g/${p.name}.img (${p.size / (1 shl 20)} MB) - checksum OK"))
                             false -> { synchronized(bad) { bad += p.name }; log(tr("  $g/${p.name}.img - ZLA SUMA SHA-256!", "  $g/${p.name}.img - BAD SHA-256 CHECKSUM!")) }
@@ -142,30 +176,52 @@ class OtaExtractor(
                 pool.shutdownNow()
             }
             if (bad.isNotEmpty()) throw IllegalStateException(tr("Bledne sumy: ${bad.joinToString()} - NIE flashuj, rozpakuj ponownie", "Bad checksums: ${bad.joinToString()} - DO NOT flash, extract again"))
-            if (superDef != null) try {
-                DocumentsContract.createDocument(cr, outDir, "application/octet-stream", "super_def.json")?.let { u ->
-                    cr.openOutputStream(u)?.use { it.write(superDef.second) }
-                }
-            } catch (_: Exception) {}
+            if (superDef != null) try { outDir.write("super_def.json", superDef.second) } catch (_: Exception) {}
             // uklad super z OTA (grupy i rozmiary) - dla budowania super flashera
             if (info.groups.isNotEmpty()) try {
                 val txt = info.groups.joinToString("\n") { g -> "${g.name} ${g.size} ${g.partitions.joinToString(",")}" } + "\n"
-                DocumentsContract.createDocument(cr, outDir, "text/plain", "super_groups.txt")?.let { u ->
-                    cr.openOutputStream(u)?.use { it.write(txt.toByteArray()) }
-                }
+                outDir.write("super_groups.txt", txt.toByteArray())
             } catch (_: Exception) {}
-            try {
-                DocumentsContract.createDocument(cr, outDir, "text/plain", "extract_ok.txt")?.let { u -> cr.openOutputStream(u)?.use { it.write("$inputName\n".toByteArray()) } }
-            } catch (_: Exception) {}
+            try { outDir.write("extract_ok.txt", "$inputName\n".toByteArray()) } catch (_: Exception) {}
             log(tr("Rozpakowano do: $outName - wszystkie sumy SHA-256 zgodne", "Extracted to: $outName - all SHA-256 checksums match"))
-            return Result(outTree, DocumentsContract.getDocumentId(outDir))
         }
     }
 
-    private fun writePartition(src: FileChannel, info: PayloadInfo, p: PartUpdate, doc: Uri, onBytes: (Long) -> Unit) {
+    private fun sha256(input: InputStream): ByteArray {
+        val md = java.security.MessageDigest.getInstance("SHA-256")
+        val buf = ByteArray(1 shl 20)
+        input.use { i -> while (true) { val n = i.read(buf); if (n < 0) break; md.update(buf, 0, n) } }
+        return md.digest()
+    }
+
+    /** Nazwa wersji oprogramowania z META-INF/com/android/metadata (OTA zip) - do nazwy folderu. */
+    fun versionName(input: Uri, inputName: String): String {
+        val fallback = inputName.substringBeforeLast('.').ifEmpty { "firmware" }
+        val props = HashMap<String, String>()
+        try {
+            ctx.contentResolver.openFileDescriptor(input, "r")?.use { pfd ->
+                val ch = FileInputStream(pfd.fileDescriptor).channel
+                ZipLocator.readEntry(ch) { n -> n == "META-INF/com/android/metadata" }?.second?.let { b ->
+                    String(b).lines().forEach { l -> val k = l.substringBefore('=', ""); if (k.isNotEmpty()) props[k.trim()] = l.substringAfter('=').trim() }
+                }
+            }
+        } catch (_: Exception) {}
+        val cands = listOf("version_name", "ota_target_version", "display_id", "version_name_show")
+        var v = cands.firstNotNullOfOrNull { props[it]?.takeIf { s -> s.isNotBlank() } }
+        if (v == null) {
+            val dev = props["pre-device"]?.substringBefore(',') ?: props["post-build"]?.split('/')?.getOrNull(1)
+            val inc = props["post-build-incremental"]
+            v = if (dev != null && inc != null) "${dev}_$inc" else null
+        }
+        // nazwa pliku wyglada jak nazwa wersji (nie hash) - zostaw
+        val looksHash = Regex("^[0-9a-fA-F]{24,}$").matches(fallback)
+        val name = if (!looksHash || v == null) fallback else v
+        return name.replace(Regex("""[\\/:*?"<>|\s]+"""), "_").take(80)
+    }
+
+    private fun writePartition(src: FileChannel, info: PayloadInfo, p: PartUpdate, opfd: android.os.ParcelFileDescriptor, onBytes: (Long) -> Unit) {
         val bs = info.blockSize.toLong()
-        val opfd = ctx.contentResolver.openFileDescriptor(doc, "rw") ?: throw java.io.IOException(tr("Zapis ${p.name} niemozliwy", "Cannot write ${p.name}"))
-        opfd.use {
+        run {
             Os.ftruncate(opfd.fileDescriptor, p.size)
             val out = FileOutputStream(opfd.fileDescriptor).channel
             val buf = ByteArray(1 shl 20)
