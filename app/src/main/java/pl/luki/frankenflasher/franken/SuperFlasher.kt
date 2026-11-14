@@ -41,7 +41,7 @@ class SuperFlasher(private val log: (String) -> Unit, private val progress: (Lon
 
     class Setup(val images: Map<String, File>, val superSize: Long, val group: String, val groupMax: Long)
 
-    fun setup(folder: File, superSizeIn: Long?): Setup {
+    fun setup(folder: File, superSizeIn: Long?, imagesOverride: Map<String, File>? = null): Setup {
         val def = File(folder, "super_def.json").takeIf { it.isFile }?.let { parseDef(it.readText()) }
         val gfile = File(folder, "super_groups.txt")
         val payloadGroup = if (gfile.isFile) gfile.readLines().map { it.trim().split(' ') }.filter { it.size >= 2 }
@@ -53,7 +53,7 @@ class SuperFlasher(private val log: (String) -> Unit, private val progress: (Lon
             ?: throw IOException(tr("Brak super_def.json/super_groups.txt w folderze i nie podano rozmiaru super", "No super_def.json/super_groups.txt in the folder and no super size given"))
         if (def != null) log(tr("super_def.json: super ${def.superSize} B, grupa ${def.group} ${def.groupMax} B", "super_def.json: super ${def.superSize} B, group ${def.group} ${def.groupMax} B"))
         val sys = File(folder, "SYSTEM")
-        val images = sys.listFiles { f -> f.isFile && f.name.endsWith(".img") && f.length() > 0 }.orEmpty()
+        val images = imagesOverride ?: sys.listFiles { f -> f.isFile && f.name.endsWith(".img") && f.length() > 0 }.orEmpty()
             .associateBy { it.name.removeSuffix(".img") }
         if (images.isEmpty()) throw IOException(tr("Brak obrazow w ${sys.path}", "No images in ${sys.path}"))
         var group = def?.group ?: "qti_dynamic_partitions"

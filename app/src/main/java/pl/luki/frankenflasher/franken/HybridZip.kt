@@ -42,11 +42,20 @@ class HybridZip(private val log: (String) -> Unit, private val progress: (Long, 
     }
 
     fun build(folder: File, superSizeIn: Long?, disableVbmeta: Boolean, out: File): File {
-        val st = SuperFlasher(log).setup(folder, superSizeIn)
+        val groups = (PHYS_GROUPS + "SYSTEM").associateWith { g ->
+            File(folder, g).listFiles { f -> f.isFile && f.name.endsWith(".img") && f.length() > 0 }.orEmpty().sortedBy { it.name }
+        }
+        return build(groups, folder, superSizeIn, disableVbmeta, out)
+    }
+
+    /** [groups]: CRITICAL/EXTRA/MODEM/BOOTLOADER/SYSTEM -> obrazy (np. wynik Frankena), [layoutFolder]: skad rozmiar super
+     *  (super_def.json / super_groups.txt). */
+    fun build(groups: Map<String, List<File>>, layoutFolder: File, superSizeIn: Long?, disableVbmeta: Boolean, out: File): File {
+        val sysImgs = groups["SYSTEM"].orEmpty().filter { it.length() > 0 }.associateBy { it.name.removeSuffix(".img") }
+        val st = SuperFlasher(log).setup(layoutFolder, superSizeIn, sysImgs)
         val plan = SuperBuilder(log).plan(st.images, st.group, st.groupMax, st.superSize)
-        val phys = PHYS_GROUPS.flatMap { g ->
-            File(folder, g).listFiles { f -> f.isFile && f.name.endsWith(".img") && f.length() > 0 }.orEmpty().sortedBy { it.name }.map { g to it }
-        }.sortedBy { (g, f) -> if (g == "BOOTLOADER" && f.name.startsWith("vbmeta")) 1 else 0 }
+        val phys = PHYS_GROUPS.flatMap { g -> groups[g].orEmpty().filter { it.length() > 0 }.sortedBy { it.name }.map { g to it } }
+            .sortedBy { (g, f) -> if (g == "BOOTLOADER" && f.name.startsWith("vbmeta")) 1 else 0 }
 
         out.parentFile?.mkdirs()
         val need = phys.sumOf { it.second.length() } + st.images.values.sumOf { it.length() } + 256 * MB

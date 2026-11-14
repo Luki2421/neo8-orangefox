@@ -296,6 +296,7 @@ class MainActivity : Activity() {
         cSrc.addView(frDonorView, ui.lp(bottom = 12))
         ui.row(cSrc, ui.button(tr("Baza (Neo 8)", "Base (Neo 8)"), G) { pickTree(REQ_FR_BASE) }, ui.button(tr("Dawca (GT 8 Pro)", "Donor (GT 8 Pro)"), G) { pickTree(REQ_FR_DONOR) })
         ui.row(cSrc, ui.button(tr("Partycje: baza / dawca", "Partitions: base / donor"), G, ::choosePartitions))
+        ui.row(cSrc, ui.button(tr("Franken -> hybrid ZIP (recovery, bez OTG)", "Franken -> hybrid ZIP (recovery, no OTG)"), B, ::frankenHybrid))
         val cFr = ui.card(p4, tr("Poprawki", "Fixes"))
         ui.toggle(cFr, tr("my_product: konfiguracja sprzetu z bazy", "my_product: hardware config from base"), { frOpt.patchMyProduct }, { frOpt.patchMyProduct = it })
         ui.toggle(cFr, tr("wibracje z bazy (bez qcom_lmvibrator)", "vibration from base (no qcom_lmvibrator)"), { frOpt.fixVibration }, { frOpt.fixVibration = it })
@@ -865,6 +866,42 @@ class MainActivity : Activity() {
                 if (superFolder == null) u?.let { loadFirmware(it, save = false) }
             } catch (e: Exception) {
                 log(tr("BLAD super: $e", "super ERROR: $e")); setStep(tr("BLAD super", "super ERROR"))
+            } finally { busy = false; setProgress(0, 0) }
+        }
+    }
+
+    /** Zbudowany Franken jako hybrid ZIP: firmware bazy + SYSTEM z wyniku, rozmiar super z folderu bazy. */
+    private fun frankenHybrid() {
+        if (busy) { log(tr("Trwa inna operacja - poczekaj az sie skonczy", "Another operation is running - wait until it finishes")); return }
+        val txt = prefs.getString("frResult", null)
+        if (frResult == null || txt == null) { log(tr("Najpierw nacisnij Zbuduj Franken", "Tap Build Franken first")); return }
+        val groups = LinkedHashMap<String, MutableList<File>>()
+        txt.lines().filter { it.contains('|') }.forEach { l -> val (g, p) = l.split('|', limit = 2); groups.getOrPut(g) { ArrayList() } += File(p) }
+        groups.values.flatten().firstOrNull { !it.isFile }?.let { log(tr("Brak pliku ${it.path} - zbuduj Franken ponownie", "Missing ${it.path} - build Franken again")); return }
+        val base = frBase ?: groups["SYSTEM"]?.firstOrNull { it.parentFile?.parentFile?.let { d -> File(d, "CRITICAL").isDirectory } == true }?.parentFile?.parentFile
+        if (base == null) { log(tr("Wybierz folder bazy (Neo 8)", "Pick the base folder (Neo 8)")); return }
+        if (!hasAllFiles()) { requestAllFiles(); return }
+        val size = superEdit.text.toString().trim().toLongOrNull()?.takeIf { it > 0 }
+            ?: prefs.getLong("superSize", 0L).takeIf { it > 0 && !File(base, "super_def.json").isFile && !File(base, "super_groups.txt").isFile }?.also {
+                log(tr("super: rozmiar zapamietany z telefonu: $it B", "super: size remembered from the phone: $it B"))
+            }
+        if (size == null && !File(base, "super_def.json").isFile && !File(base, "super_groups.txt").isFile) {
+            log(tr("Folder bazy nie ma super_groups.txt ani super_def.json - rozpakuj baze w tej aplikacji (zakladka OTA), wpisz rozmiar super (Neo 8: 18790481920) albo raz podlacz telefon (Polacz)",
+                "Base folder has no super_groups.txt or super_def.json - extract the base in this app (OTA tab), enter the super size (Neo 8: 18790481920) or connect the phone once (Connect)"))
+            return
+        }
+        busy = true
+        exec.execute {
+            try {
+                setStep(tr("Budowanie Franken hybrid ZIP", "Building Franken hybrid ZIP"))
+                val t0 = System.currentTimeMillis()
+                val zip = File(android.os.Environment.getExternalStorageDirectory(), "FrankenFlasher/Franken_hybrid.zip")
+                pl.luki.frankenflasher.franken.HybridZip(::log, ::setProgress).build(groups, base, size, opt.disableVbmeta, zip)
+                log(tr("Recovery (TWRP/AERA/OrangeFox): Install -> FrankenFlasher/${zip.name}, potem Format Data (zmiana systemu). Gotowe w ${(System.currentTimeMillis() - t0) / 1000} s",
+                    "Recovery (TWRP/AERA/OrangeFox): Install -> FrankenFlasher/${zip.name}, then Format Data (system change). Done in ${(System.currentTimeMillis() - t0) / 1000} s"))
+                setStep(tr("Franken hybrid ZIP gotowy", "Franken hybrid ZIP ready"))
+            } catch (e: Exception) {
+                log(tr("BLAD Franken hybrid: $e", "Franken hybrid ERROR: $e")); setStep(tr("BLAD Franken hybrid", "Franken hybrid ERROR"))
             } finally { busy = false; setProgress(0, 0) }
         }
     }
