@@ -835,17 +835,12 @@ class MainActivity : Activity() {
         val all = (nb + nd).filter { it != "my_manifest" && it != "my_product" }.sorted()
         val labels = all.map { n -> n + when { n !in nb -> tr("  (tylko dawca)", "  (donor only)"); n !in nd -> tr("  (tylko baza)", "  (base only)"); else -> "" } }.toTypedArray()
         val checked = all.map { it in frOpt.fromBase }.toBooleanArray()
-        AlertDialog.Builder(this)
-            .setTitle(tr("Zaznaczone = z BAZY, reszta z dawcy", "Checked = from BASE, rest from donor"))
-            .setMultiChoiceItems(labels, checked) { _, i, c -> checked[i] = c }
-            .setPositiveButton("OK") { _, _ ->
+        searchableMulti(tr("Zaznaczone = z BAZY, reszta z dawcy", "Checked = from BASE, rest from donor"), labels.toList(), checked, {
                 frOpt.fromBase = all.filterIndexed { i, _ -> checked[i] }.toMutableSet()
                 frResult = null
                 saveFranken(null)
                 log(tr("Franken: z bazy: ${frOpt.fromBase.sorted().joinToString().ifEmpty { "(nic)" }}; z dawcy: ${all.count { it !in frOpt.fromBase && it in nd } + 2} (z my_product i my_manifest*)", "Franken: from base: ${frOpt.fromBase.sorted().joinToString().ifEmpty { "(none)" }}; from donor: ${all.count { it !in frOpt.fromBase && it in nd } + 2} (incl. my_product and my_manifest*)"))
-            }
-            .setNegativeButton(tr("Anuluj", "Cancel"), null)
-            .show()
+            })
     }
 
     private var superHybrid = false
@@ -916,6 +911,81 @@ class MainActivity : Activity() {
         }
     }
 
+    // ---------------- Listy z wyszukiwarka ----------------
+
+    private fun searchBox(): EditText = EditText(this).apply {
+        hint = tr("Szukaj...", "Search...")
+        isSingleLine = true
+        inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+    }
+
+    private fun matches(label: String, q: String): Boolean {
+        if (q.isBlank()) return true
+        val l = label.lowercase()
+        return q.lowercase().split(' ').filter { it.isNotBlank() }.all { l.contains(it) }
+    }
+
+    /** Lista wielokrotnego wyboru z polem wyszukiwania; [checked] zmieniane na miejscu. */
+    private fun searchableMulti(title: String, labels: List<String>, checked: BooleanArray, onOk: () -> Unit,
+                                neutral: Pair<String, () -> Unit>? = null) {
+        val box = searchBox()
+        val list = android.widget.ListView(this).apply { choiceMode = android.widget.ListView.CHOICE_MODE_MULTIPLE }
+        var shown = labels.indices.toList()
+        val count = TextView(this).apply { setPadding(ui.dp(4), ui.dp(4), 0, ui.dp(4)) }
+        fun refresh() {
+            shown = labels.indices.filter { matches(labels[it], box.text.toString()) }
+            list.adapter = android.widget.ArrayAdapter(this, android.R.layout.simple_list_item_multiple_choice, shown.map { labels[it] })
+            shown.forEachIndexed { pos, i -> list.setItemChecked(pos, checked[i]) }
+            count.text = tr("zaznaczone: ${checked.count { it }}  ·  widoczne: ${shown.size}/${labels.size}", "checked: ${checked.count { it }}  ·  shown: ${shown.size}/${labels.size}")
+        }
+        list.setOnItemClickListener { _, _, pos, _ ->
+            val i = shown[pos]; checked[i] = list.isItemChecked(pos)
+            count.text = tr("zaznaczone: ${checked.count { it }}  ·  widoczne: ${shown.size}/${labels.size}", "checked: ${checked.count { it }}  ·  shown: ${shown.size}/${labels.size}")
+        }
+        box.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) = refresh()
+        })
+        refresh()
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(ui.dp(16), ui.dp(8), ui.dp(16), 0)
+            addView(box); addView(count)
+            addView(list, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (resources.displayMetrics.heightPixels * 0.55).toInt()))
+        }
+        val b = AlertDialog.Builder(this).setTitle(title).setView(root)
+            .setPositiveButton("OK") { _, _ -> onOk() }
+            .setNegativeButton(tr("Anuluj", "Cancel"), null)
+        neutral?.let { (t, f) -> b.setNeutralButton(t) { _, _ -> f() } }
+        b.show()
+    }
+
+    /** Lista pojedynczego wyboru z polem wyszukiwania. */
+    private fun searchableSingle(title: String, labels: List<String>, onPick: (Int) -> Unit) {
+        val box = searchBox()
+        val list = android.widget.ListView(this)
+        var shown = labels.indices.toList()
+        lateinit var dlg: AlertDialog
+        fun refresh() {
+            shown = labels.indices.filter { matches(labels[it], box.text.toString()) }
+            list.adapter = android.widget.ArrayAdapter(this, android.R.layout.simple_list_item_1, shown.map { labels[it] })
+        }
+        list.setOnItemClickListener { _, _, pos, _ -> onPick(shown[pos]); dlg.dismiss() }
+        box.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) = refresh()
+        })
+        refresh()
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(ui.dp(16), ui.dp(8), ui.dp(16), 0)
+            addView(box)
+            addView(list, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (resources.displayMetrics.heightPixels * 0.55).toInt()))
+        }
+        dlg = AlertDialog.Builder(this).setTitle(title).setView(root).setNegativeButton(tr("Anuluj", "Cancel"), null).create()
+        dlg.show()
+    }
+
     // ---------------- Debloat ----------------
 
     private fun debloatSet(): Set<String> = prefs.getString("debloat", "")!!.lines().filter { it.contains(':') }.toSet()
@@ -952,24 +1022,17 @@ class MainActivity : Activity() {
             runOnUiThread {
                 val labels = apps.map { "${it.name}  ·  ${it.image}/${it.path.substringBeforeLast('/')}  ·  ${"%.1f".format(it.size / 1048576.0)} MB" }.toTypedArray()
                 val checked = apps.map { it.key in sel }.toBooleanArray()
-                AlertDialog.Builder(this)
-                    .setTitle(tr("Zaznacz aplikacje do USUNIECIA (${apps.size})", "Check apps to REMOVE (${apps.size})"))
-                    .setMultiChoiceItems(labels, checked) { _, i, c -> checked[i] = c }
-                    .setPositiveButton("OK") { _, _ ->
+                searchableMulti(tr("Zaznacz aplikacje do USUNIECIA (${apps.size})", "Check apps to REMOVE (${apps.size})"), labels.toList(), checked, {
                         apps.forEachIndexed { i, a -> if (checked[i]) sel += a.key else sel -= a.key }
                         prefs.edit().putString("debloat", sel.joinToString("\n")).apply()
-                        val n = apps.count { it.key in sel }
-                        log(tr("debloat: do usuniecia $n: ", "debloat: to remove $n: ") + apps.filter { it.key in sel }.joinToString { it.name } +
+                        log(tr("debloat: do usuniecia ${apps.count { it.key in sel }}: ", "debloat: to remove ${apps.count { it.key in sel }}: ") + apps.filter { it.key in sel }.joinToString { it.name } +
                             tr("\nUWAGA: nie usuwaj uslug systemowych (np. GmsCore, Phonesky, SystemUI, Launcher) - system moze sie nie uruchomic.",
                                 "\nWARNING: do not remove system services (e.g. GmsCore, Phonesky, SystemUI, Launcher) - the system may not boot."))
-                    }
-                    .setNeutralButton(tr("Wyczysc wybor", "Clear selection")) { _, _ ->
+                    }, tr("Wyczysc wybor", "Clear selection") to {
                         apps.forEach { sel -= it.key }
                         prefs.edit().putString("debloat", sel.joinToString("\n")).apply()
                         log(tr("debloat: wybor wyczyszczony", "debloat: selection cleared"))
-                    }
-                    .setNegativeButton(tr("Anuluj", "Cancel"), null)
-                    .show()
+                    })
             }
         }
     }
@@ -1150,12 +1213,9 @@ class MainActivity : Activity() {
     private fun pickPartition() {
         val common = listOf("boot", "init_boot", "vendor_boot", "recovery", "dtbo", "vbmeta", "vbmeta_system", "vbmeta_vendor", "modem", "abl", "xbl", "super")
         fun show(items: List<String>, fromDevice: Boolean) = runOnUiThread {
-            val arr = items.toTypedArray()
-            AlertDialog.Builder(this)
-                .setTitle(if (fromDevice) tr("Partycje w telefonie (${arr.size})", "Partitions on phone (${arr.size})") else tr("Typowe partycje (polacz telefon, by zobaczyc wszystkie)", "Common partitions (connect phone to see all)"))
-                .setItems(arr) { _, i -> partEdit.setText(arr[i].substringBefore("  ")) }
-                .setNegativeButton(tr("Anuluj", "Cancel"), null)
-                .show()
+            searchableSingle(if (fromDevice) tr("Partycje w telefonie (${items.size})", "Partitions on phone (${items.size})") else tr("Typowe partycje (polacz telefon, by zobaczyc wszystkie)", "Common partitions (connect phone to see all)"), items) { i ->
+                partEdit.setText(items[i].substringBefore("  "))
+            }
         }
         val f = fb ?: run { show(common, false); return }
         exec.execute {
