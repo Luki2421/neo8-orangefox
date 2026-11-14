@@ -19,7 +19,8 @@ import java.util.zip.CRC32
 class HybridZip(private val log: (String) -> Unit, private val progress: (Long, Long) -> Unit = { _, _ -> }) {
 
     private class Entry(val name: String, val file: File?, var bytes: ByteArray?, val align: Long) {
-        val size: Long get() = file?.length() ?: bytes!!.size.toLong()
+        var padSize = -1L
+        val size: Long get() = if (padSize >= 0) padSize else file?.length() ?: bytes!!.size.toLong()
         var headerOffset = 0L
         var dataOffset = 0L
         var crc = 0L
@@ -83,11 +84,13 @@ class HybridZip(private val log: (String) -> Unit, private val progress: (Long, 
         tmp.delete()
         val total = entries.sumOf { it.file?.length() ?: 0L }
         var done = 0L
+        val written = ArrayList<Entry>()
+        padNo = 0
         RandomAccessFile(tmp, "rw").use { raf ->
             val buf = ByteArray(4 shl 20)
             for (e in entries) {
                 if (e === binEntry) e.bytes = recoveryScript(physEntries, metaEntry, logical, plan, st.superSize).toByteArray()
-                writeLocal(raf, e)
+                writeLocal(raf, e, written)
                 val crc = CRC32()
                 if (e.file != null) {
                     e.file.inputStream().use { i ->
@@ -99,11 +102,9 @@ class HybridZip(private val log: (String) -> Unit, private val progress: (Long, 
                     }
                 } else { raf.write(e.bytes!!); crc.update(e.bytes!!) }
                 e.crc = crc.value
-                val end = raf.filePointer
-                raf.seek(e.headerOffset + 14); raf.write(le32(e.crc))
-                raf.seek(end)
+                patchCrc(raf, e)
             }
-            writeCentral(raf, entries)
+            writeCentral(raf, written)
         }
         out.delete()
         if (!tmp.renameTo(out)) throw IOException("rename ${tmp.name}")
@@ -117,18 +118,45 @@ class HybridZip(private val log: (String) -> Unit, private val progress: (Long, 
     private fun le16(v: Int) = byteArrayOf(v.toByte(), (v shr 8).toByte())
     private fun le32(v: Long) = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(v.toInt()).array()
 
-    private fun writeLocal(raf: RandomAccessFile, e: Entry) {
+    private var padNo = 0
+
+    /** Naglowek lokalny bez danych (dane dopisuje wywolujacy). Przed wpisem wyrownanym wstawia wpis-wypelniacz
+     *  (prawdziwy plik ZIP z zerami), zeby nie bylo "dziur": libziparchive (AERA/recovery AOSP) wymaga naglowka
+     *  na offsecie 0 i spojnego archiwum. */
+    private fun writeLocal(raf: RandomAccessFile, e: Entry, written: MutableList<Entry>) {
         val name = e.name.toByteArray(Charsets.UTF_8)
         val z64 = if (e.zip64) 20 else 0
-        var start = raf.filePointer
-        val extra = z64
         if (e.align > 0) {
-            // przerwa przed naglowkiem tak, by dane zaczynaly sie na granicy 1 MB (czytniki uzywaja katalogu centralnego)
-            val dataAt = start + 30 + name.size + z64
-            val gap = (e.align - dataAt % e.align) % e.align
-            if (gap > 0) { raf.write(ByteArray(gap.toInt())); start += gap }
+            val dataAt = raf.filePointer + 30 + name.size + z64
+            var gap = (e.align - dataAt % e.align) % e.align
+            if (gap > 0) {
+                val pn = "META-INF/pad/%04d".format(padNo++)
+                val hdr = 30L + pn.length
+                if (gap < hdr) gap += e.align
+                val pad = Entry(pn, null, ByteArray((gap - hdr).toInt()), 0)
+                writeHeader(raf, pad)
+                raf.write(pad.bytes!!)
+                pad.crc = CRC32().apply { update(pad.bytes!!) }.value
+                patchCrc(raf, pad)
+                pad.bytes = null
+                pad.padSize = gap - hdr
+                written += pad
+            }
         }
-        e.headerOffset = start
+        writeHeader(raf, e)
+        written += e
+    }
+
+    private fun patchCrc(raf: RandomAccessFile, e: Entry) {
+        val end = raf.filePointer
+        raf.seek(e.headerOffset + 14); raf.write(le32(e.crc))
+        raf.seek(end)
+    }
+
+    private fun writeHeader(raf: RandomAccessFile, e: Entry) {
+        val name = e.name.toByteArray(Charsets.UTF_8)
+        val extra = if (e.zip64) 20 else 0
+        e.headerOffset = raf.filePointer
         val b = ByteBuffer.allocate(30 + name.size + extra).order(ByteOrder.LITTLE_ENDIAN)
         b.putInt(0x04034b50).putShort((if (e.zip64) 45 else 20).toShort()).putShort(0x0800).putShort(0)
             .putShort(0).putShort(0x21) // czas/data DOS (1980-01-01)
