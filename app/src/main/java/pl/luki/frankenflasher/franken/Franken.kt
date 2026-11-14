@@ -229,16 +229,17 @@ class Franken(
 
     private fun addRingtones(productImg: File, myProductRoot: File, out: File): File? {
         step(tr("dzwonki", "ringtones"))
-        val hr = File(myProductRoot, "res/audio/haptic_ringtone")
-        val dirs = listOf(File(hr, "output122HZ")) + hr.listFiles { f -> f.isDirectory }.orEmpty().sortedBy { it.name }
-        fun oggs(d: File, prefix: String) = d.listFiles { f -> f.isFile && f.name.startsWith(prefix) && f.name.endsWith(".ogg") }.orEmpty().sortedBy { it.name }
-        val src = dirs.firstOrNull { it.isDirectory && oggs(it, "ringtone_").isNotEmpty() }
-            ?: dirs.firstOrNull { it.isDirectory && oggs(it, "notification_").isNotEmpty() }
-        if (src == null) { log(tr("dzwonki: brak plikow w my_product/res/audio/haptic_ringtone - pomijam", "ringtones: no files in my_product/res/audio/haptic_ringtone - skipping")); return null }
+        // zrodla po kolei: my_product dawcy, potem my_product bazy (np. OPPO nie ma haptic_ringtone)
+        val roots = listOf(myProductRoot, File(work, "base_my_product")).filter { it.isDirectory }
         val plan = LinkedHashMap<String, File>()
-        oggs(src, "ringtone_").forEach { plan["media/audio/ringtones/${it.name}"] = it; plan["media/audio/alarms/${it.name}"] = it }
-        oggs(src, "notification_").forEach { plan["media/audio/notifications/${it.name}"] = it }
-        oggs(src, "alarm_").forEach { plan["media/audio/alarms/${it.name}"] = it }
+        var srcName = ""
+        for (root in roots) {
+            ringtonePlan(root).takeIf { it.isNotEmpty() }?.let { plan.putAll(it); srcName = if (root == myProductRoot) tr("dawcy", "donor") else tr("bazy", "base"); }
+            if (plan.isNotEmpty()) break
+        }
+        if (plan.isEmpty()) { log(tr("dzwonki: brak plikow dzwonkow w my_product dawcy i bazy - pomijam", "ringtones: no ringtone files in donor or base my_product - skipping")); return null }
+        val nRing = plan.keys.count { it.startsWith("media/audio/ringtones/") }
+        val nNotif = plan.keys.count { it.startsWith("media/audio/notifications/") }
         val todo = ErofsPatcher(productImg, readOnly = true).use { p -> plan.filterKeys { !p.exists(it) } }
         if (todo.isEmpty()) { log(tr("dzwonki: product ma juz wszystkie pliki - bez zmian", "ringtones: product already has all files - unchanged")); return null }
         copyImage(productImg, out)
@@ -258,9 +259,35 @@ class Franken(
             }
             p.commit()
         }
-        log(tr("dzwonki: dodano ${todo.size} plikow z ${src.name} (dzwonki: ${oggs(src, "ringtone_").size}, powiadomienia: ${oggs(src, "notification_").size})", "ringtones: added ${todo.size} files from ${src.name} (ringtones: ${oggs(src, "ringtone_").size}, notifications: ${oggs(src, "notification_").size})"))
+        log(tr("dzwonki: dodano ${todo.size} plikow z my_product $srcName (dzwonki: $nRing, powiadomienia: $nNotif)", "ringtones: added ${todo.size} files from $srcName my_product (ringtones: $nRing, notifications: $nNotif)"))
         checkImage(out)
         return out
+    }
+
+    /** Pliki dzwonkow w wypakowanym my_product: haptic_ringtone (ringtone_/notification_/alarm_*.ogg)
+     *  albo katalogi ringtones/notifications/alarms z plikami audio. */
+    private fun ringtonePlan(root: File): Map<String, File> {
+        val audio = setOf("ogg", "mp3", "flac", "wav", "m4a")
+        fun files(d: File) = d.listFiles { f -> f.isFile && f.extension.lowercase() in audio }.orEmpty().sortedBy { it.name }
+        val plan = LinkedHashMap<String, File>()
+        val hr = File(root, "res/audio/haptic_ringtone")
+        val hdirs = listOf(File(hr, "output122HZ")) + hr.listFiles { f -> f.isDirectory }.orEmpty().sortedBy { it.name }
+        hdirs.firstOrNull { d -> d.isDirectory && files(d).any { it.name.startsWith("ringtone_") || it.name.startsWith("notification_") } }?.let { d ->
+            files(d).forEach { f ->
+                when {
+                    f.name.startsWith("ringtone_") -> { plan["media/audio/ringtones/${f.name}"] = f; plan["media/audio/alarms/${f.name}"] = f }
+                    f.name.startsWith("notification_") -> plan["media/audio/notifications/${f.name}"] = f
+                    f.name.startsWith("alarm_") -> plan["media/audio/alarms/${f.name}"] = f
+                }
+            }
+            return plan
+        }
+        // katalogi ringtones / notifications / alarms (np. media/audio/... w my_product)
+        root.walkTopDown().maxDepth(5).filter { it.isDirectory }.forEach { d ->
+            val cat = when (d.name.lowercase()) { "ringtones", "ringtone" -> "ringtones"; "notifications", "notification" -> "notifications"; "alarms", "alarm" -> "alarms"; else -> null }
+            if (cat != null) files(d).forEach { f -> plan.putIfAbsent("media/audio/$cat/${f.name}", f) }
+        }
+        return plan
     }
 
     /** my_product/lib64 i lib dawcy -> product/lib64 i lib (jak nakladka lowerdir=/my_product/lib64:/product/lib64). */
