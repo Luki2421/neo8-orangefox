@@ -215,7 +215,10 @@ class HybridZip(private val log: (String) -> Unit, private val progress: (Long, 
 # Franken Flasher - hybrid super flasher (recovery)
 OUTFD=/proc/self/fd/${'$'}2
 ZIP="${'$'}3"
-ui() { echo "ui_print ${'$'}1" >> ${'$'}OUTFD; echo "ui_print" >> ${'$'}OUTFD; }
+LOG="${'$'}{ZIP%.*}.log"
+echo "Franken hybrid $(date)" > "${'$'}LOG" 2>/dev/null || LOG=/tmp/franken_hybrid.log
+ui() { echo "ui_print ${'$'}1" >> ${'$'}OUTFD; echo "ui_print" >> ${'$'}OUTFD; echo "${'$'}1" >> "${'$'}LOG"; }
+lg() { echo "${'$'}1" >> "${'$'}LOG"; sync; }
 BD=/dev/block/bootdevice/by-name
 [ -d "${'$'}BD" ] || BD=/dev/block/by-name
 ERR=0
@@ -223,15 +226,22 @@ ERR=0
 w() {
   t="${'$'}BD/${'$'}1"
   [ -e "${'$'}t" ] || { ui "  - ${'$'}1: brak partycji / no partition"; return 0; }
-  if [ "${'$'}4" != 0 ]; then dd if="${'$'}ZIP" of="${'$'}t" bs=1048576 skip=${'$'}2 seek=${'$'}3 count=${'$'}4 conv=notrunc 2>/dev/null || { ui "  ! ${'$'}1 BLAD/ERROR"; ERR=1; }; fi
-  if [ "${'$'}7" != 0 ]; then dd if="${'$'}ZIP" of="${'$'}t" bs=4096 skip=${'$'}5 seek=${'$'}6 count=${'$'}7 conv=notrunc 2>/dev/null || { ui "  ! ${'$'}1 BLAD/ERROR"; ERR=1; }; fi
+  lg "> ${'$'}1 (${'$'}4 MB + ${'$'}7 x 4K)"
+  if [ "${'$'}4" != 0 ]; then dd if="${'$'}ZIP" of="${'$'}t" bs=1048576 skip=${'$'}2 seek=${'$'}3 count=${'$'}4 conv=notrunc 2>>"${'$'}LOG" || { ui "  ! ${'$'}1 BLAD/ERROR"; ERR=1; }; fi
+  if [ "${'$'}7" != 0 ]; then dd if="${'$'}ZIP" of="${'$'}t" bs=4096 skip=${'$'}5 seek=${'$'}6 count=${'$'}7 conv=notrunc 2>>"${'$'}LOG" || { ui "  ! ${'$'}1 BLAD/ERROR"; ERR=1; }; fi
+  lg "  ok ${'$'}1"
 }
-# p NAZWA ... - partycja fizyczna: oba sloty albo bez slotu
-p() {
+# pa/pb NAZWA ... - partycja fizyczna: najpierw wszystkie _a, potem wszystkie _b (przerwanie zostawia caly drugi slot nietkniety)
+pa() {
   n="${'$'}1"; shift
-  if [ -e "${'$'}BD/${'$'}{n}_a" ]; then ui "  ${'$'}n (a+b)"; w "${'$'}{n}_a" "${'$'}@"; w "${'$'}{n}_b" "${'$'}@"
+  if [ -e "${'$'}BD/${'$'}{n}_a" ]; then ui "  ${'$'}{n}_a"; w "${'$'}{n}_a" "${'$'}@"
   else ui "  ${'$'}n"; w "${'$'}n" "${'$'}@"; fi
 }
+pb() {
+  n="${'$'}1"; shift
+  if [ -e "${'$'}BD/${'$'}{n}_b" ]; then ui "  ${'$'}{n}_b"; w "${'$'}{n}_b" "${'$'}@"; fi
+}
+ui "- Log: ${'$'}LOG"
 ui "**************************************"
 ui " Franken Flasher - hybrid super flasher"
 ui "**************************************"
@@ -243,9 +253,13 @@ if [ -n "${'$'}SZ" ] && [ "${'$'}SZ" != 0 ] && [ "${'$'}SZ" != "SUPERSIZE" ]; th
   ui "! Phone super size differs from ZIP - wrong model? ABORTED, nothing written"
   exit 1
 fi
-ui "- Partycje fizyczne / physical partitions"
+ui "- recovery: pomijam (zostaje obecne recovery) / skipped (current recovery kept)"
+ui "- Partycje fizyczne slot A / physical partitions slot A"
 """.replace("SUPERSIZE", superSize.toString()))
-        for ((n, e) in phys) s.append("p $n ${ddArgs(e.dataOffset, 0, e.size)}\n")
+        val physR = phys.filter { it.first != "recovery" }
+        for ((n, e) in physR) s.append("pa $n ${ddArgs(e.dataOffset, 0, e.size)}\n")
+        s.append("ui \"- Partycje fizyczne slot B / physical partitions slot B\"\n")
+        for ((n, e) in physR) s.append("pb $n ${ddArgs(e.dataOffset, 0, e.size)}\n")
         s.append("ui \"- super: metadane / metadata\"\n")
         s.append("w super ${ddArgs(meta.dataOffset, 0, meta.size)}\n")
         s.append("ui \"- super: partycje logiczne / logical partitions (slot a)\"\n")
