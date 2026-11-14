@@ -913,6 +913,8 @@ class MainActivity : Activity() {
 
     // ---------------- Listy z wyszukiwarka ----------------
 
+    private fun dpx(v: Int) = (v * resources.displayMetrics.density).toInt()
+
     private fun searchBox(): EditText = EditText(this).apply {
         hint = tr("Szukaj...", "Search...")
         isSingleLine = true
@@ -931,7 +933,7 @@ class MainActivity : Activity() {
         val box = searchBox()
         val list = android.widget.ListView(this).apply { choiceMode = android.widget.ListView.CHOICE_MODE_MULTIPLE }
         var shown = labels.indices.toList()
-        val count = TextView(this).apply { setPadding(ui.dp(4), ui.dp(4), 0, ui.dp(4)) }
+        val count = TextView(this).apply { setPadding(dpx(4), dpx(4), 0, dpx(4)) }
         fun refresh() {
             shown = labels.indices.filter { matches(labels[it], box.text.toString()) }
             list.adapter = android.widget.ArrayAdapter(this, android.R.layout.simple_list_item_multiple_choice, shown.map { labels[it] })
@@ -949,7 +951,7 @@ class MainActivity : Activity() {
         })
         refresh()
         val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; setPadding(ui.dp(16), ui.dp(8), ui.dp(16), 0)
+            orientation = LinearLayout.VERTICAL; setPadding(dpx(16), dpx(8), dpx(16), 0)
             addView(box); addView(count)
             addView(list, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (resources.displayMetrics.heightPixels * 0.55).toInt()))
         }
@@ -978,7 +980,7 @@ class MainActivity : Activity() {
         })
         refresh()
         val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; setPadding(ui.dp(16), ui.dp(8), ui.dp(16), 0)
+            orientation = LinearLayout.VERTICAL; setPadding(dpx(16), dpx(8), dpx(16), 0)
             addView(box)
             addView(list, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (resources.displayMetrics.heightPixels * 0.55).toInt()))
         }
