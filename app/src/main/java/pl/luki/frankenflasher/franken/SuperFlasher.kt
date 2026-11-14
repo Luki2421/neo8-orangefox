@@ -67,8 +67,8 @@ class SuperFlasher(private val log: (String) -> Unit, private val progress: (Lon
         return Setup(images, superSize, group, groupMax)
     }
 
-    fun build(folder: File, superSizeIn: Long?): File {
-        val st = setup(folder, superSizeIn)
+    fun build(folder: File, superSizeIn: Long?, imagesOverride: Map<String, File>? = null): File {
+        val st = setup(folder, superSizeIn, imagesOverride)
         val images = st.images; val group = st.group; val groupMax = st.groupMax; val superSize = st.superSize
         val free = folder.usableSpace
         val need = images.values.sumOf { it.length() } + (64L shl 20)

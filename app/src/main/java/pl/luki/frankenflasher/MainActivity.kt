@@ -279,6 +279,7 @@ class MainActivity : Activity() {
         superEdit = ui.input(tr("rozmiar super (puste = z OTA, META/super_def.json)", "super size (empty = from OTA, META/super_def.json)"))
         superEdit.inputType = android.text.InputType.TYPE_CLASS_NUMBER
         cSup.addView(superEdit, ui.lp(bottom = 10))
+        ui.row(cSup, ui.button(tr("Aplikacje do usuniecia (debloat)", "Apps to remove (debloat)"), G) { superImages()?.let { chooseDebloat(it) } })
         ui.row(cSup, ui.button(tr("Zbuduj super.img", "Build super.img"), G) { buildSuperFlasher(false) })
         ui.row(cSup, ui.button(tr("Zbuduj hybrid ZIP (recovery + PC)", "Build hybrid ZIP (recovery + PC)"), G) { buildSuperFlasher(true) })
         ui.toggle(cSup, tr("flashuj przez super.img, jesli jest w folderze", "flash via super.img if present in the folder"), { opt.useSuperImage }, { opt.useSuperImage = it })
@@ -299,6 +300,7 @@ class MainActivity : Activity() {
         cSrc.addView(frDonorView, ui.lp(bottom = 12))
         ui.row(cSrc, ui.button(tr("Baza (Neo 8)", "Base (Neo 8)"), G) { pickTree(REQ_FR_BASE) }, ui.button(tr("Dawca (GT 8 Pro)", "Donor (GT 8 Pro)"), G) { pickTree(REQ_FR_DONOR) })
         ui.row(cSrc, ui.button(tr("Partycje: baza / dawca", "Partitions: base / donor"), G, ::choosePartitions))
+        ui.row(cSrc, ui.button(tr("Aplikacje do usuniecia (debloat)", "Apps to remove (debloat)"), G) { frankenGroups()?.get("SYSTEM")?.let { l -> chooseDebloat(l.associateBy { it.name.removeSuffix(".img") }) } })
         ui.row(cSrc, ui.button(tr("Franken -> hybrid ZIP (recovery, bez OTG)", "Franken -> hybrid ZIP (recovery, no OTG)"), B, ::frankenHybrid))
         val cFr = ui.card(p4, tr("Poprawki", "Fixes"))
         ui.toggle(cFr, tr("my_product: konfiguracja sprzetu z bazy", "my_product: hardware config from base"), { frOpt.patchMyProduct }, { frOpt.patchMyProduct = it })
@@ -891,12 +893,19 @@ class MainActivity : Activity() {
                 if (hybrid) {
                     setStep(tr("Budowanie hybrid ZIP", "Building hybrid ZIP"))
                     val zip = File(folder.parentFile, folder.name + "_hybrid.zip")
-                    pl.luki.frankenflasher.franken.HybridZip(::log, ::setProgress).build(folder, size, opt.disableVbmeta, zip)
+                    val groups = listOf("CRITICAL", "EXTRA", "MODEM", "BOOTLOADER", "SYSTEM").associateWith { g ->
+                        File(folder, g).listFiles { f -> f.isFile && f.name.endsWith(".img") && f.length() > 0 }.orEmpty().sortedBy { it.name }
+                    }.toMutableMap()
+                    val sys = groups["SYSTEM"].orEmpty().associateBy { it.name.removeSuffix(".img") }
+                    groups["SYSTEM"] = debloatTool().apply(sys, debloatSet(), debloatWork(), ::setStep).values.toList()
+                    pl.luki.frankenflasher.franken.HybridZip(::log, ::setProgress).build(groups, folder, size, opt.disableVbmeta, zip)
                     log(tr("Recovery (OrangeFox/AERA/TWRP): Install -> ${zip.name}. PC: rozpakuj ZIP i uruchom flash_all.bat w bootloaderze.",
                         "Recovery (OrangeFox/AERA/TWRP): Install -> ${zip.name}. PC: extract the ZIP and run flash_all.bat in bootloader."))
                 } else {
                     setStep(tr("Budowanie super.img", "Building super.img"))
-                    pl.luki.frankenflasher.franken.SuperFlasher(::log, ::setProgress).build(folder, size)
+                    val sys = File(folder, "SYSTEM").listFiles { f -> f.isFile && f.name.endsWith(".img") && f.length() > 0 }.orEmpty().associateBy { it.name.removeSuffix(".img") }
+                    val imgs = debloatTool().apply(sys, debloatSet(), debloatWork(), ::setStep)
+                    pl.luki.frankenflasher.franken.SuperFlasher(::log, ::setProgress).build(folder, size, imgs)
                 }
                 log(tr("Super flasher gotowy w ${(System.currentTimeMillis() - t0) / 1000} s: ${folder.path}", "Super flasher ready in ${(System.currentTimeMillis() - t0) / 1000} s: ${folder.path}"))
                 setStep(tr("Super flasher gotowy", "Super flasher ready"))
@@ -907,13 +916,68 @@ class MainActivity : Activity() {
         }
     }
 
+    // ---------------- Debloat ----------------
+
+    private fun debloatSet(): Set<String> = prefs.getString("debloat", "")!!.lines().filter { it.contains(':') }.toSet()
+
+    private fun debloatWork() = File(android.os.Environment.getExternalStorageDirectory(), "FrankenFlasher/debloat")
+
+    private fun debloatTool() = pl.luki.frankenflasher.franken.Debloat(::log) { f -> pl.luki.frankenflasher.franken.erofsTools(this, ::log).check(f) }
+
+    /** Obrazy SYSTEM folderu super flashera (rozpakowane OTA). */
+    private fun superImages(): Map<String, File>? {
+        val folder = superFolder ?: prefs.getString("fwTree", null)?.let { treeToFile(Uri.parse(it)) }
+        val sys = folder?.let { File(it, "SYSTEM") }
+        if (sys == null || !sys.isDirectory) { log(tr("Najpierw wybierz folder firmware z podfolderem SYSTEM (rozpakowane OTA)", "Pick a firmware folder with a SYSTEM subfolder (extracted OTA) first")); return null }
+        return sys.listFiles { f -> f.isFile && f.name.endsWith(".img") && f.length() > 0 }.orEmpty().associateBy { it.name.removeSuffix(".img") }
+    }
+
+    /** Grupy ostatniego Frankena (sciezki z prefs). */
+    private fun frankenGroups(): Map<String, List<File>>? {
+        val txt = prefs.getString("frResult", null)
+        if (frResult == null || txt == null) { log(tr("Najpierw nacisnij Zbuduj Franken", "Tap Build Franken first")); return null }
+        val groups = LinkedHashMap<String, MutableList<File>>()
+        txt.lines().filter { it.contains('|') }.forEach { l -> val (g, p) = l.split('|', limit = 2); groups.getOrPut(g) { ArrayList() } += File(p) }
+        return groups
+    }
+
+    private fun chooseDebloat(images: Map<String, File>) {
+        if (!hasAllFiles()) { requestAllFiles(); return }
+        exec.execute {
+            setStep(tr("Szukanie aplikacji w obrazach...", "Scanning images for apps..."))
+            val apps = debloatTool().scan(images)
+            setStep(tr("Gotowe", "Done"))
+            if (apps.isEmpty()) { log(tr("debloat: nie znaleziono aplikacji", "debloat: no apps found")); return@execute }
+            val sel = debloatSet().toMutableSet()
+            runOnUiThread {
+                val labels = apps.map { "${it.name}  ·  ${it.image}/${it.path.substringBeforeLast('/')}  ·  ${"%.1f".format(it.size / 1048576.0)} MB" }.toTypedArray()
+                val checked = apps.map { it.key in sel }.toBooleanArray()
+                AlertDialog.Builder(this)
+                    .setTitle(tr("Zaznacz aplikacje do USUNIECIA (${apps.size})", "Check apps to REMOVE (${apps.size})"))
+                    .setMultiChoiceItems(labels, checked) { _, i, c -> checked[i] = c }
+                    .setPositiveButton("OK") { _, _ ->
+                        apps.forEachIndexed { i, a -> if (checked[i]) sel += a.key else sel -= a.key }
+                        prefs.edit().putString("debloat", sel.joinToString("\n")).apply()
+                        val n = apps.count { it.key in sel }
+                        log(tr("debloat: do usuniecia $n: ", "debloat: to remove $n: ") + apps.filter { it.key in sel }.joinToString { it.name } +
+                            tr("\nUWAGA: nie usuwaj uslug systemowych (np. GmsCore, Phonesky, SystemUI, Launcher) - system moze sie nie uruchomic.",
+                                "\nWARNING: do not remove system services (e.g. GmsCore, Phonesky, SystemUI, Launcher) - the system may not boot."))
+                    }
+                    .setNeutralButton(tr("Wyczysc wybor", "Clear selection")) { _, _ ->
+                        apps.forEach { sel -= it.key }
+                        prefs.edit().putString("debloat", sel.joinToString("\n")).apply()
+                        log(tr("debloat: wybor wyczyszczony", "debloat: selection cleared"))
+                    }
+                    .setNegativeButton(tr("Anuluj", "Cancel"), null)
+                    .show()
+            }
+        }
+    }
+
     /** Zbudowany Franken jako hybrid ZIP: firmware bazy + SYSTEM z wyniku, rozmiar super z folderu bazy. */
     private fun frankenHybrid() {
         if (busy) { log(tr("Trwa inna operacja - poczekaj az sie skonczy", "Another operation is running - wait until it finishes")); return }
-        val txt = prefs.getString("frResult", null)
-        if (frResult == null || txt == null) { log(tr("Najpierw nacisnij Zbuduj Franken", "Tap Build Franken first")); return }
-        val groups = LinkedHashMap<String, MutableList<File>>()
-        txt.lines().filter { it.contains('|') }.forEach { l -> val (g, p) = l.split('|', limit = 2); groups.getOrPut(g) { ArrayList() } += File(p) }
+        val groups = (frankenGroups() ?: return).mapValues { it.value.toMutableList() }.toMutableMap()
         groups.values.flatten().firstOrNull { !it.isFile }?.let { log(tr("Brak pliku ${it.path} - zbuduj Franken ponownie", "Missing ${it.path} - build Franken again")); return }
         val base = frBase ?: groups["SYSTEM"]?.firstOrNull { it.parentFile?.parentFile?.let { d -> File(d, "CRITICAL").isDirectory } == true }?.parentFile?.parentFile
         if (base == null) { log(tr("Wybierz folder bazy (Neo 8)", "Pick the base folder (Neo 8)")); return }
@@ -933,6 +997,8 @@ class MainActivity : Activity() {
                 setStep(tr("Budowanie Franken hybrid ZIP", "Building Franken hybrid ZIP"))
                 val t0 = System.currentTimeMillis()
                 val zip = File(android.os.Environment.getExternalStorageDirectory(), "FrankenFlasher/Franken_hybrid.zip")
+                val sys = groups["SYSTEM"].orEmpty().associateBy { it.name.removeSuffix(".img") }
+                groups["SYSTEM"] = debloatTool().apply(sys, debloatSet(), debloatWork(), ::setStep).values.toMutableList()
                 pl.luki.frankenflasher.franken.HybridZip(::log, ::setProgress).build(groups, base, size, opt.disableVbmeta, zip)
                 log(tr("Recovery (TWRP/AERA/OrangeFox): Install -> FrankenFlasher/${zip.name}, potem Format Data (zmiana systemu). Gotowe w ${(System.currentTimeMillis() - t0) / 1000} s",
                     "Recovery (TWRP/AERA/OrangeFox): Install -> FrankenFlasher/${zip.name}, then Format Data (system change). Done in ${(System.currentTimeMillis() - t0) / 1000} s"))
