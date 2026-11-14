@@ -305,6 +305,7 @@ class MainActivity : Activity() {
         ui.toggle(cFr, tr("odm: producent/marka dawcy", "odm: donor manufacturer/brand"), { frOpt.patchOdmIdentity }, { frOpt.patchOdmIdentity = it })
         ui.toggle(cFr, tr("app_v2: odblokuj Telefon/Kontakty/SMS", "app_v2: unlock Phone/Contacts/SMS"), { frOpt.unlockAppV2 }, { frOpt.unlockAppV2 = it })
         ui.toggle(cFr, tr("dzwonki z haptic_ringtone do product", "ringtones from haptic_ringtone to product"), { frOpt.ringtones }, { frOpt.ringtones = it })
+        ui.toggle(cFr, tr("biblioteki my_product/lib64 do product (Aparat)", "my_product/lib64 libraries to product (Camera)"), { frOpt.productLibs }, { frOpt.productLibs = it })
         ui.toggle(cFr, tr("pomin my_preload", "skip my_preload"), { frOpt.skipMyPreload }, { frOpt.skipMyPreload = it })
         val cTools = ui.card(p4, tr("Narzedzia / testy", "Tools / tests"))
         ui.row(cTools, ui.button(tr("Dostep do plikow", "File access"), G, ::requestAllFiles), ui.button(tr("Test narzedzi EROFS", "Test EROFS tools"), G, ::testErofsTools))

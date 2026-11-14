@@ -33,6 +33,9 @@ class Franken(
         var skipMyPreload: Boolean = false,
         /** Dzwonki z my_product/res/audio/haptic_ringtone do product/media/audio (jak modul franken_ringtones). */
         var ringtones: Boolean = true,
+        /** Biblioteki my_product/lib64 (aparat, efekty) do product/lib64 - w dawcy widoczne przez nakladke z jego fstab,
+         *  ktorej vendor bazy nie ma (Aparat: libCombineLutJni.so not found). */
+        var productLibs: Boolean = true,
         /** Partycje logiczne brane z bazy (domyslnie jak FFF: odm, odm_dlkm, vendor, vendor_dlkm, system_dlkm). */
         var fromBase: MutableSet<String> = HW_FROM_BASE.toMutableSet(),
     )
@@ -83,6 +86,13 @@ class Franken(
             val src = File(work, "donor_my_product")
             if (prod != null && src.isDirectory) addRingtones(prod, src, File(outSys, "product.img"))?.let { chosen["product"] = it }
             else log(tr("dzwonki: brak product.img albo wypakowanego my_product - pomijam", "ringtones: no product.img or extracted my_product - skipping"))
+        }
+        // --- biblioteki my_product -> product/lib64 ---
+        if (opt.productLibs) {
+            val prod = chosen["product"]
+            val src = File(work, "donor_my_product")
+            if (prod != null && src.isDirectory) addProductLibs(prod, src, File(outSys, "product.img"))?.let { chosen["product"] = it }
+            else log(tr("biblioteki: brak product.img albo wypakowanego my_product - pomijam", "libraries: no product.img or extracted my_product - skipping"))
         }
         // --- my_manifest (baza + wersja dawcy) ---
         if (opt.patchMyManifest) {
@@ -241,6 +251,35 @@ class Franken(
             p.commit()
         }
         log(tr("dzwonki: dodano ${todo.size} plikow z ${src.name} (dzwonki: ${oggs(src, "ringtone_").size}, powiadomienia: ${oggs(src, "notification_").size})", "ringtones: added ${todo.size} files from ${src.name} (ringtones: ${oggs(src, "ringtone_").size}, notifications: ${oggs(src, "notification_").size})"))
+        checkImage(out)
+        return out
+    }
+
+    /** my_product/lib64 i lib dawcy -> product/lib64 i lib (jak nakladka lowerdir=/my_product/lib64:/product/lib64). */
+    private fun addProductLibs(productImg: File, myProductRoot: File, out: File): File? {
+        step(tr("biblioteki my_product", "my_product libraries"))
+        val plan = LinkedHashMap<String, File>()
+        for (d in listOf("lib64", "lib")) {
+            File(myProductRoot, d).listFiles { f -> f.name.endsWith(".so") && !java.nio.file.Files.isSymbolicLink(f.toPath()) && f.isFile }.orEmpty()
+                .sortedBy { it.name }.forEach { plan["$d/${it.name}"] = it }
+        }
+        if (plan.isEmpty()) { log(tr("biblioteki: my_product nie ma lib64 - pomijam", "libraries: my_product has no lib64 - skipping")); return null }
+        if (productImg.canonicalPath != out.canonicalPath) copyImage(productImg, out)
+        var added = 0; var replaced = 0; var bytes = 0L
+        ErofsPatcher(out).use { p ->
+            for (d in plan.keys.map { it.substringBefore('/') }.distinct()) {
+                if (!p.exists(d)) p.mkdir(d, p.templateOf("lib64") ?: p.templateOf("etc") ?: p.attrsOf(p.rootNid))
+            }
+            val fileTpl = p.list("lib64")?.firstOrNull { it.name.endsWith(".so") }?.let { p.templateOf("lib64/${it.name}") }
+            for ((rel, f) in plan) {
+                if (p.exists(rel)) replaced++ else added++
+                p.putFile(rel, f.readBytes(), fileTpl)
+                bytes += f.length()
+            }
+            p.commit()
+        }
+        log(tr("biblioteki: my_product/lib64 -> product/lib64: dodano $added, podmieniono $replaced (${bytes / (1 shl 20)} MB) - Aparat i efekty dawcy",
+            "libraries: my_product/lib64 -> product/lib64: added $added, replaced $replaced (${bytes / (1 shl 20)} MB) - donor Camera and effects"))
         checkImage(out)
         return out
     }
