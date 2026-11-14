@@ -308,6 +308,7 @@ class MainActivity : Activity() {
         ui.toggle(cFr, tr("odm: producent/marka dawcy", "odm: donor manufacturer/brand"), { frOpt.patchOdmIdentity }, { frOpt.patchOdmIdentity = it })
         ui.toggle(cFr, tr("app_v2: odblokuj Telefon/Kontakty/SMS", "app_v2: unlock Phone/Contacts/SMS"), { frOpt.unlockAppV2 }, { frOpt.unlockAppV2 = it })
         ui.toggle(cFr, tr("dzwonki z haptic_ringtone do product", "ringtones from haptic_ringtone to product"), { frOpt.ringtones }, { frOpt.ringtones = it })
+        ui.toggle(cFr, tr("Franken Flasher jako aplikacja systemowa (restart bez roota)", "Franken Flasher as system app (reboot without root)"), { frEmbed }, { frEmbed = it })
         ui.toggle(cFr, tr("biblioteki my_product/lib64 do product (Aparat)", "my_product/lib64 libraries to product (Camera)"), { frOpt.productLibs }, { frOpt.productLibs = it })
         ui.toggle(cFr, tr("pomin my_preload", "skip my_preload"), { frOpt.skipMyPreload }, { frOpt.skipMyPreload = it })
         val cTools = ui.card(p4, tr("Narzedzia / testy", "Tools / tests"))
@@ -690,6 +691,14 @@ class MainActivity : Activity() {
             .setTitle(tr("Restart tego telefonu", "Reboot this phone"))
             .setMessage(tr("Uruchomic ten telefon ponownie do: $label?", "Reboot this phone to: $label?"))
             .setPositiveButton(tr("Restart", "Reboot")) { _, _ ->
+                // aplikacja systemowa (wbudowana przez Franken): uprawnienia REBOOT/RECOVERY, bez roota
+                if (checkSelfPermission("android.permission.REBOOT") == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    try {
+                        log(tr("Restart do: $label (aplikacja systemowa)", "Rebooting to: $label (system app)"))
+                        (getSystemService(POWER_SERVICE) as android.os.PowerManager).reboot(mode.ifEmpty { null })
+                        return@setPositiveButton
+                    } catch (e: Exception) { log(tr("Restart systemowy nieudany: ${e.message} - probuje przez root", "System reboot failed: ${e.message} - trying root")) }
+                }
                 Thread {
                     try {
                         val p = ProcessBuilder("su", "-c", if (mode.isEmpty()) "reboot" else "reboot $mode").redirectErrorStream(true).start()
@@ -756,6 +765,7 @@ class MainActivity : Activity() {
     private var frDonor: File? = null
     private val frOpt = pl.luki.frankenflasher.franken.Franken.Options()
     private var frResult: FirmwareFolder? = null
+    private var frEmbed = true
 
     @Suppress("DEPRECATION")
     private fun pickTree(req: Int) {
@@ -800,6 +810,7 @@ class MainActivity : Activity() {
                 out.deleteRecursively()
                 val t0 = System.currentTimeMillis()
                 val tools = pl.luki.frankenflasher.franken.erofsTools(this, ::log)
+                frOpt.appApk = if (frEmbed) File(applicationInfo.sourceDir) else null
                 val r = pl.luki.frankenflasher.franken.Franken(b, d, out, File(filesDir, "franken_work"), tools, ::log, ::setStep).build(frOpt)
                 val fw = FirmwareFolder(r.groups.mapValues { (_, l) -> l.map { pl.luki.frankenflasher.firmware.DocImage(it) } })
                 frResult = fw

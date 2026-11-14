@@ -22,6 +22,8 @@ jobs:
           bash .github/scripts/build-erofs.sh
       - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace
+      - name: Uprawnienia w APK (privapp)
+        run: find app/build/intermediates -name AndroidManifest.xml -path "*merged_manifest*" | head -1 | xargs grep -o 'uses-permission[^/]*' || true
       - uses: actions/upload-artifact@v4
         with:
           name: FrankenFlasher-build${{ github.run_number }}

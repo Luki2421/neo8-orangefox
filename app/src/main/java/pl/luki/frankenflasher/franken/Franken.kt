@@ -36,6 +36,9 @@ class Franken(
         /** Biblioteki my_product/lib64 (aparat, efekty) do product/lib64 - w dawcy widoczne przez nakladke z jego fstab,
          *  ktorej vendor bazy nie ma (Aparat: libCombineLutJni.so not found). */
         var productLibs: Boolean = true,
+        /** APK tej aplikacji jako uprzywilejowana aplikacja systemowa (product/priv-app) z REBOOT/RECOVERY -
+         *  restart do recovery/bootloader/fastbootd bez roota, jak w custom ROM. */
+        var appApk: File? = null,
         /** Partycje logiczne brane z bazy (domyslnie jak FFF: odm, odm_dlkm, vendor, vendor_dlkm, system_dlkm). */
         var fromBase: MutableSet<String> = HW_FROM_BASE.toMutableSet(),
     )
@@ -93,6 +96,11 @@ class Franken(
             val src = File(work, "donor_my_product")
             if (prod != null && src.isDirectory) addProductLibs(prod, src, File(outSys, "product.img"))?.let { chosen["product"] = it }
             else log(tr("biblioteki: brak product.img albo wypakowanego my_product - pomijam", "libraries: no product.img or extracted my_product - skipping"))
+        }
+        // --- Franken Flasher jako aplikacja systemowa ---
+        opt.appApk?.takeIf { it.isFile }?.let { apk ->
+            val prod = chosen["product"]
+            if (prod != null) embedApp(prod, apk, File(outSys, "product.img"))?.let { chosen["product"] = it }
         }
         // --- my_manifest (baza + wersja dawcy) ---
         if (opt.patchMyManifest) {
@@ -280,6 +288,55 @@ class Franken(
         }
         log(tr("biblioteki: my_product/lib64 -> product/lib64: dodano $added, podmieniono $replaced (${bytes / (1 shl 20)} MB) - Aparat i efekty dawcy",
             "libraries: my_product/lib64 -> product/lib64: added $added, replaced $replaced (${bytes / (1 shl 20)} MB) - donor Camera and effects"))
+        checkImage(out)
+        return out
+    }
+
+    /** product/priv-app/FrankenFlasher (APK + lib/arm64) i privapp-permissions z REBOOT i RECOVERY. */
+    private fun embedApp(productImg: File, apk: File, out: File): File? {
+        step(tr("Franken Flasher -> aplikacja systemowa", "Franken Flasher -> system app"))
+        val pkg = "pl.luki.frankenflasher"
+        val libs = LinkedHashMap<String, ByteArray>()
+        java.util.zip.ZipFile(apk).use { z ->
+            z.entries().asSequence().filter { !it.isDirectory && it.name.startsWith("lib/arm64-v8a/") && it.name.endsWith(".so") }
+                .forEach { e -> libs[e.name.substringAfterLast('/')] = z.getInputStream(e).use { it.readBytes() } }
+        }
+        val xml = """<?xml version="1.0" encoding="utf-8"?>
+<permissions>
+    <privapp-permissions package="$pkg">
+        <permission name="android.permission.REBOOT"/>
+        <permission name="android.permission.RECOVERY"/>
+    </privapp-permissions>
+</permissions>
+"""
+        if (productImg.canonicalPath != out.canonicalPath) copyImage(productImg, out)
+        ErofsPatcher(out).use { p ->
+            // wzory atrybutow (etykiety SELinux) z istniejacych wpisow product
+            fun firstFile(dir: String, depth: Int = 2): String? {
+                val l = p.list(dir) ?: return null
+                l.firstOrNull { it.type == 1 }?.let { return "$dir/${it.name}" }
+                if (depth > 0) for (d in l.filter { it.type == 2 }) firstFile("$dir/${d.name}", depth - 1)?.let { return it }
+                return null
+            }
+            val dirTpl = p.templateOf("priv-app") ?: p.templateOf("app") ?: p.templateOf("etc") ?: p.attrsOf(p.rootNid)
+            val apkTpl = (firstFile("priv-app") ?: firstFile("app") ?: firstFile("etc"))?.let { p.templateOf(it) }
+                ?: ErofsPatcher.NewFile(0x81A4, dirTpl.uid, dirTpl.gid, dirTpl.xattrs, ByteArray(0))
+            fun ensureDir(path: String) {
+                if (path.isEmpty() || p.exists(path)) return
+                ensureDir(path.substringBeforeLast('/', ""))
+                p.mkdir(path, dirTpl)
+            }
+            val base = "priv-app/FrankenFlasher"
+            ensureDir("$base/lib/arm64")
+            p.putFile("$base/FrankenFlasher.apk", apk.readBytes(), apkTpl)
+            for ((n, b) in libs) p.putFile("$base/lib/arm64/$n", b, apkTpl)
+            ensureDir("etc/permissions")
+            val xmlTpl = firstFile("etc/permissions", 0)?.let { p.templateOf(it) } ?: apkTpl
+            p.putFile("etc/permissions/privapp-permissions-$pkg.xml", xml.toByteArray(), xmlTpl)
+            p.commit()
+        }
+        log(tr("Franken Flasher wbudowany w product/priv-app (${apk.length() / 1024} KB, bibliotek: ${libs.size}) - restart do recovery/bootloader/fastbootd bez roota",
+            "Franken Flasher embedded in product/priv-app (${apk.length() / 1024} KB, libraries: ${libs.size}) - reboot to recovery/bootloader/fastbootd without root"))
         checkImage(out)
         return out
     }
