@@ -7,6 +7,7 @@ import stat
 HERE = Path(__file__).resolve().parent
 ASSETS = {
     'system/bin/neo8-wifi-service.sh': 'neo8-wifi-service.sh',
+    'system/bin/neo8-wifi-prewarm.sh': 'neo8-wifi-prewarm.sh',
     'system/bin/busybox': 'busybox-arm64',
     'system/etc/init/init.neo8-wifi.rc': 'init.neo8-wifi.rc',
 }
@@ -154,4 +155,11 @@ def validate_wifi_image(entries, reference):
         p.startswith(('system/etc/init/', 'vendor/etc/init/', 'vendor/odm/etc/init/', 'init.')))
     if services != 1:
         raise ValueError('Expected exactly one active wpa_supplicant service')
-    return {'wlan_backend': True, 'on_demand_service': True, 'stock_mount_root': '/tmp/aera-wifi'}
+    rc = entries['system/etc/init/init.neo8-wifi.rc']['data']
+    if (rc.count(b'on property:twrp.decrypt.done=true\n    start neo8-wifi-prewarm\n') != 1
+            or len(re.findall(rb'^on (?!property:(sys\.aera\.wlan\.up=1|twrp\.decrypt\.done=true)$)', rc, re.M))):
+        raise ValueError('Wi-Fi may only start on a UI request or after decryption')
+    if not entries['system/bin/neo8-wifi-prewarm.sh']['mode'] & 0o111:
+        raise ValueError('Non-executable Wi-Fi pre-warm script')
+    return {'wlan_backend': True, 'on_demand_service': True, 'prewarm_after_decrypt': True,
+            'stock_mount_root': '/tmp/aera-wifi'}

@@ -1,4 +1,5 @@
-# Wi-Fi is opt-in; do not run the hardware loader during recovery startup.
+# The hardware loader never runs during recovery startup. It starts on a UI
+# request, or in the background after data decryption has completed.
 on property:sys.aera.wlan.up=1
     setprop sys.aera.wlan.up 0
     start wpa_supplicant
@@ -7,6 +8,17 @@ service wpa_supplicant /system/bin/sh /system/bin/neo8-wifi-service.sh
     class main
     user root
     group root wifi inet net_admin net_raw
+    disabled
+    oneshot
+    seclabel u:r:recovery:s0
+
+on property:twrp.decrypt.done=true
+    start neo8-wifi-prewarm
+
+service neo8-wifi-prewarm /system/bin/sh /system/bin/neo8-wifi-prewarm.sh
+    class main
+    user root
+    group root
     disabled
     oneshot
     seclabel u:r:recovery:s0

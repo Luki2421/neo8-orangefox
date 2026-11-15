@@ -416,3 +416,28 @@ i instalator (56). Lokalnie użyto zastępczego `regulatory.db`; CI bierze prawd
 z `wireless-regdb`. Nowe funkcje upstreamu typu opt-in (odcisk palca, EFISP, zależności
 w RAM, kompresja) nie są włączone. Kompilacja Androida i próba na telefonie wciąż
 konieczne; zmiany Wi-Fi i instalatora ZIP z upstreamu nie były testowane na Neo8.
+
+## Wi-Fi: rozgrzewanie po odszyfrowaniu — 15.11.2026
+
+Zgłoszenie: Wi-Fi włącza się około minuty. Log loadera z kompilacji 30 (bez
+znaczników czasu) pokazuje poprawne moduły i `cnss-daemon`, nieudane pierwsze
+`IWifi.start` (`Status(-8)`, firmware jeszcze niegotowy), 8 s przerwy i udaną
+drugą próbę z `wlan0 ready after 1s`. Czas zajmuje zimny start firmware'u, którego
+recovery nie skróci; zmiana samych prób dałaby kilka sekund.
+
+`init.neo8-wifi.rc` po `twrp.decrypt.done=true` uruchamia jednorazowo
+`neo8-wifi-prewarm.sh`. Skrypt wysyła to samo żądanie co UI
+(`sys.aera.wlan.up=1`), więc uruchomienie przebiega dotychczasową usługą, a UI
+zastaje ją aktywną i czeka tylko na gniazdo supplicanta. Loader nadal nie startuje
+przy uruchomieniu recovery ani przed odszyfrowaniem; bez odszyfrowania pozostaje
+start na żądanie. Wyłączenie: pusty plik `AERA/no-wifi-prewarm` w pamięci
+wewnętrznej. Logi usługi i prób HAL mają teraz czas `uptime`.
+
+Skutek uboczny: po odszyfrowaniu partycje systemu są zamontowane tylko do odczytu
+pod `/tmp/aera-wifi`, moduły WLAN i KGSL załadowane, radio włączone — także gdy
+Wi-Fi nie jest używane. To ten sam stan co po ręcznym włączeniu Wi-Fi.
+
+Testy hosta: 7 scenariuszy prawdziwego skryptu (znacznik wyłączenia, usługa już
+aktywna, brak pamięci) oraz kontrola, że jedynymi wyzwalaczami są żądanie UI i
+zakończone odszyfrowanie. Nie sprawdzono na telefonie: czasu do gotowości,
+wpływu na odszyfrowanie, instalacji OTA/ZIP z aktywnym Wi-Fi ani zużycia energii.

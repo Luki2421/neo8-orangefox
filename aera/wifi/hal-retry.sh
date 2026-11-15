@@ -5,7 +5,7 @@
 start_wifi_hal_with_retry() {
     local attempt=1 status
     while [ "$attempt" -le 3 ]; do
-        echo "Wi-Fi HAL start attempt $attempt/3"
+        echo "Wi-Fi HAL start attempt $attempt/3 (uptime $(cut -d' ' -f1 /proc/uptime)s)"
         if start_wifi_hal; then
             return 0
         else

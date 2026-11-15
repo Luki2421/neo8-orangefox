@@ -139,6 +139,45 @@ sleep() { echo "$1" >> "$TEST_ROOT/sleeps"; }
     print(f'PASS: {len(cases)} HAL startup retry and fatal-error scenarios')
 
 
+def check_prewarm():
+    """Run the real pre-warm script with mocked properties and storage."""
+    script = (Path(__file__).resolve().parent / 'wifi/neo8-wifi-prewarm.sh').read_text()
+    rc = (Path(__file__).resolve().parent / 'wifi/init.neo8-wifi.rc').read_text()
+    assert rc.count('on property:twrp.decrypt.done=true\n    start neo8-wifi-prewarm\n') == 1
+    assert rc.count('service neo8-wifi-prewarm ') == 1 and rc.count('service wpa_supplicant ') == 1
+    # No boot, init or early-boot trigger may start the hardware loader.
+    triggers = [line for line in rc.splitlines() if line.startswith('on ')]
+    assert triggers == ['on property:sys.aera.wlan.up=1', 'on property:twrp.decrypt.done=true'], triggers
+    cases = [  # (storage present, marker, service state, expect request)
+        (True, False, '', True), (True, False, 'stopped', True), (True, True, '', False),
+        (True, False, 'running', False), (True, False, 'restarting', False),
+        (False, False, '', True), (True, True, 'running', False)]
+    for storage, marker, state, expected in cases:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            if storage:
+                (root / 'media/AERA').mkdir(parents=True)
+            if marker:
+                (root / 'media/AERA/no-wifi-prewarm').touch()
+            body = script.replace('MEDIA=/data/media/0', f'MEDIA={root}/media')
+            body = body.replace('exec >>/tmp/neo8-wifi-service.log 2>&1', f'exec >>{root}/log 2>&1')
+            body = body.replace('export PATH=/system/bin:/sbin:/vendor/bin', '')
+            assert str(root) in body and '/tmp/neo8' not in body
+            mocks = f'''
+getprop() {{ [ "$1" = init.svc.wpa_supplicant ] && echo "{state}"; }}
+setprop() {{ echo "$1=$2" >> {root}/props; }}
+sleep() {{ echo "$1" >> {root}/sleeps; }}
+'''
+            result = subprocess.run(['sh', '-c', mocks + body], env={'PATH': '/usr/bin:/bin'},
+                                    capture_output=True, text=True, timeout=5)
+            assert result.returncode == 0, (result.stdout, result.stderr)
+            props = (root / 'props').read_text().splitlines() if (root / 'props').exists() else []
+            assert props == (['sys.aera.wlan.up=1'] if expected else []), (storage, marker, state, props)
+            sleeps = (root / 'sleeps').read_text().splitlines() if (root / 'sleeps').exists() else []
+            assert sleeps == ([] if storage else ['1'] * 5), sleeps
+    print(f'PASS: {len(cases)} Wi-Fi pre-warm scenarios')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--device', required=True, type=Path)
@@ -162,6 +201,7 @@ def main():
     check_module_traversal(loader)
     check_library_environments(loader)
     check_hal_start_retry(loader)
+    check_prewarm()
     fixture = {p: {'mode': 0o100755, 'data': data} for p, data in expected.items()}
     fixture['system/etc/ueventd.rc'] = {'mode': 0o100644, 'data': ' '.join(FIRMWARE_DIRS).encode()}
     fixture['system/bin/recovery'] = {'mode': 0o100755, 'data': b'WLAN: triggering supplicant bring-up'}

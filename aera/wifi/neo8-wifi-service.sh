@@ -4,13 +4,15 @@ export PATH=/system/bin:/sbin:/vendor/bin
 umask 077
 mkdir -p /tmp/recovery/sockets
 exec >>/tmp/neo8-wifi-service.log 2>&1
-echo "Starting Neo8 Wi-Fi on demand"
+uptime_s() { cut -d' ' -f1 /proc/uptime; }
+echo "Starting Neo8 Wi-Fi (uptime $(uptime_s)s)"
 
 # Bound the complete loader, including synchronous calls to the vendor HAL.
 if ! /system/bin/toybox timeout -k 5 100 /system/bin/sh /system/bin/neo8-wifi-loader.sh; then
     echo "Neo8 Wi-Fi setup failed; see /tmp/neo8-wifi-loader.log" >>/tmp/recovery.log
     exit 1
 fi
+echo "Neo8 Wi-Fi loader finished (uptime $(uptime_s)s)"
 
 # AERA's browser renders through the Adreno GPU (/dev/kgsl-3d0). The stock
 # vendor_dlkm is mounted by the loader above; load KGSL from it. Best effort: the
