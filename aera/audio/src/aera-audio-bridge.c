@@ -247,7 +247,7 @@ static int read_gain(void) {
     return percent * 256 / 100;
 }
 
-static int cmd_bridge(const char *fifo_path, int accept_root, char **player) {
+static int cmd_bridge(const char *fifo_path, long extra_uid, char **player) {
     const int gain = read_gain();
     signal(SIGPIPE, SIG_IGN); signal(SIGTERM, on_stop); signal(SIGINT, on_stop);
     prctl(PR_SET_PDEATHSIG, SIGTERM, 0, 0, 0);
@@ -288,7 +288,7 @@ static int cmd_bridge(const char *fifo_path, int accept_root, char **player) {
                 struct ucred peer = {0}; socklen_t n = sizeof(peer); uint32_t hello[4] = {0}; size_t got = 0;
                 struct timeval timeout = {0, 300000}; setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
                 int ok = !getsockopt(client, SOL_SOCKET, SO_PEERCRED, &peer, &n) && n == sizeof(peer) &&
-                    (peer.uid == 99090 || peer.uid == 99092 || peer.uid == 99094 || (accept_root && peer.uid == 0));
+                    (peer.uid == 99090 || peer.uid == 99092 || peer.uid == 99094 || (extra_uid >= 0 && (long)peer.uid == extra_uid));
                 while (ok && got < sizeof(hello)) { ssize_t r = read(client, (uint8_t *)hello + got, sizeof(hello) - got); if (r <= 0) ok = 0; else got += r; }
                 ok = ok && hello[0] == 0x41525041u && hello[1] == 48000 && hello[2] == 2 && hello[3] == 16;
                 fprintf(stderr, "bridge: client uid %d %s at %.2fs\n", (int)peer.uid, ok ? "accepted" : "rejected", now_s() - start);
@@ -380,11 +380,12 @@ int main(int argc, char **argv) {
         mkdir("/tmp/neo8-agm", 0755);
         int log = open("/tmp/neo8-audio-bridge.log", O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
         if (log >= 0) { dup2(log, 1); dup2(log, 2); close(log); }
-        return cmd_bridge(player[2], 0, player);
+        return cmd_bridge(player[2], -1, player);
     }
     if (argc >= 5 && !strcmp(argv[1], "bridge")) {
-        int root = !strcmp(argv[3], "--accept-root"), at = root ? 4 : 3;
-        if (argc > at + 1 && !strcmp(argv[at], "--")) return cmd_bridge(argv[2], root, argv + at + 1);
+        /* Test mode: --accept-uid N additionally admits that uid (e.g. a test runner). */
+        int extra = argc > 5 && !strcmp(argv[3], "--accept-uid"), at = extra ? 5 : 3;
+        if (argc > at + 1 && !strcmp(argv[at], "--")) return cmd_bridge(argv[2], extra ? atol(argv[4]) : -1, argv + at + 1);
     }
     if (argc == 3 && !strcmp(argv[1], "client")) return cmd_client(atof(argv[2]));
     if (argc == 4 && !strcmp(argv[1], "gprping")) return cmd_gprping(argv[2], atoi(argv[3]));

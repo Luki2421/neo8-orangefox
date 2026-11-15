@@ -40,7 +40,7 @@ def check_protocol(work):
     player.write_text('import sys,time\nf=open(sys.argv[1],"rb");o=open(sys.argv[2],"wb")\n'
                       'o.write(f.read(44));o.flush()\nwhile True:\n'
                       '    d=f.read(3840)\n    if not d: break\n    o.write(d);o.flush();time.sleep(0.02)\n')
-    proc = subprocess.Popen([str(bridge), 'bridge', str(fifo), '--accept-root', '--',
+    proc = subprocess.Popen([str(bridge), 'bridge', str(fifo), '--accept-uid', str(os.getuid()), '--',
                              sys.executable, str(player), str(fifo), str(out)],
                             stderr=subprocess.PIPE, text=True)
     try:
