@@ -46,7 +46,12 @@ def check_protocol(work):
     try:
         # Wrong hello is rejected, a correct one is streamed.
         bad = connect(); bad.sendall(struct.pack('<4I', 0x41525041, 44100, 2, 16))
-        bad.settimeout(2); assert bad.recv(1) == b''; bad.close()
+        bad.settimeout(2)
+        try:
+            assert bad.recv(1) == b''
+        except ConnectionResetError:
+            pass  # closed with unread data: also a rejection
+        bad.close()
         good = connect(); good.sendall(struct.pack('<4I', 0x41525041, 48000, 2, 16))
         block = struct.pack('<2h', 12000, 12000) * 960  # 20 ms, paced like AERA's clients
         deadline = time.monotonic()
