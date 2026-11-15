@@ -441,3 +441,22 @@ Testy hosta: 7 scenariuszy prawdziwego skryptu (znacznik wyłączenia, usługa j
 aktywna, brak pamięci) oraz kontrola, że jedynymi wyzwalaczami są żądanie UI i
 zakończone odszyfrowanie. Nie sprawdzono na telefonie: czasu do gotowości,
 wpływu na odszyfrowanie, instalacji OTA/ZIP z aktywnym Wi-Fi ani zużycia energii.
+
+## Neo8 speaker audio (experimental)
+
+AERA's media features (browser, media player, streams, games) send 48 kHz stereo PCM to
+`/system/bin/aera-audio-bridge`. The Neo8 build ships one (`aera/audio`):
+
+- Nothing runs at boot. The first media session starts the bridge, which runs
+  `neo8-audio-player.sh`: stock `vendor`, `vendor_dlkm`, `system_dlkm`, `odm`, `dsp` and
+  `modem` are mounted **read-only** under `/tmp/aera-wifi`, the audio kernel modules are
+  loaded, the ADSP is started and the stock `pd-mapper`, `audioadsprpcd` and `adsprpcd`
+  run in a chroot under `/tmp`. The stock `agmplay` then plays the stream from a FIFO.
+- The first start takes about 15–20 s; until then PCM is discarded. Later sessions
+  reuse the running DSP and start in about 5 s.
+- Volume: 25 % of full scale by default (no speaker calibration in recovery). Put a
+  number 1–100 into `/sdcard/AERA/audio-volume` to change it.
+- Log: `/tmp/neo8-audio-bridge.log`. If anything fails the bridge keeps accepting audio
+  silently, like AERA's null bridge.
+- Rebuild the helpers with `aera/audio/src/build.sh`; `aera/test_audio.py` checks the
+  assets and the socket protocol.

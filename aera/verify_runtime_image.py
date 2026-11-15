@@ -13,6 +13,7 @@ from secure_element_bundle import verified_reference, validate_secure_element_bu
 from ota_sideload import validate_ota_sideload
 from regdb import validate_regdb
 from wifi_config import validate_wifi_image
+from audio_config import validate_audio_image
 from runtime_fixes import validate_runtime_fixes
 
 if __name__ == '__main__':
@@ -27,6 +28,7 @@ if __name__ == '__main__':
     reference = verified_reference(*read_recovery(args.reference))
     report['secure_element_bundle'] = validate_secure_element_bundle(entries, reference)
     report['wifi'] = validate_wifi_image(entries, reference)
+    report['audio'] = validate_audio_image(entries)
     report['ota_sideload'] = validate_ota_sideload(entries, reference)
     report['regdb'] = validate_regdb(entries)
     report['usb_and_strongbox'] = validate_runtime_fixes(entries, reference)

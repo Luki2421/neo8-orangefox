@@ -21,6 +21,7 @@ from ota_sideload import configure_ota_sideload
 from regdb import configure_regdb
 from screen_config import enable_screen_timeout
 from wifi_config import configure_wifi
+from audio_config import configure_audio
 from runtime_fixes import configure_runtime_fixes
 
 REFERENCE_SHA = '80b0cbb97a969b4df1ec4c9e51056c4a6433e3536364e987666186f3c5fd7573'
@@ -82,6 +83,7 @@ def main():
     report['runtime_configuration'] = restore_runtime_config(device, entries)
     report['secure_element_bundle'] = restore_secure_element_bundle(device, entries)
     report['wifi'] = configure_wifi(device, entries)
+    report['audio'] = configure_audio(device)
     report['ota_sideload'] = configure_ota_sideload(device, entries)
     report['regdb'] = configure_regdb(device, args.regdb_dir)
     report['usb_and_strongbox'] = configure_runtime_fixes(device, root / 'bootable/recovery', entries)
