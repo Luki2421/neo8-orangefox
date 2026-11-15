@@ -13,6 +13,7 @@
 #include <sys/stat.h>
 #include <sys/ioctl.h>
 #include <sys/prctl.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/wait.h>
@@ -238,19 +239,43 @@ static socklen_t bridge_address(struct sockaddr_un *a) {
 }
 static void put32(uint8_t *p, uint32_t v) { p[0] = v; p[1] = v >> 8; p[2] = v >> 16; p[3] = v >> 24; }
 
-/* Percent of full scale, 1..100. The recovery graph has no volume stage or speaker
- * calibration, so the default is deliberately low. */
-static int read_gain(void) {
-    int percent = 25; char text[16] = {0};
-    int fd = open("/data/media/0/AERA/audio-volume", O_RDONLY | O_CLOEXEC);
-    if (fd >= 0) { if (read(fd, text, sizeof(text) - 1) > 0) { int v = atoi(text); if (v >= 1 && v <= 100) percent = v; } close(fd); }
-    return percent * 256 / 100;
+/* Volume: AERA's hardware keys write 0..100 (default 30) to /tmp/aera-audio-volume.
+ * That percentage scales a ceiling (percent of full scale, default 80) that can be
+ * changed in /sdcard/AERA/audio-volume, because recovery has no speaker calibration. */
+static int read_percent(const char *path, int fallback, int low) {
+    char text[16] = {0}; int value = fallback;
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd >= 0) { if (read(fd, text, sizeof(text) - 1) > 0) { int v = atoi(text); if (v >= low && v <= 100) value = v; } close(fd); }
+    return value;
+}
+/* Q16 gain */
+static int32_t target_gain(int ceiling) {
+    int volume = read_percent("/tmp/aera-audio-volume", 30, 0);
+    return (int32_t)((int64_t)65536 * ceiling * volume / 10000);
 }
 
+#define RING (192000)          /* 1 s */
+#define PREBUFFER (3 * CHUNK)  /* 60 ms collected before (re)starting a client stream */
+#define HIGH_WATER (96000)     /* 500 ms: the client is far ahead, drop the oldest audio */
+#define LOW_WATER (48000)      /* ... down to 250 ms */
+static uint8_t ring[RING];
+static size_t ring_head, ring_fill;
+static void ring_put(const uint8_t *p, size_t n) {
+    for (size_t i = 0; i < n; i++) ring[(ring_head + ring_fill + i) % RING] = p[i];
+    ring_fill += n;
+}
+static void ring_get(uint8_t *p, size_t n) {
+    for (size_t i = 0; i < n; i++) p[i] = ring[(ring_head + i) % RING];
+    ring_head = (ring_head + n) % RING; ring_fill -= n;
+}
+static void ring_drop(size_t n) { ring_head = (ring_head + n) % RING; ring_fill -= n; }
+
 static int cmd_bridge(const char *fifo_path, long extra_uid, char **player) {
-    const int gain = read_gain();
+    const int ceiling = read_percent("/data/media/0/AERA/audio-volume", 80, 1);
     signal(SIGPIPE, SIG_IGN); signal(SIGTERM, on_stop); signal(SIGINT, on_stop);
     prctl(PR_SET_PDEATHSIG, SIGTERM, 0, 0, 0);
+    /* The UI and browser compete for the CPU; the player inherits this. */
+    setpriority(PRIO_PROCESS, 0, -16);
     struct sockaddr_un address; socklen_t size = bridge_address(&address);
     int server = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
     if (server < 0 || bind(server, (struct sockaddr *)&address, size) || listen(server, 1)) { perror("bridge socket"); return 70; }
@@ -271,10 +296,12 @@ static int cmd_bridge(const char *fifo_path, long extra_uid, char **player) {
     }
     if (child < 0) { perror("fork"); return 70; }
     const double start = now_s();
-    fprintf(stderr, "bridge: listening, pipe %d bytes, player pid %d, gain %d/256\n", pipe_size, (int)child, gain);
-    int client = -1, rc = 0, was_full = 0, announced = 0;
-    unsigned long long chunks = 0, client_bytes = 0, dropped = 0, padded = 0, clients = 0;
-    uint8_t chunk[CHUNK], junk[8192];
+    fprintf(stderr, "bridge: listening, pipe %d bytes, player pid %d, ceiling %d%%\n", pipe_size, (int)child, ceiling);
+    int client = -1, rc = 0, announced = 0, streaming = 0;
+    int32_t gain = target_gain(ceiling), target = gain;
+    double next_volume = 0, client_since = 0;
+    unsigned long long chunks = 0, clients = 0, underruns = 0, dropped = 0, client_bytes = 0;
+    uint8_t chunk[CHUNK], buffer[16384];
     while (!g_stop) {
         int status;
         if (child > 0 && waitpid(child, &status, WNOHANG) == child) {
@@ -292,42 +319,50 @@ static int cmd_bridge(const char *fifo_path, long extra_uid, char **player) {
                 while (ok && got < sizeof(hello)) { ssize_t r = read(client, (uint8_t *)hello + got, sizeof(hello) - got); if (r <= 0) ok = 0; else got += r; }
                 ok = ok && hello[0] == 0x41525041u && hello[1] == 48000 && hello[2] == 2 && hello[3] == 16;
                 fprintf(stderr, "bridge: client uid %d %s at %.2fs\n", (int)peer.uid, ok ? "accepted" : "rejected", now_s() - start);
-                if (!ok) { close(client); client = -1; } else { fcntl(client, F_SETFL, O_NONBLOCK); clients++; }
+                if (!ok) { close(client); client = -1; }
+                else {
+                    fcntl(client, F_SETFL, O_NONBLOCK); clients++; streaming = 0; ring_head = ring_fill = 0;
+                    underruns = dropped = client_bytes = 0; client_since = now_s();
+                }
             }
         }
-        struct pollfd out = {fifo, POLLOUT, 0};
-        if (child < 0) { usleep(20000); out.revents = 0; }
-        else if (poll(&out, 1, 100) <= 0) out.revents = 0;
-        if (!(out.revents & POLLOUT)) {
-            /* Player is starting or stalled: keep the client real-time by discarding. */
-            was_full = 1;
-            if (client >= 0) { ssize_t r = read(client, junk, sizeof(junk)); if (r > 0) dropped += r; else if (!r) { close(client); client = -1; } }
-            continue;
+        struct pollfd fds[2] = {{fifo, child > 0 ? POLLOUT : 0, 0}, {client, POLLIN, 0}};
+        poll(fds, client >= 0 ? 2 : 1, 20);
+        if (client >= 0) { /* take everything the client has sent */
+            for (;;) {
+                size_t room = RING - ring_fill; if (room > sizeof(buffer)) room = sizeof(buffer);
+                if (!room) break;
+                ssize_t r = read(client, buffer, room);
+                if (r > 0) { ring_put(buffer, (size_t)r); client_bytes += r; continue; }
+                if (r == 0 || (errno != EAGAIN && errno != EINTR)) {
+                    fprintf(stderr, "bridge: client left at %.2fs after %.1fs: %.1fs of audio, %llu underruns, %.2fs dropped\n",
+                            now_s() - start, now_s() - client_since, client_bytes / 192000.0, underruns, dropped / 192000.0);
+                    close(client); client = -1;
+                }
+                break;
+            }
+            if (ring_fill > HIGH_WATER) {
+                size_t n = (ring_fill - LOW_WATER) & ~(size_t)3; ring_drop(n); dropped += n;
+            }
         }
-        if (was_full && !announced) { announced = 1; fprintf(stderr, "bridge: player is consuming at %.2fs\n", now_s() - start); }
+        if (now_s() >= next_volume) { target = target_gain(ceiling); next_volume = now_s() + 0.2; }
+        if (child < 0) { if (client < 0) usleep(20000); else ring_drop(ring_fill & ~(size_t)3); continue; }
+        if (!(fds[0].revents & POLLOUT)) continue;
+        if (!announced) { announced = 1; fprintf(stderr, "bridge: player is consuming at %.2fs\n", now_s() - start); }
         memset(chunk, 0, sizeof(chunk));
-        if (client >= 0) {
-            int available = 0;
-            ioctl(client, FIONREAD, &available);
-            /* POLLIN fires on a partial block; wait for a whole one (up to 60 ms) so that a
-             * slow writer never gets zeros spliced into the middle of its block. */
-            for (int waited = 0; available < CHUNK && waited < 30; waited++) {
-                struct pollfd in = {client, POLLRDHUP, 0};
-                if (poll(&in, 1, 2) > 0 && (in.revents & (POLLRDHUP | POLLHUP | POLLERR))) { ioctl(client, FIONREAD, &available); break; }
-                ioctl(client, FIONREAD, &available);
-            }
-            while (available > 10 * CHUNK) { ssize_t r = read(client, junk, CHUNK); if (r <= 0) break; dropped += r; available -= r; }
-            size_t want = (size_t)(available < CHUNK ? available : CHUNK) & ~(size_t)3;
-            if (want) {
-                ssize_t r = read(client, chunk, want); if (r > 0) client_bytes += r; if (r < CHUNK) padded++;
-                if (r > 0 && gain < 256) { int16_t *pcm = (int16_t *)chunk; for (ssize_t i = 0; i < r / 2; i++) pcm[i] = (int16_t)((pcm[i] * gain) >> 8); }
-            }
-            else {
-                char probe; ssize_t r = recv(client, &probe, 1, MSG_PEEK);
-                if (!r || (r < 0 && errno != EAGAIN && errno != EINTR)) { fprintf(stderr, "bridge: client left at %.2fs\n", now_s() - start); close(client); client = -1; }
-                else padded++;
-            }
+        if (!streaming && (ring_fill >= PREBUFFER || (client < 0 && ring_fill >= 4))) streaming = 1;
+        if (streaming) {
+            size_t n = ring_fill < CHUNK ? ring_fill & ~(size_t)3 : CHUNK;
+            ring_get(chunk, n);
+            if (n < CHUNK) { if (client >= 0) underruns++; streaming = 0; }
         }
+        /* Apply the gain with a per-chunk ramp so that volume steps never click. */
+        int16_t *pcm = (int16_t *)chunk;
+        for (int i = 0; i < CHUNK / 2; i++) {
+            int32_t g = gain + (int32_t)((int64_t)(target - gain) * (i / 2) / (CHUNK / 4));
+            pcm[i] = (int16_t)(((int32_t)pcm[i] * g) >> 16);
+        }
+        gain = target;
         size_t done = 0; int tries = 0;
         while (done < sizeof(chunk) && tries++ < 50 && !g_stop) { /* never leave half a frame in the stream */
             ssize_t w = write(fifo, chunk + done, sizeof(chunk) - done);
@@ -335,10 +370,12 @@ static int cmd_bridge(const char *fifo_path, long extra_uid, char **player) {
         }
         if (done == sizeof(chunk)) chunks++; else if (done) { fprintf(stderr, "bridge: stream broken after a partial write\n"); rc = 70; break; }
     }
+    if (client >= 0)
+        fprintf(stderr, "bridge: client stopped with the bridge after %.1fs: %.1fs of audio, %llu underruns, %.2fs dropped\n",
+                now_s() - client_since, client_bytes / 192000.0, underruns, dropped / 192000.0);
     /* The stock player closes its stream on SIGINT; AERA allows about 150 ms before SIGKILL. */
     if (child > 0) { kill(child, SIGINT); for (int i = 0; i < 10 && waitpid(child, NULL, WNOHANG) == 0; i++) usleep(10000); kill(child, SIGKILL); waitpid(child, NULL, 0); }
-    fprintf(stderr, "bridge: stop at %.2fs: clients %llu, chunks %llu (%.1fs), client bytes %llu (%.1fs), dropped %llu, short/silent chunks with a client %llu\n",
-            now_s() - start, clients, chunks, chunks * 0.02, client_bytes, client_bytes / 192000.0, dropped, padded);
+    fprintf(stderr, "bridge: stop at %.2fs: clients %llu, chunks %llu (%.1fs)\n", now_s() - start, clients, chunks, chunks * 0.02);
     close(fifo); unlink(fifo_path); close(server);
     return rc;
 }

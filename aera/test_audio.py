@@ -53,11 +53,24 @@ def check_protocol(work):
             pass  # closed with unread data: also a rejection
         bad.close()
         good = connect(); good.sendall(struct.pack('<4I', 0x41525041, 48000, 2, 16))
-        block = struct.pack('<2h', 12000, 12000) * 960  # 20 ms, paced like AERA's clients
-        deadline = time.monotonic()
-        for _ in range(50):
-            good.sendall(block); deadline += 0.02; time.sleep(max(0, deadline - time.monotonic()))
-        time.sleep(0.5); good.close(); time.sleep(0.5)
+        block = struct.pack('<2h', 12000, 12000) * 960  # 20 ms
+        volume = Path('/tmp/aera-audio-volume')
+        old_volume = volume.read_bytes() if volume.exists() else None
+        try:
+            volume.write_text('30')
+            deadline = time.monotonic()
+            for _ in range(50):  # 1 s paced like the browser sink
+                good.sendall(block); deadline += 0.02; time.sleep(max(0, deadline - time.monotonic()))
+            volume.write_text('60')  # AERA's volume keys
+            for _ in range(10):  # 1 s in 100 ms bursts with jitter, like a decoder
+                good.sendall(block * 5); deadline += 0.1
+                time.sleep(max(0, deadline - time.monotonic() + (0.03 if _ % 2 else -0.03)))
+            time.sleep(0.6); good.close(); time.sleep(0.5)
+        finally:
+            if old_volume is None:
+                volume.unlink(missing_ok=True)
+            else:
+                volume.write_bytes(old_volume)
     finally:
         proc.terminate(); _, log = proc.communicate(timeout=5)
     assert proc.returncode == 0, log
@@ -66,14 +79,15 @@ def check_protocol(work):
     assert data[:4] == b'RIFF' and data[8:16] == b'WAVEfmt ' and struct.unpack('<I', data[24:28])[0] == 48000
     samples = struct.unpack('<%dh' % ((len(data) - 44) // 2), data[44:44 + (len(data) - 44) // 2 * 2])
     assert len(samples) % 2 == 0
-    loud = sum(1 for s in samples if s)
-    # Default gain is 25 % of full scale; frames are never split.
-    assert set(s for s in samples if s) == {12000 * 64 >> 8}, set(samples)
-    assert loud == 96000, loud
-    first = next(i for i, s in enumerate(samples) if s)
-    assert all(samples[first:first + loud]), 'silence spliced into a paced stream'
+    first = next(i for i, v in enumerate(samples) if v)
+    loud = samples[first:first + 192000]
+    assert all(loud), 'silence spliced into the stream'
+    assert not any(samples[first + 192000:]), 'audio after the stream ended'
+    quiet, louder = 12000 * 15728 >> 16, 12000 * 31457 >> 16  # 80 % ceiling x 30 % / 60 %
+    assert loud[0] == quiet and loud[-1] == louder, (loud[0], loud[-1])
+    assert all(a <= b for a, b in zip(loud[::2], loud[2::2])), 'volume change must ramp, not jump around'
     assert 'client uid' in log and 'rejected' in log and 'accepted' in log, log
-    return {'played_samples': loud, 'log': log.strip().splitlines()[-1]}
+    return {'played_samples': len(loud), 'log': log.strip().splitlines()[-1]}
 
 
 def main():

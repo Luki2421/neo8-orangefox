@@ -454,8 +454,11 @@ AERA's media features (browser, media player, streams, games) send 48 kHz stereo
   run in a chroot under `/tmp`. The stock `agmplay` then plays the stream from a FIFO.
 - The first start takes about 15–20 s; until then PCM is discarded. Later sessions
   reuse the running DSP and start in about 5 s.
-- Volume: 25 % of full scale by default (no speaker calibration in recovery). Put a
-  number 1–100 into `/sdcard/AERA/audio-volume` to change it.
+- Volume follows AERA's volume keys (`/tmp/aera-audio-volume`, default 30 %), applied
+  with a short ramp. It scales a ceiling of 80 % of full scale (no speaker calibration
+  in recovery); put a number 1–100 into `/sdcard/AERA/audio-volume` to change the ceiling.
+- A jitter buffer (60 ms start, drops only beyond 500 ms ahead) absorbs decoders that
+  send in bursts; each session logs its underruns and dropped audio.
 - Log: `/tmp/neo8-audio-bridge.log`. If anything fails the bridge keeps accepting audio
   silently, like AERA's null bridge.
 - Rebuild the helpers with `aera/audio/src/build.sh`; `aera/test_audio.py` checks the
