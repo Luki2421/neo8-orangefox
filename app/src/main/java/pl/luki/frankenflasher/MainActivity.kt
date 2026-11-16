@@ -257,6 +257,7 @@ class MainActivity : Activity() {
         otaFound = ui.body(tr("Wpisz model i region, potem Szukaj. Wynik: najnowsze pelne OTA.", "Enter model and region, then Search. Result: latest full OTA."))
         cDl.addView(otaFound, ui.lp(bottom = 10))
         ui.row(cDl, ui.button(tr("Szukaj", "Search"), B) { searchOta() }, ui.button(tr("Pobierz", "Download"), B) { downloadOta() })
+        ui.row(cDl, ui.button(tr("Szukaj we wszystkich regionach", "Search all regions"), G) { searchAllOta() })
         ui.row(cDl, ui.button(tr("Przerwij pobieranie", "Stop download"), G) { dlCancel = true })
         val cDlNext = ui.card(pDl, tr("Dalej", "Next"))
         cDlNext.addView(ui.body(tr("Pobrany plik trafia do FrankenFlasher/OTA i jest od razu ustawiony w zakladce OTA - tam Rozpakuj jako BAZA albo DAWCA.",
@@ -737,23 +738,76 @@ class MainActivity : Activity() {
                 setStep(tr("Szukanie OTA...", "Searching OTA..."))
                 val r = pl.luki.frankenflasher.ota.OplusOta(::log).query(input, region, null, taste)
                 otaRes = r
+                val txt = otaText(r)
                 val best = r.best()
-                val txt = if (best == null) tr("Brak wyniku (kod ${r.code}${r.err?.let { ": $it" } ?: ""}). Sprawdz model i region - np. modele EU maja sufiks EEA.",
-                    "No result (code ${r.code}${r.err?.let { ": $it" } ?: ""}). Check model and region - e.g. EU models use the EEA suffix.")
-                else buildString {
-                    append(r.versionName ?: r.otaVersion ?: "?").append('\n')
-                    r.otaVersion?.let { append(it).append('\n') }
-                    append("Android ${r.android ?: "?"} · ${r.os ?: ""}").append('\n')
-                    r.patch?.let { append(tr("Poprawki: ", "Patch: ")).append(it).append('\n') }
-                    r.published?.let { append(tr("Wydano: ", "Published: ")).append(java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.ROOT).format(java.util.Date(it))).append('\n') }
-                    append(tr("Rozmiar: ", "Size: ")).append("%.2f GB".format(best.size / 1073741824.0))
-                    if (best.md5 != null) append(" · MD5")
-                }
                 runOnUiThread { otaFound.text = txt }
                 log("OTA: " + txt.replace('\n', ' ').take(400))
                 best?.let { log(tr("Adres: ${it.url}", "URL: ${it.url}")) }
                 r.changelog?.let { log(tr("Lista zmian: $it", "Changelog: $it")) }
                 setStep(if (best != null) tr("Znaleziono OTA - Pobierz", "OTA found - Download") else tr("Nie znaleziono OTA", "No OTA found"))
+            } catch (e: Exception) {
+                log(tr("BLAD wyszukiwania OTA: ${e.message ?: e}", "OTA search ERROR: ${e.message ?: e}")); setStep(tr("BLAD wyszukiwania", "Search ERROR"))
+            } finally { busy = false }
+        }
+    }
+
+    private fun otaText(r: pl.luki.frankenflasher.ota.OplusOta.Result, region: String? = null): String {
+        val best = r.best() ?: return tr("Brak wyniku (kod ${r.code}${r.err?.let { ": $it" } ?: ""}). Sprawdz model i region - np. modele EU maja sufiks EEA.",
+            "No result (code ${r.code}${r.err?.let { ": $it" } ?: ""}). Check model and region - e.g. EU models use the EEA suffix.")
+        return buildString {
+            region?.let { append("[$it] ") }
+            append(r.versionName ?: r.otaVersion ?: "?").append('\n')
+            r.otaVersion?.let { append(it).append('\n') }
+            append("Android ${r.android ?: "?"} · ${r.os ?: ""}").append('\n')
+            r.patch?.let { append(tr("Poprawki: ", "Patch: ")).append(it).append('\n') }
+            r.published?.let { append(tr("Wydano: ", "Published: ")).append(java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.ROOT).format(java.util.Date(it))).append('\n') }
+            append(tr("Rozmiar: ", "Size: ")).append("%.2f GB".format(best.size / 1073741824.0))
+            if (best.md5 != null) append(" · MD5")
+        }
+    }
+
+    /** Wszystkie regiony x (stabilne, beta) - serwer podaje tylko najnowsza wersje, wiec to sa wszystkie aktualnie dostepne pelne OTA. */
+    private fun searchAllOta() {
+        if (busy) { log(tr("Trwa inna operacja - poczekaj az sie skonczy", "Another operation is running - wait until it finishes")); return }
+        val input = otaModelEdit.text.toString().trim()
+        if (input.isEmpty()) { log(tr("Wpisz model, np. RMX8899", "Enter a model, e.g. RMX8899")); return }
+        prefs.edit().putString("dlModel", input).apply()
+        busy = true
+        exec.execute {
+            try {
+                val jobs = pl.luki.frankenflasher.ota.OplusOta.REGIONS.flatMap { r -> listOf(r.id to false, r.id to true) }
+                setStep(tr("Szukanie w ${jobs.size / 2} regionach...", "Searching ${jobs.size / 2} regions..."))
+                val quiet = pl.luki.frankenflasher.ota.OplusOta { }
+                val pool = java.util.concurrent.Executors.newFixedThreadPool(4)
+                val done = java.util.concurrent.atomic.AtomicInteger()
+                val found = try {
+                    jobs.map { (reg, taste) -> pool.submit<Triple<String, Boolean, pl.luki.frankenflasher.ota.OplusOta.Result?>> {
+                        val r = try { quiet.query(input, reg, null, taste) } catch (_: Exception) { null }
+                        setProgress(done.incrementAndGet().toLong(), jobs.size.toLong())
+                        Triple(reg, taste, r)
+                    } }.map { it.get() }
+                } finally { pool.shutdownNow(); setProgress(0, 0) }
+                // ten sam pakiet (adres) w kilku regionach pokazany raz
+                val hits = found.filter { it.third?.best() != null }
+                    .distinctBy { it.third!!.best()!!.url.substringBefore('?') }
+                    .sortedByDescending { it.third!!.published ?: 0L }
+                if (hits.isEmpty()) {
+                    log(tr("Nie znaleziono OTA dla $input w zadnym regionie", "No OTA for $input in any region")); setStep(tr("Nie znaleziono OTA", "No OTA found")); return@execute
+                }
+                val df = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.ROOT)
+                val labels = hits.map { (reg, taste, r) ->
+                    "$reg${if (taste) " beta" else ""}  ·  ${r!!.versionName ?: r.otaVersion}  ·  ${r.published?.let { df.format(java.util.Date(it)) } ?: "?"}  ·  ${"%.1f".format(r.best()!!.size / 1073741824.0)} GB"
+                }
+                labels.forEach { log("OTA: $it") }
+                setStep(tr("Znaleziono ${hits.size} wersji", "Found ${hits.size} versions"))
+                runOnUiThread {
+                    searchableSingle(tr("Wersje $input (${hits.size}) - wybierz do pobrania", "$input versions (${hits.size}) - pick to download"), labels) { i ->
+                        val (reg, taste, r) = hits[i]
+                        otaRes = r
+                        otaFound.text = otaText(r!!, reg + if (taste) " beta" else "")
+                        log(tr("Wybrano: ${labels[i]} - nacisnij Pobierz", "Selected: ${labels[i]} - tap Download"))
+                    }
+                }
             } catch (e: Exception) {
                 log(tr("BLAD wyszukiwania OTA: ${e.message ?: e}", "OTA search ERROR: ${e.message ?: e}")); setStep(tr("BLAD wyszukiwania", "Search ERROR"))
             } finally { busy = false }
