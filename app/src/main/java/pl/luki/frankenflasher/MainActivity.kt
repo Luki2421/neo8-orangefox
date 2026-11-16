@@ -794,10 +794,14 @@ class MainActivity : Activity() {
                     } }.map { it.get() }
                 } finally { pool.shutdownNow(); setProgress(0, 0) }
                 // ten sam pakiet (adres) w kilku regionach pokazany raz
-                val hits = found.filter { it.third?.best() != null }
-                    .distinctBy { it.third!!.best()!!.url.substringBefore('?') }
-                    .distinctBy { (it.third!!.otaVersion ?: it.third!!.versionName) + it.first }
-                    .sortedByDescending { it.third!!.published ?: 0L }
+                // ten sam pakiet (MD5 albo wersja) z kilku regionow/serii - raz, z lista regionow
+                // (adresy downloadCheck maja wspolny poczatek, wiec nie nadaja sie do porownania)
+                val groups = found.filter { it.third?.best() != null }.groupBy { (_, taste, r) ->
+                    r!!.best()!!.md5?.lowercase() ?: ((r.otaVersion ?: r.versionName ?: "") + taste)
+                }
+                val hits = groups.values.map { g ->
+                    Triple(g.map { it.first }.distinct().joinToString("/"), g.first().second, g.first().third)
+                }.sortedByDescending { it.third!!.published ?: 0L }
                 if (hits.isEmpty()) {
                     log(tr("Nie znaleziono OTA dla $input w zadnym regionie", "No OTA for $input in any region")); setStep(tr("Nie znaleziono OTA", "No OTA found")); return@execute
                 }
