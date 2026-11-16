@@ -775,14 +775,20 @@ class MainActivity : Activity() {
         busy = true
         exec.execute {
             try {
-                val jobs = pl.luki.frankenflasher.ota.OplusOta.REGIONS.flatMap { r -> listOf(r.id to false, r.id to true) }
-                setStep(tr("Szukanie w ${jobs.size / 2} regionach...", "Searching ${jobs.size / 2} regions..."))
+                // serwer zwraca najnowsza wersje w obrebie serii (litera po "_11.": A, C, F, H, J, K... = kolejne generacje ColorOS),
+                // wiec odpytanie kazdej serii w kazdym regionie daje starsze wydania (jak OTA Multi Tools)
+                val base = input.substringBefore('_')
+                val letters = listOf("A", "C", "F", "H", "J", "K", "L")
+                val regs = pl.luki.frankenflasher.ota.OplusOta.REGIONS.map { it.id }
+                val jobs = regs.flatMap { r -> letters.map { l -> Triple(r, "${base}_11.$l", false) } } +
+                    regs.flatMap { r -> listOf("J", "K", "L").map { l -> Triple(r, "${base}_11.$l", true) } }
+                setStep(tr("Szukanie: ${regs.size} regionow x ${letters.size} serii (${jobs.size} zapytan)...", "Searching: ${regs.size} regions x ${letters.size} series (${jobs.size} queries)..."))
                 val quiet = pl.luki.frankenflasher.ota.OplusOta { }
-                val pool = java.util.concurrent.Executors.newFixedThreadPool(4)
+                val pool = java.util.concurrent.Executors.newFixedThreadPool(6)
                 val done = java.util.concurrent.atomic.AtomicInteger()
                 val found = try {
-                    jobs.map { (reg, taste) -> pool.submit<Triple<String, Boolean, pl.luki.frankenflasher.ota.OplusOta.Result?>> {
-                        val r = try { quiet.query(input, reg, null, taste) } catch (_: Exception) { null }
+                    jobs.map { (reg, ver, taste) -> pool.submit<Triple<String, Boolean, pl.luki.frankenflasher.ota.OplusOta.Result?>> {
+                        val r = try { quiet.query(ver, reg, null, taste) } catch (_: Exception) { null }
                         setProgress(done.incrementAndGet().toLong(), jobs.size.toLong())
                         Triple(reg, taste, r)
                     } }.map { it.get() }
@@ -790,6 +796,7 @@ class MainActivity : Activity() {
                 // ten sam pakiet (adres) w kilku regionach pokazany raz
                 val hits = found.filter { it.third?.best() != null }
                     .distinctBy { it.third!!.best()!!.url.substringBefore('?') }
+                    .distinctBy { (it.third!!.otaVersion ?: it.third!!.versionName) + it.first }
                     .sortedByDescending { it.third!!.published ?: 0L }
                 if (hits.isEmpty()) {
                     log(tr("Nie znaleziono OTA dla $input w zadnym regionie", "No OTA for $input in any region")); setStep(tr("Nie znaleziono OTA", "No OTA found")); return@execute
