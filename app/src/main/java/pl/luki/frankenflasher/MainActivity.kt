@@ -409,6 +409,14 @@ class MainActivity : Activity() {
         @Suppress("DEPRECATION")
         root.setOnApplyWindowInsetsListener { v, ins ->
             v.setPadding(0, ins.systemWindowInsetTop, 0, ins.systemWindowInsetBottom)
+            // klawiatura: chowaj log i dolny pasek, zeby pole tekstowe mialo miejsce
+            val ime = if (android.os.Build.VERSION.SDK_INT >= 30) ins.isVisible(android.view.WindowInsets.Type.ime())
+                else ins.systemWindowInsetBottom > ui.dp(200)
+            val vis = if (ime) android.view.View.GONE else android.view.View.VISIBLE
+            if (act.visibility != vis) {
+                act.visibility = vis; nav.visibility = vis
+                if (ime) pageScroll.post { currentFocus?.let { f -> val r = android.graphics.Rect(); f.getDrawingRect(r); f.requestRectangleOnScreen(r, false) } }
+            }
             ins
         }
         window.statusBarColor = android.graphics.Color.TRANSPARENT
