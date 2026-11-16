@@ -134,8 +134,23 @@ class OtaExtractor(
 
     private fun extractTo(input: Uri, inputName: String, outDir: Out, outName: String, threads: Int) {
         val pfd = ctx.contentResolver.openFileDescriptor(input, "r") ?: throw java.io.IOException(tr("Nie mozna otworzyc $inputName", "Cannot open $inputName"))
-        pfd.use {
-            val ch = FileInputStream(pfd.fileDescriptor).channel
+        pfd.use { extractChannel(FileInputStream(pfd.fileDescriptor).channel, inputName, outDir, outName, threads, null) }
+    }
+
+    /** Lista partycji OTA bez pobierania calosci (HTTP Range). */
+    fun remoteInfo(url: String): Pair<HttpChannel, PayloadInfo> {
+        val ch = HttpChannel(url)
+        val base = ZipLocator.findStored(ch, "payload.bin") ?: throw IllegalArgumentException(tr("W ZIP nie ma payload.bin", "No payload.bin in the ZIP"))
+        return ch to PayloadParser.parse(ch, base)
+    }
+
+    /** Wybrane partycje (albo wszystkie przy [only] = null) prosto z serwera do katalogu [dir]. */
+    fun extractRemote(ch: HttpChannel, name: String, dir: java.io.File, only: Set<String>?) {
+        extractChannel(ch, "$name.zip", FileOut(dir), dir.name, 1, only)
+    }
+
+    private fun extractChannel(ch: FileChannel, inputName: String, outDir: Out, outName: String, threads: Int, only: Set<String>?) {
+        run {
             val base = if (inputName.endsWith(".zip", true)) {
                 ZipLocator.findStored(ch, "payload.bin") ?: throw IllegalArgumentException(tr("W ZIP nie ma payload.bin", "No payload.bin in the ZIP"))
             } else 0L
@@ -145,20 +160,21 @@ class OtaExtractor(
             } catch (_: Exception) { null } else null
             if (superDef != null) log(tr("OTA: znaleziono ${superDef.first} (uklad partycji super)", "OTA: found ${superDef.first} (super partition layout)"))
             log(tr("payload: ${info.parts.size} partycji, blok ${info.blockSize}, logicznych: ${info.dynamic.size}", "payload: ${info.parts.size} partitions, block ${info.blockSize}, logical: ${info.dynamic.size}"))
-            for (p in info.parts) for (o in p.ops) {
+            val parts = if (only == null) info.parts else info.parts.filter { it.name in only }
+            for (p in parts) for (o in p.ops) {
                 if (o.type !in setOf(OpType.REPLACE, OpType.REPLACE_BZ, OpType.REPLACE_XZ, OpType.ZSTD, OpType.ZERO, OpType.DISCARD))
                     throw IllegalArgumentException(tr("${p.name}: operacja typu ${o.type} - to OTA przyrostowe, potrzebne pelne OTA", "${p.name}: operation type ${o.type} - incremental OTA, a full OTA is required"))
             }
             val groupDirs = HashMap<String, Out>()
-            for (g in listOf("BOOTLOADER", "CRITICAL", "EXTRA", "MODEM", "SYSTEM")) groupDirs[g] = outDir.sub(g)
+            for (g in parts.map { Classifier.folder(it.name, info.dynamic) }.distinct()) groupDirs[g] = outDir.sub(g)
 
-            val total = info.parts.sumOf { it.size }
+            val total = parts.sumOf { it.size }
             val done = AtomicLong()
             val bad = ArrayList<String>()
             val pool = Executors.newFixedThreadPool(threads)
             try {
                 val futures = ArrayList<Future<*>>()
-                for (p in info.parts.sortedByDescending { it.size }) {
+                for (p in parts.sortedByDescending { it.size }) {
                     futures += pool.submit(Runnable {
                         val g = Classifier.folder(p.name, info.dynamic)
                         val gd = groupDirs[g]!!
@@ -182,7 +198,7 @@ class OtaExtractor(
                 val txt = info.groups.joinToString("\n") { g -> "${g.name} ${g.size} ${g.partitions.joinToString(",")}" } + "\n"
                 outDir.write("super_groups.txt", txt.toByteArray())
             } catch (_: Exception) {}
-            try { outDir.write("extract_ok.txt", "$inputName\n".toByteArray()) } catch (_: Exception) {}
+            if (only == null) try { outDir.write("extract_ok.txt", "$inputName\n".toByteArray()) } catch (_: Exception) {}
             log(tr("Rozpakowano do: $outName - wszystkie sumy SHA-256 zgodne", "Extracted to: $outName - all SHA-256 checksums match"))
         }
     }

@@ -259,6 +259,7 @@ class MainActivity : Activity() {
         ui.row(cDl, ui.button(tr("Szukaj", "Search"), B) { searchOta() }, ui.button(tr("Pobierz", "Download"), B) { downloadOta() })
         ui.row(cDl, ui.button(tr("Szukaj we wszystkich regionach", "Search all regions"), G) { searchAllOta() })
         ui.row(cDl, ui.button(tr("Historia wersji (archiwum)", "Version history (archive)"), G) { showOtaArchive() })
+        ui.row(cDl, ui.button(tr("Pobierz wybrane partycje (bez calego OTA)", "Download selected partitions (no full OTA)"), B) { remotePartitions() })
         ui.row(cDl, ui.button(tr("Przerwij pobieranie", "Stop download"), G) { dlCancel = true })
         val cDlNext = ui.card(pDl, tr("Dalej", "Next"))
         cDlNext.addView(ui.body(tr("Pobrany plik trafia do FrankenFlasher/OTA i jest od razu ustawiony w zakladce OTA - tam Rozpakuj jako BAZA albo DAWCA.",
@@ -863,6 +864,61 @@ class MainActivity : Activity() {
             } catch (e: Exception) {
                 log(tr("BLAD wyszukiwania OTA: ${e.message ?: e}", "OTA search ERROR: ${e.message ?: e}")); setStep(tr("BLAD wyszukiwania", "Search ERROR"))
             } finally { busy = false }
+        }
+    }
+
+    /** Wybrane partycje prosto z serwera (HTTP Range na payload.bin w ZIP) - bez pobierania calego OTA. */
+    private fun remotePartitions() {
+        if (busy) { log(tr("Trwa inna operacja - poczekaj az sie skonczy", "Another operation is running - wait until it finishes")); return }
+        val r = otaRes; val pkg = r?.best()
+        if (pkg == null) { log(tr("Najpierw Szukaj albo wybierz wersje z historii", "Search first or pick a version from history")); return }
+        if (!hasAllFiles()) { requestAllFiles(); return }
+        busy = true
+        exec.execute {
+            var ok = false
+            try {
+                setStep(tr("Czytanie listy partycji z serwera...", "Reading partition list from server..."))
+                val url = pl.luki.frankenflasher.ota.OplusOta(::log).resolve(pkg.url)
+                val ex = OtaExtractor(this, ::log, ::setProgress)
+                val (ch, info) = ex.remoteInfo(url)
+                val parts = info.parts.sortedBy { it.name }
+                log(tr("Serwer: ${parts.size} partycji (odczytano ${ch.bytesRead / 1024} KB)", "Server: ${parts.size} partitions (read ${ch.bytesRead / 1024} KB)"))
+                val labels = parts.map { p ->
+                    "${p.name}  ·  ${pl.luki.frankenflasher.ota.Classifier.folder(p.name, info.dynamic)}  ·  " +
+                        (if (p.size >= (1L shl 20)) "${p.size / (1 shl 20)} MB" else "${p.size / 1024} KB")
+                }
+                val checked = BooleanArray(parts.size)
+                ok = true
+                runOnUiThread {
+                    busy = false
+                    searchableMulti(tr("Partycje do pobrania (${parts.size})", "Partitions to download (${parts.size})"), labels, checked, {
+                        val sel = parts.filterIndexed { i, _ -> checked[i] }
+                        if (sel.isEmpty()) { log(tr("Nic nie zaznaczono", "Nothing selected")); ch.close(); return@searchableMulti }
+                        if (busy) { log(tr("Trwa inna operacja", "Another operation is running")); ch.close(); return@searchableMulti }
+                        busy = true
+                        exec.execute {
+                            try {
+                                val name = (r.versionName ?: r.otaVersion ?: "ota").replace(Regex("""[\\/:*?"<>|\s]+"""), "_").take(80)
+                                val dir = File(android.os.Environment.getExternalStorageDirectory(), "FrankenFlasher/Partycje/$name")
+                                val total = sel.sumOf { it.size }
+                                log(tr("Pobieranie ${sel.size} partycji (${total / (1 shl 20)} MB po rozpakowaniu) -> FrankenFlasher/Partycje/$name",
+                                    "Downloading ${sel.size} partitions (${total / (1 shl 20)} MB unpacked) -> FrankenFlasher/Partycje/$name"))
+                                setStep(tr("Pobieranie partycji...", "Downloading partitions..."))
+                                val t0 = System.currentTimeMillis()
+                                ex.extractRemote(ch, name, dir, sel.map { it.name }.toSet())
+                                log(tr("Gotowe w ${(System.currentTimeMillis() - t0) / 1000} s, pobrano z sieci ${ch.bytesRead / (1 shl 20)} MB (zamiast ${pkg.size / (1 shl 20)} MB calego OTA)",
+                                    "Done in ${(System.currentTimeMillis() - t0) / 1000} s, downloaded ${ch.bytesRead / (1 shl 20)} MB (instead of ${pkg.size / (1 shl 20)} MB full OTA)"))
+                                setStep(tr("Partycje pobrane: FrankenFlasher/Partycje/$name", "Partitions downloaded: FrankenFlasher/Partycje/$name"))
+                            } catch (e: Exception) {
+                                log(tr("BLAD pobierania partycji: ${e.message ?: e}", "Partition download ERROR: ${e.message ?: e}")); setStep(tr("BLAD pobierania partycji", "Partition download ERROR"))
+                            } finally { try { ch.close() } catch (_: Exception) {}; busy = false; setProgress(0, 0) }
+                        }
+                    })
+                }
+            } catch (e: Exception) {
+                log(tr("BLAD odczytu OTA z serwera: ${e.message ?: e} (stary adres z archiwum? - Szukaj ponownie)", "Server OTA read ERROR: ${e.message ?: e} (old archive URL? - Search again)"))
+                setStep(tr("BLAD odczytu z serwera", "Server read ERROR"))
+            } finally { if (!ok) busy = false }
         }
     }
 
