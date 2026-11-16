@@ -213,7 +213,7 @@ class MainActivity : Activity() {
         setConn(false)
 
         // --- strony ---
-        val pages = List(4) { LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(ui.dp(16), ui.dp(6), ui.dp(16), ui.dp(16)) } }
+        val pages = List(5) { LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(ui.dp(16), ui.dp(6), ui.dp(16), ui.dp(16)) } }
         val pageScroll = ScrollView(this).apply { isVerticalScrollBarEnabled = false; overScrollMode = android.view.View.OVER_SCROLL_NEVER }
         root.addView(pageScroll, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
         val B = Ui.Kind.PRIMARY; val G = Ui.Kind.GLASS; val D = Ui.Kind.DANGER
@@ -245,10 +245,10 @@ class MainActivity : Activity() {
         val cWipe = ui.card(p1, tr("Dane", "Data"))
         ui.row(cWipe, ui.button(tr("Wyczysc dane (format)", "Wipe data (format)"), D) { confirmWipe() })
 
-        // Strona 2: OTA
-        val p2 = pages[1]
-        p2.addView(ui.title("OTA", tr("Rozpakowanie payload.bin z sumami SHA-256", "Extract payload.bin with SHA-256 checks")))
-        val cDl = ui.card(p2, tr("Szukaj i pobierz OTA (serwery OPlus)", "Search and download OTA (OPlus servers)"))
+        // Strona: Pobieranie OTA
+        val pDl = pages[4]
+        pDl.addView(ui.title(tr("Pobierz", "Download"), tr("Pelne OTA z serwerow realme / OPPO / OnePlus", "Full OTA from realme / OPPO / OnePlus servers")))
+        val cDl = ui.card(pDl, tr("Szukaj i pobierz OTA (serwery OPlus)", "Search and download OTA (OPlus servers)"))
         otaModelEdit = ui.input(tr("model, np. RMX8899 albo RMX5210_11.A", "model, e.g. RMX8899 or RMX5210_11.A")).apply { setText(prefs.getString("dlModel", "RMX8899")) }
         cDl.addView(otaModelEdit, ui.lp(bottom = 8))
         otaRegionBtn = ui.button(tr("Region: ", "Region: ") + prefs.getString("dlRegion", "CN"), G) { pickOtaRegion() }
@@ -258,6 +258,13 @@ class MainActivity : Activity() {
         cDl.addView(otaFound, ui.lp(bottom = 10))
         ui.row(cDl, ui.button(tr("Szukaj", "Search"), B) { searchOta() }, ui.button(tr("Pobierz", "Download"), B) { downloadOta() })
         ui.row(cDl, ui.button(tr("Przerwij pobieranie", "Stop download"), G) { dlCancel = true })
+        val cDlNext = ui.card(pDl, tr("Dalej", "Next"))
+        cDlNext.addView(ui.body(tr("Pobrany plik trafia do FrankenFlasher/OTA i jest od razu ustawiony w zakladce OTA - tam Rozpakuj jako BAZA albo DAWCA.",
+            "The file goes to FrankenFlasher/OTA and is set in the OTA tab right away - there Extract as BASE or DONOR.")), ui.lp())
+
+        // Strona 2: OTA
+        val p2 = pages[1]
+        p2.addView(ui.title("OTA", tr("Rozpakowanie payload.bin z sumami SHA-256", "Extract payload.bin with SHA-256 checks")))
         val cOta = ui.card(p2, tr("Zrodlo i cel", "Source and target"))
         otaView = ui.value("OTA: -   " + tr("cel", "target") + ": -")
         cOta.addView(otaView, ui.lp(bottom = 12))
@@ -379,12 +386,13 @@ class MainActivity : Activity() {
         // --- dolna nawigacja ---
         val nav = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; background = ui.glass(26f, alphaTop = 30, alphaBottom = 14); setPadding(ui.dp(6), ui.dp(6), ui.dp(6), ui.dp(6)) }
         val items = listOf(
-            ui.navItem(R.drawable.ic_nav_fastboot, "Fastboot"), ui.navItem(R.drawable.ic_nav_ota, "OTA"),
-            ui.navItem(R.drawable.ic_nav_firmware, "Firmware"), ui.navItem(R.drawable.ic_nav_franken, "Franken"),
+            ui.navItem(R.drawable.ic_nav_fastboot, "Fastboot"), ui.navItem(R.drawable.ic_nav_download, tr("Pobierz", "Get")),
+            ui.navItem(R.drawable.ic_nav_ota, "OTA"), ui.navItem(R.drawable.ic_nav_firmware, "Firmware"), ui.navItem(R.drawable.ic_nav_franken, "Franken"),
         )
+        val order = listOf(0, 4, 1, 2, 3) // pozycja w nawigacji -> strona
         fun showTab(i: Int) {
             pageScroll.removeAllViews()
-            pageScroll.addView(pages[i])
+            pageScroll.addView(pages[order[i]])
             pageScroll.scrollTo(0, 0)
             items.forEachIndexed { k, it -> ui.setNavSelected(it, k == i) }
             prefs.edit().putInt("tab", i).apply()
@@ -395,7 +403,7 @@ class MainActivity : Activity() {
         }
         root.addView(nav, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { setMargins(ui.dp(12), 0, ui.dp(12), ui.dp(10)) })
 
-        showTab(prefs.getInt("tab", 0).coerceIn(0, 3))
+        showTab(prefs.getInt("tab", 0).coerceIn(0, 4))
         restoreState()
         // Android 15+ rysuje pod paskami systemowymi - odsun tresc o ich wysokosc
         @Suppress("DEPRECATION")

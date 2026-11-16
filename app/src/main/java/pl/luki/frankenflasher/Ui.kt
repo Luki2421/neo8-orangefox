@@ -216,7 +216,7 @@ class Ui(private val ctx: Context) {
         val l = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; setPadding(0, dp(8), 0, dp(8)) }
         val ic = ImageView(ctx).apply { setImageResource(iconRes) }
         l.addView(ic, LinearLayout.LayoutParams(dp(24), dp(24)))
-        val tv = TextView(ctx).apply { this.text = text; textSize = 12f; gravity = Gravity.CENTER; setPadding(0, dp(4), 0, 0) }
+        val tv = TextView(ctx).apply { this.text = text; textSize = 11f; maxLines = 1; gravity = Gravity.CENTER; setPadding(0, dp(4), 0, 0) }
         l.addView(tv)
         pressable(l)
         return NavItem(l, ic, tv)
