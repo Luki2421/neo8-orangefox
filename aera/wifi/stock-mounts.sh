@@ -32,14 +32,26 @@ fi
 
 # Expose only the Wi-Fi config subtrees expected by the proprietary services.
 # The source mounts are read-only; no crypto libraries/manifests are covered.
+# /vendor/odm can be a symlink to /odm (for example while the stock vendor
+# partition is mounted on /vendor). The kernel then records the bind under the
+# resolved path, so all checks and the read-only remount use that path.
 bind_wifi_config() {
-    local source="$1" target="$2"
+    local source="$1" target="$2" parent resolved
     [ -d "$source" ] || return 0
-    grep -q " $target " /proc/mounts && return 0
     [ ! -L "$target" ] || { echo "Refusing Wi-Fi target symlink: $target"; return 1; }
-    mkdir -p "$target" || return 1
-    mount --bind "$source" "$target" || return 1
-    mount -o remount,bind,ro "$target" || return 1
+    mkdir -p "${target%/*}" || return 1
+    parent=$(readlink -f "${target%/*}") || { echo "Cannot resolve ${target%/*}"; return 1; }
+    resolved="$parent/${target##*/}"
+    case "$resolved" in
+        /vendor/etc/wifi|/vendor/odm/etc/wifi|/odm/etc/wifi) ;;
+        *) echo "Refusing Wi-Fi target outside /vendor and /odm: $target -> $resolved"; return 1 ;;
+    esac
+    [ "$resolved" = "$target" ] || echo "Wi-Fi config target $target resolves to $resolved"
+    if ! grep -q " $resolved " /proc/mounts; then
+        mkdir -p "$resolved" || return 1
+        mount --bind "$source" "$resolved" || return 1
+    fi
+    mount -o remount,bind,ro "$resolved" || return 1
 }
 bind_wifi_config "$STOCK/vendor/etc/wifi" /vendor/etc/wifi || exit 1
 bind_wifi_config "$STOCK/odm/etc/wifi" /vendor/odm/etc/wifi || exit 1
