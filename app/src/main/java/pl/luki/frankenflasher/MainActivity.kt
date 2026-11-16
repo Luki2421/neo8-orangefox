@@ -258,6 +258,7 @@ class MainActivity : Activity() {
         cDl.addView(otaFound, ui.lp(bottom = 10))
         ui.row(cDl, ui.button(tr("Szukaj", "Search"), B) { searchOta() }, ui.button(tr("Pobierz", "Download"), B) { downloadOta() })
         ui.row(cDl, ui.button(tr("Szukaj we wszystkich regionach", "Search all regions"), G) { searchAllOta() })
+        ui.row(cDl, ui.button(tr("Historia wersji (archiwum)", "Version history (archive)"), G) { showOtaArchive() })
         ui.row(cDl, ui.button(tr("Przerwij pobieranie", "Stop download"), G) { dlCancel = true })
         val cDlNext = ui.card(pDl, tr("Dalej", "Next"))
         cDlNext.addView(ui.body(tr("Pobrany plik trafia do FrankenFlasher/OTA i jest od razu ustawiony w zakladce OTA - tam Rozpakuj jako BAZA albo DAWCA.",
@@ -738,6 +739,7 @@ class MainActivity : Activity() {
                 setStep(tr("Szukanie OTA...", "Searching OTA..."))
                 val r = pl.luki.frankenflasher.ota.OplusOta(::log).query(input, region, null, taste)
                 otaRes = r
+                archiveResults(input, listOf(Triple(region, taste, r)))
                 val txt = otaText(r)
                 val best = r.best()
                 runOnUiThread { otaFound.text = txt }
@@ -763,6 +765,44 @@ class MainActivity : Activity() {
             r.published?.let { append(tr("Wydano: ", "Published: ")).append(java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.ROOT).format(java.util.Date(it))).append('\n') }
             append(tr("Rozmiar: ", "Size: ")).append("%.2f GB".format(best.size / 1073741824.0))
             if (best.md5 != null) append(" · MD5")
+        }
+    }
+
+    private fun otaArchive(): pl.luki.frankenflasher.ota.OtaArchive {
+        val ext = File(android.os.Environment.getExternalStorageDirectory(), "FrankenFlasher/ota_archive.json")
+        return pl.luki.frankenflasher.ota.OtaArchive(if (hasAllFiles()) ext else File(filesDir, "ota_archive.json"))
+    }
+
+    private fun archiveResults(model: String, res: List<Triple<String, Boolean, pl.luki.frankenflasher.ota.OplusOta.Result>>) {
+        try {
+            val n = otaArchive().add(model, res.filter { it.third.best() != null })
+            if (n > 0) log(tr("Archiwum: dopisano $n nowych wersji", "Archive: added $n new versions"))
+        } catch (e: Exception) { log(tr("Archiwum: ${e.message}", "Archive: ${e.message}")) }
+    }
+
+    private fun showOtaArchive() {
+        val model = otaModelEdit.text.toString().trim()
+        exec.execute {
+            val list = otaArchive().forModel(model)
+            if (list.isEmpty()) {
+                log(tr("Archiwum puste dla ${model.ifEmpty { "wszystkich modeli" }} - kazde Szukaj dopisuje znalezione wersje",
+                    "Archive empty for ${model.ifEmpty { "all models" }} - every Search adds found versions")); return@execute
+            }
+            val df = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.ROOT)
+            val labels = list.map { e ->
+                "${e.versionName}${if (e.taste) " beta" else ""}  ·  ${e.region}  ·  ${e.published?.let { df.format(java.util.Date(it)) } ?: "?"}  ·  ${"%.1f".format(e.size / 1073741824.0)} GB" +
+                    (if (model.isEmpty()) "  ·  ${e.model}" else "")
+            }
+            runOnUiThread {
+                searchableSingle(tr("Historia wersji ${model.ifEmpty { "" }} (${list.size})", "Version history ${model.ifEmpty { "" }} (${list.size})"), labels) { i ->
+                    val e = list[i]
+                    otaRes = e.toResult()
+                    otaFound.text = otaText(otaRes!!, e.region + if (e.taste) " beta" else "") +
+                        tr("\nZ archiwum (znalezione ${df.format(java.util.Date(e.found))})", "\nFrom archive (found ${df.format(java.util.Date(e.found))})")
+                    log(tr("Wybrano z archiwum: ${labels[i]} - nacisnij Pobierz (stary adres moze wygasnac - wtedy Szukaj)",
+                        "Selected from archive: ${labels[i]} - tap Download (old URL may expire - then Search)"))
+                }
+            }
         }
     }
 
@@ -793,6 +833,7 @@ class MainActivity : Activity() {
                         Triple(reg, taste, r)
                     } }.map { it.get() }
                 } finally { pool.shutdownNow(); setProgress(0, 0) }
+                archiveResults(base, found.mapNotNull { (rg, t, r) -> r?.let { Triple(rg, t, it) } })
                 // ten sam pakiet (adres) w kilku regionach pokazany raz
                 // ten sam pakiet (MD5 albo wersja) z kilku regionow/serii - raz, z lista regionow
                 // (adresy downloadCheck maja wspolny poczatek, wiec nie nadaja sie do porownania)
