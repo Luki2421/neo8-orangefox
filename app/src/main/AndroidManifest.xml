@@ -4,6 +4,7 @@
 
     <uses-feature android:name="android.hardware.usb.host" android:required="true" />
 
+    <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
     <!-- tylko gdy aplikacja jest wbudowana przez Franken jako uprzywilejowana (product/priv-app) -->
     <uses-permission android:name="android.permission.REBOOT" tools:ignore="ProtectedPermissions" />

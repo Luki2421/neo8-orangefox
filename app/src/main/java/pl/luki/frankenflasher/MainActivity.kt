@@ -76,6 +76,11 @@ class MainActivity : Activity() {
     private val opt = FlashOptions()
     @Volatile private var permLatch: CountDownLatch? = null
     @Volatile private var busy = false
+    @Volatile private var dlCancel = false
+    private var otaRes: pl.luki.frankenflasher.ota.OplusOta.Result? = null
+    private lateinit var otaModelEdit: EditText
+    private lateinit var otaRegionBtn: TextView
+    private lateinit var otaFound: TextView
     private var logFile: java.io.File? = null
     private val logLock = Any()
 
@@ -243,6 +248,16 @@ class MainActivity : Activity() {
         // Strona 2: OTA
         val p2 = pages[1]
         p2.addView(ui.title("OTA", tr("Rozpakowanie payload.bin z sumami SHA-256", "Extract payload.bin with SHA-256 checks")))
+        val cDl = ui.card(p2, tr("Szukaj i pobierz OTA (serwery OPlus)", "Search and download OTA (OPlus servers)"))
+        otaModelEdit = ui.input(tr("model, np. RMX8899 albo RMX5210_11.A", "model, e.g. RMX8899 or RMX5210_11.A")).apply { setText(prefs.getString("dlModel", "RMX8899")) }
+        cDl.addView(otaModelEdit, ui.lp(bottom = 8))
+        otaRegionBtn = ui.button(tr("Region: ", "Region: ") + prefs.getString("dlRegion", "CN"), G) { pickOtaRegion() }
+        ui.row(cDl, otaRegionBtn)
+        ui.toggle(cDl, tr("wersje beta (taste)", "beta versions (taste)"), { prefs.getBoolean("dlTaste", false) }, { prefs.edit().putBoolean("dlTaste", it).apply() })
+        otaFound = ui.body(tr("Wpisz model i region, potem Szukaj. Wynik: najnowsze pelne OTA.", "Enter model and region, then Search. Result: latest full OTA."))
+        cDl.addView(otaFound, ui.lp(bottom = 10))
+        ui.row(cDl, ui.button(tr("Szukaj", "Search"), B) { searchOta() }, ui.button(tr("Pobierz", "Download"), B) { downloadOta() })
+        ui.row(cDl, ui.button(tr("Przerwij pobieranie", "Stop download"), G) { dlCancel = true })
         val cOta = ui.card(p2, tr("Zrodlo i cel", "Source and target"))
         otaView = ui.value("OTA: -   " + tr("cel", "target") + ": -")
         cOta.addView(otaView, ui.lp(bottom = 12))
@@ -510,7 +525,7 @@ class MainActivity : Activity() {
     /** Przywraca foldery i ostatni zbudowany Franken z poprzedniego uruchomienia. */
     private fun restoreState() {
         val perms = contentResolver.persistedUriPermissions.map { it.uri }
-        prefs.getString("otaUri", null)?.let { Uri.parse(it) }?.takeIf { it in perms }?.let { otaUri = it; otaName = prefs.getString("otaName", "") ?: "" }
+        prefs.getString("otaUri", null)?.let { Uri.parse(it) }?.takeIf { it in perms || (it.scheme == "file" && File(it.path ?: "").isFile) }?.let { otaUri = it; otaName = prefs.getString("otaName", "") ?: "" }
         prefs.getString("otaOut", null)?.let { Uri.parse(it) }?.takeIf { it in perms }?.let { otaOut = it }
         if (otaUri != null || otaOut != null) updateOtaView()
         prefs.getString("fwTree", null)?.let { u ->
@@ -676,6 +691,93 @@ class MainActivity : Activity() {
                 setStep(tr("Rozpakowano ($role: $name)", "Extracted ($role: $name)"))
             } catch (e: Exception) {
                 log(tr("BLAD rozpakowania: ${e.message ?: e}", "EXTRACTION ERROR: ${e.message ?: e}")); setStep(tr("BLAD rozpakowania", "EXTRACTION ERROR"))
+            } finally { busy = false; setProgress(0, 0) }
+        }
+    }
+
+    // ---------------- Wyszukiwanie / pobieranie OTA ----------------
+
+    private fun pickOtaRegion() {
+        val regs = pl.luki.frankenflasher.ota.OplusOta.REGIONS
+        val names = mapOf("CN" to tr("Chiny", "China"), "EU" to tr("Europa (EEA)", "Europe (EEA)"), "IN" to tr("Indie", "India"),
+            "GL" to "Global", "SG" to "Singapur / Global", "RU" to tr("Rosja", "Russia"), "TR" to tr("Turcja", "Turkey"),
+            "TH" to "Tajlandia", "ID" to "Indonezja", "TW" to "Tajwan", "MY" to "Malezja", "VN" to "Wietnam")
+        searchableSingle(tr("Region OTA", "OTA region"), regs.map { "${it.id}  ·  ${names[it.id] ?: it.id}" }) { i ->
+            prefs.edit().putString("dlRegion", regs[i].id).apply()
+            otaRegionBtn.text = tr("Region: ", "Region: ") + regs[i].id
+        }
+    }
+
+    private fun searchOta() {
+        if (busy) { log(tr("Trwa inna operacja - poczekaj az sie skonczy", "Another operation is running - wait until it finishes")); return }
+        val input = otaModelEdit.text.toString().trim()
+        if (input.isEmpty()) { log(tr("Wpisz model, np. RMX8899", "Enter a model, e.g. RMX8899")); return }
+        val region = prefs.getString("dlRegion", "CN")!!
+        val taste = prefs.getBoolean("dlTaste", false)
+        prefs.edit().putString("dlModel", input).apply()
+        busy = true
+        exec.execute {
+            try {
+                setStep(tr("Szukanie OTA...", "Searching OTA..."))
+                val r = pl.luki.frankenflasher.ota.OplusOta(::log).query(input, region, null, taste)
+                otaRes = r
+                val best = r.best()
+                val txt = if (best == null) tr("Brak wyniku (kod ${r.code}${r.err?.let { ": $it" } ?: ""}). Sprawdz model i region - np. modele EU maja sufiks EEA.",
+                    "No result (code ${r.code}${r.err?.let { ": $it" } ?: ""}). Check model and region - e.g. EU models use the EEA suffix.")
+                else buildString {
+                    append(r.versionName ?: r.otaVersion ?: "?").append('\n')
+                    r.otaVersion?.let { append(it).append('\n') }
+                    append("Android ${r.android ?: "?"} · ${r.os ?: ""}").append('\n')
+                    r.patch?.let { append(tr("Poprawki: ", "Patch: ")).append(it).append('\n') }
+                    r.published?.let { append(tr("Wydano: ", "Published: ")).append(java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.ROOT).format(java.util.Date(it))).append('\n') }
+                    append(tr("Rozmiar: ", "Size: ")).append("%.2f GB".format(best.size / 1073741824.0))
+                    if (best.md5 != null) append(" · MD5")
+                }
+                runOnUiThread { otaFound.text = txt }
+                log("OTA: " + txt.replace('\n', ' ').take(400))
+                best?.let { log(tr("Adres: ${it.url}", "URL: ${it.url}")) }
+                r.changelog?.let { log(tr("Lista zmian: $it", "Changelog: $it")) }
+                setStep(if (best != null) tr("Znaleziono OTA - Pobierz", "OTA found - Download") else tr("Nie znaleziono OTA", "No OTA found"))
+            } catch (e: Exception) {
+                log(tr("BLAD wyszukiwania OTA: ${e.message ?: e}", "OTA search ERROR: ${e.message ?: e}")); setStep(tr("BLAD wyszukiwania", "Search ERROR"))
+            } finally { busy = false }
+        }
+    }
+
+    private fun downloadOta() {
+        if (busy) { log(tr("Trwa inna operacja - poczekaj az sie skonczy", "Another operation is running - wait until it finishes")); return }
+        val r = otaRes; val pkg = r?.best()
+        if (pkg == null) { log(tr("Najpierw Szukaj", "Search first")); return }
+        if (!hasAllFiles()) { requestAllFiles(); return }
+        val name = (r.versionName ?: r.otaVersion ?: "ota").replace(Regex("""[\\/:*?"<>|\s]+"""), "_").take(80)
+        val out = File(android.os.Environment.getExternalStorageDirectory(), "FrankenFlasher/OTA/$name.zip")
+        val free = android.os.Environment.getExternalStorageDirectory().usableSpace
+        if (!out.isFile && free < pkg.size - (File(out.path + ".part").takeIf { it.isFile }?.length() ?: 0L) + (512L shl 20)) {
+            log(tr("Za malo miejsca: potrzeba ${pkg.size / (1 shl 30)} GB, wolne ${free / (1 shl 30)} GB", "Not enough space: need ${pkg.size / (1 shl 30)} GB, free ${free / (1 shl 30)} GB")); return
+        }
+        busy = true; dlCancel = false
+        exec.execute {
+            try {
+                if (out.isFile && out.length() == pkg.size) log(tr("Juz pobrane: FrankenFlasher/OTA/${out.name}", "Already downloaded: FrankenFlasher/OTA/${out.name}"))
+                else {
+                    setStep(tr("Pobieranie $name...", "Downloading $name..."))
+                    log(tr("Pobieranie -> FrankenFlasher/OTA/${out.name} (${pkg.size / (1 shl 20)} MB)", "Downloading -> FrankenFlasher/OTA/${out.name} (${pkg.size / (1 shl 20)} MB)"))
+                    val t0 = System.currentTimeMillis()
+                    pl.luki.frankenflasher.ota.OplusOta(::log).download(pkg, out, { dlCancel }, ::setProgress)
+                    val s = (System.currentTimeMillis() - t0) / 1000
+                    log(tr("Pobrano w ${s / 60} min ${s % 60} s", "Downloaded in ${s / 60} min ${s % 60} s"))
+                }
+                otaUri = Uri.fromFile(out); otaName = out.name
+                prefs.edit().putString("otaUri", otaUri.toString()).putString("otaName", otaName).apply()
+                updateOtaView()
+                log(tr("OTA ustawione: ${out.name} - teraz Rozpakuj jako BAZA albo DAWCA", "OTA set: ${out.name} - now Extract as BASE or DONOR"))
+                setStep(tr("Pobrano - Rozpakuj jako BAZA/DAWCA", "Downloaded - Extract as BASE/DONOR"))
+            } catch (e: InterruptedException) {
+                log(e.message ?: "stop"); setStep(tr("Pobieranie przerwane", "Download stopped"))
+            } catch (e: Exception) {
+                log(tr("BLAD pobierania: ${e.message ?: e} - Pobierz wznowi od miejsca przerwania (po bledzie adresu: najpierw Szukaj)",
+                    "Download ERROR: ${e.message ?: e} - Download resumes where it stopped (after a URL error: Search first)"))
+                setStep(tr("BLAD pobierania", "Download ERROR"))
             } finally { busy = false; setProgress(0, 0) }
         }
     }
