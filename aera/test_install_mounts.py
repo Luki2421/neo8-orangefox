@@ -19,7 +19,9 @@ HARNESS = r'''
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
-#include <mntent.h>
+#include <fstream>
+#include <sstream>
+#include <unordered_map>
 #include <set>
 #include <string>
 #include <vector>
@@ -57,14 +59,11 @@ static std::set<std::string> mounted;
 static std::vector<std::string> attempts;
 static std::string mount_table, busy_path, disappeared_path;
 static bool open_error = false, read_error = false;
-static FILE* fixture_mounts(const char* path, const char* mode) {
-    assert(std::string(path) == "/proc/mounts" && std::string(mode) == "r");
-    if (open_error) { errno = EACCES; return nullptr; }
-    FILE* file = tmpfile(); assert(file);
-    assert(fwrite(mount_table.data(), 1, mount_table.size(), file) == mount_table.size());
-    rewind(file); return file;
+static bool ReadSelfMountinfo(std::string& text) {
+    if (open_error) { errno = EACCES; return false; }
+    if (read_error) { errno = EIO; return false; }
+    text = mount_table; return true;
 }
-static int fixture_ferror(FILE*) { return read_error ? 1 : 0; }
 static int fake_umount(const char* path, int flags) {
     // In particular, child cleanup must never request MNT_DETACH/MNT_FORCE.
     assert(flags == 0);
@@ -74,8 +73,6 @@ static int fake_umount(const char* path, int flags) {
     if (!mounted.erase(target)) { errno = EINVAL; return -1; }
     return 0;
 }
-#define setmntent fixture_mounts
-#define ferror fixture_ferror
 #define umount2 fake_umount
 
 struct TWPartition {
@@ -119,8 +116,13 @@ static void reset() {
     open_error = read_error = false; vendor_attempts = data_fallbacks = protect_system = 0;
     vendor = TWPartition(); vendor.Mount_Point = "/vendor";
 }
-static void add_mount(const std::string& path) {
-    mounted.insert(path); mount_table += "device " + path + " ext4 ro 0 0\n";
+static int next_id = 100;
+// mountinfo line; parent 1 is the rootfs. Returns the new mount id.
+static int add_mount(const std::string& path, int parent = 1, const std::string& raw = "") {
+    mounted.insert(path); const int id = next_id++;
+    mount_table += std::to_string(id) + " " + std::to_string(parent) + " 0:1 / " +
+        (raw.empty() ? path : raw) + " ro,relatime shared:1 - ext4 /dev/x ro\n";
+    return id;
 }
 int main() {
     struct Case { std::set<std::string> entries; zip_type type; };
@@ -145,15 +147,49 @@ int main() {
         if (sample.type == AB_OTA_ZIP_TYPE) assert(mounted.count("/vendor") == present);
         ++count;
     }
-    reset();
-    add_mount("/vendor"); add_mount("/vendor/etc/wifi");
-    add_mount("/vendor/etc/wifi/nested"); add_mount("/vendor_dlkm/keep");
-    add_mount("/odm/etc/wifi"); add_mount("/tmp/aera-wifi/vendor");
+    reset(); mounted.clear();
+    {
+        const int top = add_mount("/vendor"); const int wifi = add_mount("/vendor/etc/wifi", top);
+        add_mount("/vendor/etc/wifi/nested", wifi); add_mount("/vendor_dlkm/keep");
+        add_mount("/odm/etc/wifi"); add_mount("/tmp/aera-wifi/vendor");
+    }
     assert(vendor.UnMount(false));
     assert((attempts == std::vector<std::string>{"/vendor/etc/wifi/nested", "/vendor/etc/wifi", "/vendor"}));
     assert(mounted.count("/vendor_dlkm/keep") && mounted.count("/odm/etc/wifi") && mounted.count("/tmp/aera-wifi/vendor"));
 
-    reset(); add_mount("/vendor/etc/wifi"); busy_path = "/vendor/etc/wifi";
+    // Device log 2026-11-19: Wi-Fi binds made under the ramdisk /vendor, then the
+    // stock vendor mounted over /vendor. The binds are covered (resolving
+    // /vendor/odm through the stock tree gave ELOOP) and must not block.
+    reset(); mounted.clear();
+    add_mount("/vendor/odm/etc/wifi"); add_mount("/vendor/etc/wifi"); add_mount("/vendor");
+    assert(vendor.UnMount(false));
+    assert((attempts == std::vector<std::string>{"/vendor"}));
+    assert(mounted.count("/vendor/etc/wifi") && mounted.count("/vendor/odm/etc/wifi"));
+    assert(logs.find("covered by the active '/vendor' mount") != std::string::npos);
+
+    // Stacked vendor mounts: only children of the topmost one are unmounted.
+    reset(); mounted.clear();
+    {
+        const int lower = add_mount("/vendor"); add_mount("/vendor/lower-child", lower);
+        const int upper = add_mount("/vendor", lower); add_mount("/vendor/etc/wifi", upper);
+    }
+    assert(vendor.UnMount(false));
+    assert((attempts == std::vector<std::string>{"/vendor/etc/wifi", "/vendor"}));
+    assert(mounted.count("/vendor/lower-child"));
+
+    // Escaped names in mountinfo are decoded before unmounting.
+    reset(); mounted.clear();
+    { const int top = add_mount("/vendor"); add_mount("/vendor/a b", top, "/vendor/a\\040b"); }
+    assert(vendor.UnMount(false));
+    assert((attempts == std::vector<std::string>{"/vendor/a b", "/vendor"}));
+
+    // Unparseable table: nothing is unmounted.
+    reset(); mount_table = "garbage\n";
+    assert(!vendor.UnMount(false)); assert(attempts.empty());
+
+    reset(); mounted.clear();
+    { const int top = add_mount("/vendor"); add_mount("/vendor/etc/wifi", top); }
+    busy_path = "/vendor/etc/wifi";
     assert(!vendor.UnMount(false));
     assert((attempts == std::vector<std::string>{busy_path}));
     assert(mounted.count("/vendor") && logs.find("errno=16") != std::string::npos);
@@ -162,13 +198,16 @@ int main() {
     assert(!vendor.UnMount(false));
     assert(logs.find("errno=16") != std::string::npos); // not overwritten ENOENT
 
-    reset(); add_mount("/vendor/etc/wifi"); disappeared_path = "/vendor/etc/wifi";
+    reset(); mounted.clear();
+    { const int top = add_mount("/vendor"); add_mount("/vendor/etc/wifi", top); }
+    disappeared_path = "/vendor/etc/wifi";
     assert(vendor.UnMount(false));
 
     reset(); open_error = true; assert(!vendor.UnMount(false)); assert(attempts.empty());
     reset(); read_error = true; assert(!vendor.UnMount(false)); assert(attempts.empty());
 
-    reset(); vendor.Mount_Point = "/odm"; add_mount("/odm"); add_mount("/odm/etc/wifi");
+    reset(); vendor.Mount_Point = "/odm";
+    { const int top = add_mount("/odm"); add_mount("/odm/etc/wifi", top); }
     assert(vendor.UnMount(false));
     assert((attempts == std::vector<std::string>{"/odm/etc/wifi", "/odm"}));
 
@@ -190,7 +229,10 @@ def main():
     args = parser.parse_args()
     install = (args.recovery_root / 'twrpinstall/twinstall.cpp').read_text()
     partition = (args.recovery_root / 'partition.cpp').read_text()
-    code = function(partition, 'static bool UnmountVendorSubdirectories(')
+    code = function(partition, 'static std::string UnescapeMountinfoPath(')
+    code += function(partition, 'static bool CollectBlockingSubmounts(')
+    code += function(partition, 'static bool UnmountVendorSubdirectories(')
+    assert 'ReadSelfMountinfo(std::string& text)' in partition and '/proc/self/mountinfo' in partition
     code += function(partition, 'bool TWPartition::UnMount(')
     code += function(install, 'static zip_type GetInstallZipType(')
     gate = function(install, 'if (unmount_vendor && package_type != AB_OTA_ZIP_TYPE)')

@@ -14,6 +14,7 @@ ASSETS = {
     'system/bin/aera-audio-bridge': ('aera-audio-bridge', 0o755),
     'system/bin/neo8-audio-player.sh': ('neo8-audio-player.sh', 0o755),
     'system/etc/neo8-audio/libneo8agminit.so': ('libneo8agminit.so', 0o644),
+    'system/bin/neo8-audio-lr-test.sh': ('neo8-audio-lr-test.sh', 0o755),
 }
 
 
@@ -26,7 +27,8 @@ def check_assets():
     bridge = files['system/bin/aera-audio-bridge']
     if not bridge.startswith(b'\x7fELF') or bridge[4] != 2 or bridge[18] != 0xb7:
         raise ValueError('aera-audio-bridge must be an AArch64 ELF64 executable')
-    for needle in (b'aera-browser-audio-v1', b'--browser-audio', b'/system/bin/neo8-audio-player.sh'):
+    for needle in (b'aera-browser-audio-v1', b'--browser-audio', b'/system/bin/neo8-audio-player.sh',
+                   b'/tmp/aera-audio-rotation', b'/data/media/0/AERA/audio-channels'):
         if needle not in bridge:
             raise ValueError('aera-audio-bridge lacks ' + needle.decode())
     shim = files['system/etc/neo8-audio/libneo8agminit.so']
@@ -62,7 +64,8 @@ def validate_audio_image(entries):
         entry = entries.get(path)
         if not entry or not stat.S_ISREG(entry['mode']) or entry['data'] != data:
             raise ValueError('Missing or mismatched audio file: ' + path)
-    for path in ('system/bin/aera-audio-bridge', 'system/bin/neo8-audio-player.sh'):
+    for path in ('system/bin/aera-audio-bridge', 'system/bin/neo8-audio-player.sh',
+                 'system/bin/neo8-audio-lr-test.sh'):
         if not entries[path]['mode'] & 0o111:
             raise ValueError('Non-executable audio file: ' + path)
     # Informational: the silent fallback is only installed with AERA's browser jail.

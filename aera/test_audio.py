@@ -90,6 +90,44 @@ def check_protocol(work):
     return {'played_samples': len(loud), 'log': log.strip().splitlines()[-1]}
 
 
+def check_channels(work, bridge):
+    """Left-only PCM must stay left at rotation 0/270 and move right at 90."""
+    results = {}
+    rotation = Path('/tmp/aera-audio-rotation')
+    old = rotation.read_bytes() if rotation.exists() else None
+    try:
+        for degrees in ('0', '270', '90'):
+            rotation.write_text(degrees + '\n')
+            fifo, out = work / f'rot{degrees}.wav', work / f'rot{degrees}.raw'
+            player = work / 'player.py'
+            proc = subprocess.Popen([str(bridge), 'bridge', str(fifo), '--accept-uid', str(os.getuid()), '--',
+                                     sys.executable, str(player), str(fifo), str(out)],
+                                    stderr=subprocess.PIPE, text=True)
+            try:
+                client = connect(); client.sendall(struct.pack('<4I', 0x41525041, 48000, 2, 16))
+                block = struct.pack('<2h', 12000, 0) * 960
+                deadline = time.monotonic()
+                for _ in range(25):
+                    client.sendall(block); deadline += 0.02; time.sleep(max(0, deadline - time.monotonic()))
+                time.sleep(0.4); client.close(); time.sleep(0.3)
+            finally:
+                proc.terminate(); proc.communicate(timeout=5)
+            data = out.read_bytes()[44:]
+            frames = struct.unpack('<%dh' % (len(data) // 2), data[:len(data) // 4 * 4])
+            left = sum(1 for v in frames[0::2] if v)
+            right = sum(1 for v in frames[1::2] if v)
+            results[degrees] = (left, right)
+    finally:
+        if old is None:
+            rotation.unlink(missing_ok=True)
+        else:
+            rotation.write_bytes(old)
+    assert results['0'][0] == 24000 and results['0'][1] == 0, results
+    assert results['270'] == results['0'], results
+    assert results['90'] == (0, 24000), results
+    return results
+
+
 def main():
     files = check_assets()
     with tempfile.TemporaryDirectory() as tmp:
@@ -110,6 +148,7 @@ def main():
             else:
                 raise AssertionError('validator accepted image without ' + broken)
         print('protocol:', check_protocol(work))
+        print('channels:', check_channels(work, work / 'bridge'))
     print('Neo8 audio checks passed:', report['files'])
 
 

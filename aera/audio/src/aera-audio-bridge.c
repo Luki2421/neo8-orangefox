@@ -249,6 +249,24 @@ static int read_percent(const char *path, int fallback, int low) {
     return value;
 }
 /* Q16 gain */
+/* Stereo orientation. AERA writes the UI rotation (0, 90 or 270, Android
+ * convention) to /tmp/aera-audio-rotation. On the Neo8 the left channel drives
+ * the TFA98xx at 0x34 (profile "speaker", bottom) and the right channel the one
+ * at 0x35 ("speakerR", top). Holding the phone with its top to the left
+ * (rotation 90) puts the right channel on the left, so "auto" swaps there.
+ * /sdcard/AERA/audio-channels overrides: auto, normal or swap. */
+static int want_swap(void) {
+    char mode[16] = {0};
+    int fd = open("/data/media/0/AERA/audio-channels", O_RDONLY | O_CLOEXEC);
+    if (fd >= 0) { if (read(fd, mode, sizeof(mode) - 1) < 0) mode[0] = 0; close(fd); }
+    if (!strncmp(mode, "swap", 4)) return 1;
+    if (!strncmp(mode, "normal", 6)) return 0;
+    char rotation[16] = {0};
+    fd = open("/tmp/aera-audio-rotation", O_RDONLY | O_CLOEXEC);
+    if (fd >= 0) { if (read(fd, rotation, sizeof(rotation) - 1) < 0) rotation[0] = 0; close(fd); }
+    return atoi(rotation) == 90;
+}
+
 static int32_t target_gain(int ceiling) {
     int volume = read_percent("/tmp/aera-audio-volume", 30, 0);
     return (int32_t)((int64_t)65536 * ceiling * volume / 10000);
@@ -300,6 +318,7 @@ static int cmd_bridge(const char *fifo_path, long extra_uid, char **player) {
     int client = -1, rc = 0, announced = 0, streaming = 0;
     int32_t gain = target_gain(ceiling), target = gain;
     double next_volume = 0, client_since = 0;
+    int swap = want_swap();
     unsigned long long chunks = 0, clients = 0, underruns = 0, dropped = 0, client_bytes = 0;
     uint8_t chunk[CHUNK], buffer[16384];
     while (!g_stop) {
@@ -345,7 +364,13 @@ static int cmd_bridge(const char *fifo_path, long extra_uid, char **player) {
                 size_t n = (ring_fill - LOW_WATER) & ~(size_t)3; ring_drop(n); dropped += n;
             }
         }
-        if (now_s() >= next_volume) { target = target_gain(ceiling); next_volume = now_s() + 0.2; }
+        if (now_s() >= next_volume) {
+            target = target_gain(ceiling);
+            int wanted = want_swap();
+            if (wanted != swap) fprintf(stderr, "bridge: channels %s at %.2fs\n", wanted ? "swapped" : "normal", now_s() - start);
+            swap = wanted;
+            next_volume = now_s() + 0.2;
+        }
         if (child < 0) { if (client < 0) usleep(20000); else ring_drop(ring_fill & ~(size_t)3); continue; }
         if (!(fds[0].revents & POLLOUT)) continue;
         if (!announced) { announced = 1; fprintf(stderr, "bridge: player is consuming at %.2fs\n", now_s() - start); }
@@ -356,8 +381,9 @@ static int cmd_bridge(const char *fifo_path, long extra_uid, char **player) {
             ring_get(chunk, n);
             if (n < CHUNK) { if (client >= 0) underruns++; streaming = 0; }
         }
-        /* Apply the gain with a per-chunk ramp so that volume steps never click. */
         int16_t *pcm = (int16_t *)chunk;
+        if (swap) for (int i = 0; i < CHUNK / 2; i += 2) { int16_t left = pcm[i]; pcm[i] = pcm[i + 1]; pcm[i + 1] = left; }
+        /* Apply the gain with a per-chunk ramp so that volume steps never click. */
         for (int i = 0; i < CHUNK / 2; i++) {
             int32_t g = gain + (int32_t)((int64_t)(target - gain) * (i / 2) / (CHUNK / 4));
             pcm[i] = (int16_t)(((int32_t)pcm[i] * g) >> 16);
@@ -382,7 +408,8 @@ static int cmd_bridge(const char *fifo_path, long extra_uid, char **player) {
 
 /* Test client that behaves like AERA's: 20 ms blocks on a monotonic clock.
  * 0-1 s tone 660 Hz, 1-2 s nothing sent at all, 2-3 s tone 880 Hz, 3-3.5 s zeros, 3.5-4.5 s tone 523 Hz. */
-static int cmd_client(double amplitude) {
+/* channel: 0 both, 1 left only, 2 right only */
+static int cmd_client(double amplitude, int channel) {
     if (amplitude <= 0 || amplitude > 0.25) return 1;
     signal(SIGPIPE, SIG_IGN);
     struct sockaddr_un address; socklen_t size = bridge_address(&address);
@@ -399,7 +426,8 @@ static int cmd_client(double amplitude) {
         for (int i = 0; i < 960; i++) {
             double t = t0 + i / 48000.0, v = 0;
             if (t >= begin && t < end) { double fade = t - begin < 0.02 ? (t - begin) / 0.02 : end - t < 0.02 ? (end - t) / 0.02 : 1; v = sin(2 * M_PI * hz * t) * amplitude * fade; }
-            pcm[2 * i] = pcm[2 * i + 1] = (int16_t)(v * 32767);
+            pcm[2 * i] = channel == 2 ? 0 : (int16_t)(v * 32767);
+            pcm[2 * i + 1] = channel == 1 ? 0 : (int16_t)(v * 32767);
         }
         if (!skip) { if (send(fd, pcm, sizeof(pcm), MSG_NOSIGNAL) == (ssize_t)sizeof(pcm)) sent += sizeof(pcm); else failures++; }
         deadline.tv_nsec += 20000000; if (deadline.tv_nsec >= 1000000000) { deadline.tv_sec++; deadline.tv_nsec -= 1000000000; }
@@ -424,7 +452,11 @@ int main(int argc, char **argv) {
         int extra = argc > 5 && !strcmp(argv[3], "--accept-uid"), at = extra ? 5 : 3;
         if (argc > at + 1 && !strcmp(argv[at], "--")) return cmd_bridge(argv[2], extra ? atol(argv[4]) : -1, argv + at + 1);
     }
-    if (argc == 3 && !strcmp(argv[1], "client")) return cmd_client(atof(argv[2]));
+    if ((argc == 3 || argc == 4) && !strcmp(argv[1], "client")) {
+        int channel = argc == 3 || !strcmp(argv[3], "both") ? 0 : !strcmp(argv[3], "left") ? 1 : !strcmp(argv[3], "right") ? 2 : -1;
+        if (channel < 0) { fprintf(stderr, "client AMPLITUDE [both|left|right]\n"); return 64; }
+        return cmd_client(atof(argv[2]), channel);
+    }
     if (argc == 4 && !strcmp(argv[1], "gprping")) return cmd_gprping(argv[2], atoi(argv[3]));
 
     if (argc >= 3 && !strcmp(argv[1], "list")) return cmd_list(argv[2], argc > 3 ? argv[3] : NULL);

@@ -64,10 +64,10 @@ jobs:
           cat > .repo/local_manifests/neo8.xml <<'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
           <manifest>
-            <extend-project name="android_bootable_recovery" path="bootable/recovery" revision="42ed6b66808200ce0d388bb0b4f05e4c2af4d207" />
-            <extend-project name="android_system_vold" path="system/vold" revision="36bb8ce4fbbb4615f3d87638347c59eface0853b" />
+            <extend-project name="android_bootable_recovery" path="bootable/recovery" revision="1cabc50919d2587ba986f679f946f52963130fc1" />
+            <extend-project name="android_system_vold" path="system/vold" revision="991a8f982acee148e333ed6622978fa0f1a35d1f" />
             <extend-project name="android_hardware_interfaces" path="hardware/interfaces" revision="bdefb2a8bce20dc15882d4ab668fb628c427e26b" />
-            <extend-project name="android_vendor_recovery" path="vendor/recovery" revision="1f4b6e19882c83f95d1420872d0c31be0b97a7a6" />
+            <extend-project name="android_vendor_recovery" path="vendor/recovery" revision="0a060cf8c9d07961f3c468adb913b2997e7a390a" />
           </manifest>
           EOF
           "$HOME/bin/repo" sync -c -j4 --no-tags --no-clone-bundle --fail-fast 2>&1 | tee "$GITHUB_WORKSPACE/artifacts/aera-build/sync.log"

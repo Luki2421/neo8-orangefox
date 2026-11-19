@@ -459,7 +459,37 @@ AERA's media features (browser, media player, streams, games) send 48 kHz stereo
   in recovery); put a number 1–100 into `/sdcard/AERA/audio-volume` to change the ceiling.
 - A jitter buffer (60 ms start, drops only beyond 500 ms ahead) absorbs decoders that
   send in bursts; each session logs its underruns and dropped audio.
+- Stereo follows AERA's rotation (`/tmp/aera-audio-rotation`): left channel = speaker
+  at 0x34 (bottom), right = 0x35 (top); at rotation 90 the channels are swapped.
+  `/sdcard/AERA/audio-channels` = `auto` (default), `normal` or `swap`.
+  `sh /system/bin/neo8-audio-lr-test.sh` plays three beeps left, then three right.
 - Log: `/tmp/neo8-audio-bridge.log`. If anything fails the bridge keeps accepting audio
   silently, like AERA's null bridge.
 - Rebuild the helpers with `aera/audio/src/build.sh`; `aera/test_audio.py` checks the
   assets and the socket protocol.
+
+## Synchronizacja źródeł AERA — 19.11.2026
+
+Recovery: `42ed6b6` → `1cabc50` (20 commitów, tylko `aeraui`: kąt obrotu dla mostka
+audio w `/tmp/aera-audio-rotation`, `AERA_SCREEN_W` z domyślnym 1080 jak dotąd, układy
+poziome, terminal, wzór blokady, błędy startu przeglądarki, własność bufora przy
+skalowaniu), `system/vold`: `36bb8ce` → `991a8f9` (opcjonalny
+`ro.aera.crypto.legacy_layout`, domyślnie wyłączony — Neo8 go nie ustawia),
+`vendor/recovery`: `1f4b6e1` → `0a060cf` (eksport `AERA_SCREEN_W`). Żaden z plików,
+które łatamy, nie zmienił się w upstreamie; wszystkie łatki nakładają się, `prepare.py`
+przechodzi (107 plików z referencji) i wszystkie testy hosta przechodzą.
+
+Łatka 0010: log z telefonu pokazał `Cannot unmount child '/vendor/odm/etc/wifi':
+Too many symbolic links (errno=40); leaving '/vendor' mounted`. Wiązania konfiguracji
+Wi-Fi powstają pod ramdiskowym `/vendor`, a recovery montuje potem stockowy vendor na
+nich; ścieżka przez jego dowiązanie `odm` zapętla się. Odmontowanie czyta teraz
+`/proc/self/mountinfo` i zdejmuje tylko montowania leżące na aktywnym `/vendor`;
+przykryte wiązania zostają (po zdjęciu vendora znów działają). Sprawdzone na prawdziwych
+montowaniach w przestrzeni nazw (stary sposób: ELOOP, nowy: vendor odmontowany,
+wiązania czytelne) i w `test_install_mounts.py`.
+
+Wolne Wi-Fi (~30 s po odszyfrowaniu): `icnss2` czeka 2 × 10 s na adres MAC z usługi DMS
+modemu, który w recovery jest wyłączony (`Unable to get MAC from DMS after retries`),
+a HAL kończy pierwszą próbę po 20 s (`Driver Loading Timed-out`). Wymusza to drzewo
+urządzenia (`use-nv-mac`); plik MAC tego nie omija, więc bez modemu lub zmiany jądra/DT
+nie da się tego skrócić.
