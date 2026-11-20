@@ -77,6 +77,8 @@ class Franken(
         for (n in baseOnly) chosen[n] = baseImgs.getValue(n)
         if (baseOnly.isNotEmpty()) log(tr("Franken: tylko w bazie (zostaja z bazy): ${baseOnly.joinToString()}", "Franken: base only (kept from base): ${baseOnly.joinToString()}"))
 
+        checkAndroidVersions(chosen["system"], chosen["vendor"])
+
         // --- my_product (dawca + konfiguracja bazy) ---
         if (opt.patchMyProduct) {
             val d = donorImgs["my_product"]; val b = baseImgs["my_product"]
@@ -135,6 +137,29 @@ class Franken(
         log(tr("  * = poprawiony, (B) = z bazy, reszta z dawcy", "  * = patched, (B) = from base, rest from donor"))
         work.deleteRecursively()
         return Result(groups)
+    }
+
+    /** Wlasciwosci z pierwszego istniejacego build.prop w obrazie (bez wypakowania). */
+    private fun readProps(img: File?, paths: List<String>): Map<String, String> {
+        if (img == null || !img.isFile) return emptyMap()
+        return try {
+            val path = ErofsPatcher(img, readOnly = true).use { e -> paths.firstOrNull { e.lookup(it) != null } } ?: return emptyMap()
+            props(mapOf(path to tools.cat(img, path)))
+        } catch (_: Exception) { emptyMap() }
+    }
+
+    /** Android systemu (dawca) vs vendor (baza): rozne wersje = duze ryzyko bootloopa. */
+    private fun checkAndroidVersions(system: File?, vendor: File?) {
+        val sp = readProps(system, listOf("system/build.prop", "build.prop"))
+        val vp = readProps(vendor, listOf("build.prop", "etc/build.prop"))
+        val sRel = sp["ro.system.build.version.release"] ?: sp["ro.build.version.release"]
+        val sSdk = (sp["ro.system.build.version.sdk"] ?: sp["ro.build.version.sdk"])?.toIntOrNull()
+        val vRel = vp["ro.vendor.build.version.release"]
+        val vSdk = vp["ro.vendor.build.version.sdk"]?.toIntOrNull()
+        if (sSdk == null || vSdk == null) { log(tr("Franken: nie udalo sie odczytac wersji Androida (system/vendor) - sprawdz recznie", "Franken: could not read Android versions (system/vendor) - check manually")); return }
+        log(tr("Franken: system Android $sRel (SDK $sSdk), vendor Android $vRel (SDK $vSdk)", "Franken: system Android $sRel (SDK $sSdk), vendor Android $vRel (SDK $vSdk)"))
+        if (sSdk != vSdk) log(tr("Franken: UWAGA - rozne wersje Androida dawcy ($sRel) i bazy ($vRel). Duze ryzyko bootloopa - uzyj bazy i dawcy z tym samym Androidem.",
+            "Franken: WARNING - donor ($sRel) and base ($vRel) Android versions differ. High bootloop risk - use base and donor with the same Android."))
     }
 
     // =====================================================================================

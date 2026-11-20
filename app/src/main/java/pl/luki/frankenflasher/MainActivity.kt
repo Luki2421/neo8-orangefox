@@ -1133,6 +1133,8 @@ class MainActivity : Activity() {
         val b = frBase ?: run { log(tr("Wybierz folder bazy (Neo 8)", "Pick the base folder (Neo 8)")); return }
         val d = frDonor ?: run { log(tr("Wybierz folder dawcy (GT 8 Pro)", "Pick the donor folder (GT 8 Pro)")); return }
         if (!hasAllFiles()) { requestAllFiles(); return }
+        if (busy) { log(tr("Trwa inna operacja - poczekaj az sie skonczy", "Another operation is running - wait until it finishes")); return }
+        busy = true
         val out = File(android.os.Environment.getExternalStorageDirectory(), "FrankenFlasher/franken")
         exec.execute {
             try {
@@ -1154,7 +1156,7 @@ class MainActivity : Activity() {
             } catch (e: Exception) {
                 log(tr("BLAD Franken: $e", "Franken ERROR: $e")); e.stackTrace.take(6).forEach { log("    at $it") }
                 setStep("BLAD: ${e.message}")
-            }
+            } finally { busy = false }
         }
     }
 
@@ -1224,22 +1226,23 @@ class MainActivity : Activity() {
                         File(folder, g).listFiles { f -> f.isFile && f.name.endsWith(".img") && f.length() > 0 }.orEmpty().sortedBy { it.name }
                     }.toMutableMap()
                     val sys = groups["SYSTEM"].orEmpty().associateBy { it.name.removeSuffix(".img") }
-                    groups["SYSTEM"] = debloatTool().apply(sys, debloatSet(), debloatWork(), ::setStep).values.toList()
-                    pl.luki.frankenflasher.franken.HybridZip(::log, ::setProgress).build(groups, folder, size, opt.disableVbmeta, zip)
+                    val deb = debloatTool().apply(sys, debloatSet(), debloatWork(), ::setStep)
+                    groups["SYSTEM"] = deb.values.toList()
+                    pl.luki.frankenflasher.franken.HybridZip(::log, ::setProgress).build(groups, folder, size, vbmetaOff(deb != sys), zip)
                     log(tr("Recovery (OrangeFox/AERA/TWRP): Install -> ${zip.name}. PC: rozpakuj ZIP i uruchom flash_all.bat w bootloaderze.",
                         "Recovery (OrangeFox/AERA/TWRP): Install -> ${zip.name}. PC: extract the ZIP and run flash_all.bat in bootloader."))
                 } else {
                     setStep(tr("Budowanie super.img", "Building super.img"))
                     val sys = File(folder, "SYSTEM").listFiles { f -> f.isFile && f.name.endsWith(".img") && f.length() > 0 }.orEmpty().associateBy { it.name.removeSuffix(".img") }
                     val imgs = debloatTool().apply(sys, debloatSet(), debloatWork(), ::setStep)
-                    pl.luki.frankenflasher.franken.SuperFlasher(::log, ::setProgress).build(folder, size, imgs)
+                    pl.luki.frankenflasher.franken.SuperFlasher(::log, ::setProgress).build(folder, size, imgs, vbmetaOff(imgs != sys))
                 }
                 log(tr("Super flasher gotowy w ${(System.currentTimeMillis() - t0) / 1000} s: ${folder.path}", "Super flasher ready in ${(System.currentTimeMillis() - t0) / 1000} s: ${folder.path}"))
                 setStep(tr("Super flasher gotowy", "Super flasher ready"))
                 if (superFolder == null) u?.let { loadFirmware(it, save = false) }
             } catch (e: Exception) {
                 log(tr("BLAD super: $e", "super ERROR: $e")); setStep(tr("BLAD super", "super ERROR"))
-            } finally { busy = false; setProgress(0, 0) }
+            } finally { debloatWork().deleteRecursively(); busy = false; setProgress(0, 0) }
         }
     }
 
@@ -1396,18 +1399,27 @@ class MainActivity : Activity() {
                 val zip = File(android.os.Environment.getExternalStorageDirectory(), "FrankenFlasher/Franken_hybrid.zip")
                 val sys = groups["SYSTEM"].orEmpty().associateBy { it.name.removeSuffix(".img") }
                 groups["SYSTEM"] = debloatTool().apply(sys, debloatSet(), debloatWork(), ::setStep).values.toMutableList()
-                pl.luki.frankenflasher.franken.HybridZip(::log, ::setProgress).build(groups, base, size, opt.disableVbmeta, zip)
+                // Franken zawsze wymaga wylaczonej weryfikacji: obrazy dawcy i poprawione nie pasuja do vbmeta bazy
+                pl.luki.frankenflasher.franken.HybridZip(::log, ::setProgress).build(groups, base, size, vbmetaOff(true), zip)
                 log(tr("Recovery (TWRP/AERA/OrangeFox): Install -> FrankenFlasher/${zip.name}, potem Format Data (zmiana systemu). Gotowe w ${(System.currentTimeMillis() - t0) / 1000} s",
                     "Recovery (TWRP/AERA/OrangeFox): Install -> FrankenFlasher/${zip.name}, then Format Data (system change). Done in ${(System.currentTimeMillis() - t0) / 1000} s"))
                 setStep(tr("Franken hybrid ZIP gotowy", "Franken hybrid ZIP ready"))
             } catch (e: Exception) {
                 log(tr("BLAD Franken hybrid: $e", "Franken hybrid ERROR: $e")); setStep(tr("BLAD Franken hybrid", "Franken hybrid ERROR"))
-            } finally { busy = false; setProgress(0, 0) }
+            } finally { debloatWork().deleteRecursively(); busy = false; setProgress(0, 0) }
         }
+    }
+
+    /** vbmeta: wylaczona weryfikacja, gdy uzytkownik tak ustawil albo obrazy sa zmienione (Franken, debloat). */
+    private fun vbmetaOff(modified: Boolean): Boolean {
+        if (modified && !opt.disableVbmeta) log(tr("vbmeta: obrazy zmienione (Franken/debloat) - weryfikacja wylaczona mimo ustawienia, inaczej telefon by sie nie uruchomil",
+            "vbmeta: images modified (Franken/debloat) - verification disabled despite the setting, otherwise the phone would not boot"))
+        return opt.disableVbmeta || modified
     }
 
     private fun flashFranken() {
         val fw = frResult ?: run { log(tr("Najpierw nacisnij Zbuduj Franken", "Tap Build Franken first")); return }
+        if (!opt.disableVbmeta) { opt.disableVbmeta = vbmetaOff(true) }
         flashFolder(fw, "Flash Franken")
     }
 

@@ -192,9 +192,9 @@ class OtaExtractor(
                 pool.shutdownNow()
             }
             if (bad.isNotEmpty()) throw IllegalStateException(tr("Bledne sumy: ${bad.joinToString()} - NIE flashuj, rozpakuj ponownie", "Bad checksums: ${bad.joinToString()} - DO NOT flash, extract again"))
-            if (superDef != null) try { outDir.write("super_def.json", superDef.second) } catch (_: Exception) {}
-            // uklad super z OTA (grupy i rozmiary) - dla budowania super flashera
-            if (info.groups.isNotEmpty()) try {
+            if (only == null && superDef != null) try { outDir.write("super_def.json", superDef.second) } catch (_: Exception) {}
+            // uklad super z OTA (grupy i rozmiary) - dla budowania super flashera (tylko pelne rozpakowanie)
+            if (only == null && info.groups.isNotEmpty()) try {
                 val txt = info.groups.joinToString("\n") { g -> "${g.name} ${g.size} ${g.partitions.joinToString(",")}" } + "\n"
                 outDir.write("super_groups.txt", txt.toByteArray())
             } catch (_: Exception) {}

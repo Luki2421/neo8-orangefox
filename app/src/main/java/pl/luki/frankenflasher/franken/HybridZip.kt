@@ -255,16 +255,20 @@ ui "**************************************"
 ui " Franken Flasher - hybrid super flasher"
 ui "**************************************"
 for m in /system_root /system /vendor /product /odm /system_ext; do umount -l ${'$'}m 2>/dev/null; done
+# rozmiar super: bajty z blockdev, a bez niego sektory z sysfs (bez mnozenia - powloka recovery bywa 32-bitowa)
 SZ=${'$'}(blockdev --getsize64 "${'$'}BD/super" 2>/dev/null)
-[ -z "${'$'}SZ" ] && SZ=${'$'}(( ${'$'}(cat /sys/class/block/${'$'}(basename ${'$'}(readlink -f "${'$'}BD/super"))/size 2>/dev/null || echo 0) * 512 ))
-if [ -n "${'$'}SZ" ] && [ "${'$'}SZ" != 0 ] && [ "${'$'}SZ" != "SUPERSIZE" ]; then
+SEC=${'$'}(cat /sys/class/block/${'$'}(basename ${'$'}(readlink -f "${'$'}BD/super"))/size 2>/dev/null)
+BAD=0
+if [ -n "${'$'}SZ" ] && [ "${'$'}SZ" != 0 ]; then [ "${'$'}SZ" != "SUPERSIZE" ] && BAD=1
+elif [ -n "${'$'}SEC" ] && [ "${'$'}SEC" != 0 ]; then [ "${'$'}SEC" != "SUPERSECTORS" ] && BAD=1; SZ="${'$'}SEC x512"; fi
+if [ ${'$'}BAD = 1 ]; then
   ui "! Rozmiar super w telefonie (${'$'}SZ) != ZIP (SUPERSIZE) - inny model? PRZERWANO, nic nie zapisano"
   ui "! Phone super size differs from ZIP - wrong model? ABORTED, nothing written"
   exit 1
 fi
 ui "- recovery: pomijam (zostaje obecne recovery) / skipped (current recovery kept)"
 ui "- Partycje fizyczne slot A / physical partitions slot A"
-""".replace("SUPERSIZE", superSize.toString()))
+""".replace("SUPERSECTORS", (superSize / 512).toString()).replace("SUPERSIZE", superSize.toString()))
         val physR = phys.filter { it.first != "recovery" }
         for ((n, e) in physR) s.append("pa $n ${ddArgs(e.dataOffset, 0, e.size)}\n")
         s.append("ui \"- Partycje fizyczne slot B / physical partitions slot B\"\n")
@@ -275,6 +279,13 @@ ui "- Partycje fizyczne slot A / physical partitions slot A"
         s.append("for n in ${logical.joinToString(" ") { it.first }}; do for x in _a _b; do d=/dev/block/mapper/${'$'}n${'$'}x; [ -e ${'$'}d ] || continue; " +
             "umount -l ${'$'}(grep \"${'$'}(readlink -f ${'$'}d) \" /proc/mounts | cut -d' ' -f2) 2>/dev/null; " +
             "dmctl delete ${'$'}n${'$'}x >/dev/null 2>&1 || dmsetup remove ${'$'}n${'$'}x >/dev/null 2>&1; lg \"  unmap ${'$'}n${'$'}x\"; done; done\n")
+        // Virtual A/B: niedokonczona aktualizacja OTA (snapshoty) w /metadata zablokowalaby start z nowym super
+        // (to samo robi "fastboot snapshot-update cancel")
+        s.append("""ui "- Virtual A/B: czyszczenie stanu aktualizacji OTA / clearing OTA update state"
+MNT=0; grep -q " /metadata " /proc/mounts || { mount /metadata 2>/dev/null && MNT=1; }
+if [ -d /metadata/ota ]; then rm -f /metadata/ota/state /metadata/ota/snapshot-boot 2>/dev/null; rm -rf /metadata/ota/snapshots/* 2>/dev/null; lg "  /metadata/ota: stan wyczyszczony"; fi
+[ ${'$'}MNT = 1 ] && umount /metadata 2>/dev/null
+""")
         s.append("ui \"- super: metadane / metadata\"\n")
         s.append("w super ${ddArgs(meta.dataOffset, 0, meta.size)}\n")
         s.append("ui \"- super: partycje logiczne / logical partitions (slot a)\"\n")
@@ -294,9 +305,9 @@ exit 1
 
     private fun pcScriptBat(phys: List<Pair<String, File>>, logical: List<String>): String {
         val b = StringBuilder("@echo off\r\ncd /d \"%~dp0\"\r\nset FB=fastboot\r\nif exist platform-tools\\fastboot.exe set FB=platform-tools\\fastboot.exe\r\n")
-        b.append("echo Hybrid super flasher - telefon w BOOTLOADER (fastboot)\r\n%FB% devices\r\npause\r\n")
+        b.append("echo Hybrid super flasher - telefon w BOOTLOADER (fastboot)\r\n%FB% devices\r\npause\r\n%FB% snapshot-update cancel\r\n")
         for ((g, f) in phys) b.append("%FB% flash --slot=all ${f.name.removeSuffix(".img")} \"$g\\${f.name}\" || goto err\r\n")
-        b.append("%FB% flash super \"SUPER\\super_meta.img\" || goto err\r\necho Ostatni etap w fastbootd / last stage in fastbootd\r\n%FB% reboot fastboot\r\n")
+        b.append("%FB% flash super \"SUPER\\super_meta.img\" || goto err\r\necho Ostatni etap w fastbootd / last stage in fastbootd\r\n%FB% reboot fastboot\r\n%FB% snapshot-update cancel\r\n")
         for (n in logical) b.append("%FB% flash ${n}_a \"SYSTEM\\$n.img\" || goto err\r\n")
         b.append("%FB% --set-active=a\r\nset /p W=Wyczyscic dane / wipe data? (t/n): \r\nif /i \"%W%\"==\"t\" %FB% -w\r\nif /i \"%W%\"==\"y\" %FB% -w\r\n")
         b.append("%FB% reboot\r\necho OK\r\npause\r\nexit /b 0\r\n:err\r\necho BLAD / ERROR\r\npause\r\nexit /b 1\r\n")
@@ -305,9 +316,9 @@ exit 1
 
     private fun pcScriptSh(phys: List<Pair<String, File>>, logical: List<String>): String {
         val b = StringBuilder("#!/bin/sh\nset -e\ncd \"$(dirname \"$0\")\"\nFB=fastboot\n[ -x platform-tools/fastboot ] && FB=platform-tools/fastboot\n")
-        b.append("echo 'Hybrid super flasher - telefon w BOOTLOADER (fastboot)'\n\$FB devices\n")
+        b.append("echo 'Hybrid super flasher - telefon w BOOTLOADER (fastboot)'\n\$FB devices\n\$FB snapshot-update cancel || true\n")
         for ((g, f) in phys) b.append("\$FB flash --slot=all ${f.name.removeSuffix(".img")} \"$g/${f.name}\"\n")
-        b.append("\$FB flash super SUPER/super_meta.img\necho 'Ostatni etap w fastbootd / last stage in fastbootd'\n\$FB reboot fastboot\n")
+        b.append("\$FB flash super SUPER/super_meta.img\necho 'Ostatni etap w fastbootd / last stage in fastbootd'\n\$FB reboot fastboot\n\$FB snapshot-update cancel || true\n")
         for (n in logical) b.append("\$FB flash ${n}_a \"SYSTEM/$n.img\"\n")
         b.append("\$FB --set-active=a\nprintf 'Wipe data? (y/n): '; read W\n[ \"\$W\" = y ] || [ \"\$W\" = t ] && \$FB -w\n\$FB reboot\necho OK\n")
         return b.toString()

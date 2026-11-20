@@ -56,6 +56,13 @@ class SuperFlasher(private val log: (String) -> Unit, private val progress: (Lon
         val images = imagesOverride ?: sys.listFiles { f -> f.isFile && f.name.endsWith(".img") && f.length() > 0 }.orEmpty()
             .associateBy { it.name.removeSuffix(".img") }
         if (images.isEmpty()) throw IOException(tr("Brak obrazow w ${sys.path}", "No images in ${sys.path}"))
+        // obrazy musza byc surowe (RAW) - sparse zapisany wprost do super zepsulby system
+        images.forEach { (n, f) ->
+            val magic = f.inputStream().use { i -> ByteArray(4).also { i.read(it) } }
+            if (magic.contentEquals(byteArrayOf(0x3A, 0xFF.toByte(), 0x26, 0xED.toByte())))
+                throw IOException(tr("$n.img jest w formacie sparse - potrzebny surowy obraz (rozpakuj OTA w tej aplikacji albo simg2img)",
+                    "$n.img is a sparse image - a raw image is required (extract the OTA in this app or use simg2img)"))
+        }
         var group = def?.group ?: "qti_dynamic_partitions"
         var groupMax = def?.groupMax ?: (superSize - (4L shl 20))
         val gf = File(folder, "super_groups.txt")
@@ -67,7 +74,7 @@ class SuperFlasher(private val log: (String) -> Unit, private val progress: (Lon
         return Setup(images, superSize, group, groupMax)
     }
 
-    fun build(folder: File, superSizeIn: Long?, imagesOverride: Map<String, File>? = null): File {
+    fun build(folder: File, superSizeIn: Long?, imagesOverride: Map<String, File>? = null, disableVbmeta: Boolean = false): File {
         val st = setup(folder, superSizeIn, imagesOverride)
         val images = st.images; val group = st.group; val groupMax = st.groupMax; val superSize = st.superSize
         val free = folder.usableSpace
@@ -78,29 +85,30 @@ class SuperFlasher(private val log: (String) -> Unit, private val progress: (Lon
         val tmp = File(out.parentFile, "super.img.part")
         SuperBuilder(log, progress).build(images, group, groupMax, superSize, tmp)
         out.delete(); if (!tmp.renameTo(out)) throw IOException("rename ${tmp.name}")
-        writeScripts(folder)
+        writeScripts(folder, disableVbmeta)
         log(tr("super.img gotowy: ${out.length() / (1 shl 20)} MB (sparse) + skrypty flash_all.bat / flash_all.sh",
             "super.img ready: ${out.length() / (1 shl 20)} MB (sparse) + scripts flash_all.bat / flash_all.sh"))
         return out
     }
 
-    private fun writeScripts(folder: File) {
+    private fun writeScripts(folder: File, disableVbmeta: Boolean) {
+        fun vf(n: String) = if (disableVbmeta && n == "vbmeta.img") "--disable-verity --disable-verification " else ""
         val groups = listOf("CRITICAL", "EXTRA", "MODEM", "BOOTLOADER")
         val imgs = groups.flatMap { g -> File(folder, g).listFiles { f -> f.name.endsWith(".img") && f.length() > 0 }.orEmpty().sortedBy { it.name }.map { g to it.name } }
             .sortedBy { (g, n) -> if (g == "BOOTLOADER" && n.startsWith("vbmeta")) 1 else 0 }
         val bat = StringBuilder()
         bat.append("@echo off\r\ncd /d \"%~dp0\"\r\nset FB=fastboot\r\nif exist platform-tools\\fastboot.exe set FB=platform-tools\\fastboot.exe\r\n")
-        bat.append("echo Super flasher - telefon w trybie BOOTLOADER (fastboot), nie fastbootd\r\n%FB% devices\r\npause\r\n")
-        for ((g, n) in imgs) bat.append("%FB% flash --slot=all ${n.removeSuffix(".img")} \"$g\\$n\" || goto err\r\n")
-        bat.append("echo Ostatni etap w fastbootd / last stage in fastbootd\r\n%FB% reboot fastboot\r\n")
+        bat.append("echo Super flasher - telefon w trybie BOOTLOADER (fastboot), nie fastbootd\r\n%FB% devices\r\npause\r\n%FB% snapshot-update cancel\r\n")
+        for ((g, n) in imgs) bat.append("%FB% ${vf(n)}flash --slot=all ${n.removeSuffix(".img")} \"$g\\$n\" || goto err\r\n")
+        bat.append("echo Ostatni etap w fastbootd / last stage in fastbootd\r\n%FB% reboot fastboot\r\n%FB% snapshot-update cancel\r\n")
         bat.append("%FB% flash super \"SUPER\\super.img\" || goto err\r\n%FB% --set-active=a\r\n")
         bat.append("set /p W=Wyczyscic dane / wipe data? (t/n): \r\nif /i \"%W%\"==\"t\" %FB% -w\r\nif /i \"%W%\"==\"y\" %FB% -w\r\n")
         bat.append("%FB% reboot\r\necho OK\r\npause\r\nexit /b 0\r\n:err\r\necho BLAD / ERROR\r\npause\r\nexit /b 1\r\n")
         File(folder, "flash_all.bat").writeText(bat.toString())
         val sh = StringBuilder("#!/bin/sh\nset -e\ncd \"$(dirname \"$0\")\"\nFB=fastboot\n[ -x platform-tools/fastboot ] && FB=platform-tools/fastboot\n")
-        sh.append("echo 'Super flasher - telefon w trybie BOOTLOADER (fastboot), nie fastbootd'\n\$FB devices\n")
-        for ((g, n) in imgs) sh.append("\$FB flash --slot=all ${n.removeSuffix(".img")} \"$g/$n\"\n")
-        sh.append("echo 'Ostatni etap w fastbootd / last stage in fastbootd'\n\$FB reboot fastboot\n")
+        sh.append("echo 'Super flasher - telefon w trybie BOOTLOADER (fastboot), nie fastbootd'\n\$FB devices\n\$FB snapshot-update cancel || true\n")
+        for ((g, n) in imgs) sh.append("\$FB ${vf(n)}flash --slot=all ${n.removeSuffix(".img")} \"$g/$n\"\n")
+        sh.append("echo 'Ostatni etap w fastbootd / last stage in fastbootd'\n\$FB reboot fastboot\n\$FB snapshot-update cancel || true\n")
         sh.append("\$FB flash super SUPER/super.img\n\$FB --set-active=a\nprintf 'Wipe data? (y/n): '; read W\n[ \"\$W\" = y ] || [ \"\$W\" = t ] && \$FB -w\n\$FB reboot\necho OK\n")
         File(folder, "flash_all.sh").apply { writeText(sh.toString()); setExecutable(true) }
     }
