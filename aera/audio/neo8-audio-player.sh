@@ -37,7 +37,9 @@ mkdir -p "$STOCK/modem"
 grep -q " $STOCK/modem " /proc/mounts || \
     mount -t vfat -o ro "/dev/block/bootdevice/by-name/modem$SLOT" "$STOCK/modem" || exit 1
 
-SEEN_DIR=/tmp/neo8-audio-seen; mkdir -p "$SEEN_DIR"
+# Per-run cycle markers: a run killed mid-way (media closed during bring-up)
+# must not leave markers that the next run would report as dependency cycles.
+SEEN_DIR="/tmp/neo8-audio-seen.$$"; mkdir -p "$SEEN_DIR"
 module_loaded() {
     local module="${1##*/}"
     module="${module%.ko}"
@@ -95,6 +97,7 @@ for m in frpc-adsprpc q6_notifier_dlkm spf_core_dlkm gpr_dlkm audio_pkt_dlkm aud
     simple_amp_dlkm qmp_dlkm wsa885x_i2c_dlkm machine_dlkm; do
     load_with_dependencies "$m.ko" || echo "neo8-audio: module $m not loaded"
 done
+rm -f "$SEEN_DIR"/* 2>/dev/null; rmdir "$SEEN_DIR" /tmp/neo8-audio-seen.* 2>/dev/null
 echo "neo8-audio: modules done (uptime $(up)s)"
 
 # Chroot with the stock vendor tree. Targets are new paths under $ROOT only.

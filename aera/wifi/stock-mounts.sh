@@ -35,10 +35,33 @@ fi
 # /vendor/odm can be a symlink to /odm (for example while the stock vendor
 # partition is mounted on /vendor). The kernel then records the bind under the
 # resolved path, so all checks and the read-only remount use that path.
+# A bind left under the ramdisk /vendor can be covered by a later stock vendor
+# mount; /proc/mounts still lists it, so "already bound" means "the visible
+# directory is a mount point" (its device differs from its parent's).
+# If the stock odm link loops back (no odm mount yet), nothing can open
+# /vendor/odm/etc/wifi either, so that target is skipped instead of failing.
+is_visible_mount() {
+    local here parent
+    here=$(stat -c %d "$1" 2>/dev/null) || return 1
+    parent=$(stat -c %d "$1/.." 2>/dev/null) || return 1
+    [ "$here" != "$parent" ]
+}
+path_loops() {
+    local path="" part
+    for part in $(echo "${1#/}" | tr '/' ' '); do
+        path="$path/$part"
+        [ -L "$path" ] && [ ! -e "$path" ] && return 0
+    done
+    return 1
+}
 bind_wifi_config() {
     local source="$1" target="$2" parent resolved
     [ -d "$source" ] || return 0
     [ ! -L "$target" ] || { echo "Refusing Wi-Fi target symlink: $target"; return 1; }
+    if path_loops "${target%/*}"; then
+        echo "Wi-Fi config target ${target%/*} is an unresolvable symlink; skipping $target"
+        return 0
+    fi
     mkdir -p "${target%/*}" || return 1
     parent=$(readlink -f "${target%/*}") || { echo "Cannot resolve ${target%/*}"; return 1; }
     resolved="$parent/${target##*/}"
@@ -47,7 +70,7 @@ bind_wifi_config() {
         *) echo "Refusing Wi-Fi target outside /vendor and /odm: $target -> $resolved"; return 1 ;;
     esac
     [ "$resolved" = "$target" ] || echo "Wi-Fi config target $target resolves to $resolved"
-    if ! grep -q " $resolved " /proc/mounts; then
+    if ! is_visible_mount "$resolved"; then
         mkdir -p "$resolved" || return 1
         mount --bind "$source" "$resolved" || return 1
     fi
