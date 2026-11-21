@@ -89,6 +89,7 @@ jobs:
           python3 aera/test_apex_loop.py --recovery-root "$ANDROID_ROOT/bootable/recovery"
           python3 aera/test_mtp_readiness.py --recovery-root "$ANDROID_ROOT/bootable/recovery"
           python3 aera/test_install_mounts.py --recovery-root "$ANDROID_ROOT/bootable/recovery"
+          python3 aera/test_leftover_users.py --recovery-root "$ANDROID_ROOT/bootable/recovery"
 
       - name: Pass Go memory controls to the isolated Soong builder
         run: |

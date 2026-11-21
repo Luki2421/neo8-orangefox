@@ -1,0 +1,86 @@
+diff --git a/partitionmanager.cpp b/partitionmanager.cpp
+index bcf57975..efd02a51 100755
+--- a/partitionmanager.cpp
++++ b/partitionmanager.cpp
+@@ -52,6 +52,7 @@
+ #include <iostream>
+ #include <iomanip>
+ #include <sys/wait.h>
++#include <signal.h>
+ #include <linux/fs.h>
+ #include <sys/mount.h>
+ #include <sys/poll.h>
+@@ -269,6 +270,65 @@ bool StopDynamicService(const std::string& name) {
+ 	return false;
+ }
+ 
++// Neo8: the Wi-Fi loader and the audio bridge start stock helpers (cnss-daemon,
++// the Wi-Fi HAL, audio daemons) from the read-only stock mounts under
++// /tmp/aera-wifi as detached children. They are not init service main
++// processes, so the service scan cannot stop them and the stock vendor stays
++// busy ("Unable to unmount /tmp/aera-wifi/vendor: Device or resource busy").
++std::vector<pid_t> Neo8LeftoverFlashUsers(const std::set<dev_t>& devices) {
++	std::vector<pid_t> pids;
++	DIR* proc = opendir("/proc");
++	if (proc == nullptr)
++		return pids;
++	const pid_t self = getpid();
++	while (dirent* entry = readdir(proc)) {
++		char* end = nullptr;
++		const long pid = strtol(entry->d_name, &end, 10);
++		if (end == entry->d_name || *end != '\0' || pid <= 1 || pid == self)
++			continue;
++		if (ProcessUsesFlashDevices(static_cast<pid_t>(pid), devices))
++			pids.push_back(static_cast<pid_t>(pid));
++	}
++	closedir(proc);
++	return pids;
++}
++
++std::string Neo8ProcessName(pid_t pid) {
++	std::string name;
++	android::base::ReadFileToString("/proc/" + std::to_string(pid) + "/comm", &name);
++	return android::base::Trim(name);
++}
++
++bool Neo8StopLeftoverFlashUsers(const std::set<dev_t>& devices) {
++	if (devices.empty() || Neo8LeftoverFlashUsers(devices).empty())
++		return true;
++	// Stop the Wi-Fi service too, so the generic restart brings the whole
++	// stack (loader, helpers, wpa_supplicant) back after the mounts return.
++	const auto wifi = android::base::GetProperty("init.svc.wpa_supplicant", "");
++	if ((wifi == "running" || wifi == "restarting") && !StopDynamicService("wpa_supplicant"))
++		return false;
++	std::vector<pid_t> pids;
++	for (const int sig : {SIGTERM, SIGKILL}) {
++		pids = Neo8LeftoverFlashUsers(devices);
++		for (const pid_t pid : pids) {
++			LOGINFO("Stopping %s (pid %d) that keeps a dynamic partition busy\n",
++				Neo8ProcessName(pid).c_str(), pid);
++			kill(pid, sig);
++		}
++		for (int attempt = 0; attempt < 30 && !pids.empty(); ++attempt) {
++			usleep(100000);
++			pids = Neo8LeftoverFlashUsers(devices);
++		}
++		if (pids.empty())
++			return true;
++	}
++	LOGERR("%s (pid %d) still keeps a dynamic partition busy\n",
++		Neo8ProcessName(pids.front()).c_str(), pids.front());
++	DataManager::SetValue("tw_size_progress", "Process keeps a dynamic partition busy: " +
++		Neo8ProcessName(pids.front()));
++	return false;
++}
++
+ bool QuiesceDynamicPartitionUsers(bool stop_bootstrap = false,
+         const std::set<dev_t>& physical_devices = {},
+         std::vector<aera::FlashMount>* physical_mounts = nullptr) {
+@@ -346,6 +406,7 @@ bool QuiesceDynamicPartitionUsers(bool stop_bootstrap = false,
+ 			continue;
+ 		if (!StopDynamicService(service.name)) return false;
+ 	}
++	if (!Neo8StopLeftoverFlashUsers(backing_devices)) return false;
+ 
+ 	for (const auto& mount : mounts) {
+ 		LOGINFO("Unmounting image-flash dependency: %s\n", mount.c_str());
