@@ -81,10 +81,12 @@ object FastDownload {
         val workers = minOf(threads, pending.size).coerceAtLeast(1)
         log(tr("Pobieranie: $workers polaczen, ${pending.size} z $n kawalkow po ${CHUNK shr 20} MB",
             "Downloading: $workers connections, ${pending.size} of $n chunks of ${CHUNK shr 20} MB"))
+        progress(startBytes, size)
         val next = AtomicInteger(0)
         val failed = AtomicReference<Throwable>()
         val lastReport = AtomicLong(0)
         val t0 = System.currentTimeMillis()
+        val report = { val g = got.get(); val l = lastReport.get(); if (g - l >= (2 shl 20) && lastReport.compareAndSet(l, g)) progress(g, size) }
         FileChannel.open(part.toPath(), StandardOpenOption.WRITE).use { ch ->
             FileOutputStream(map, true).use { mapOut ->
                 val pool = (0 until workers).map {
@@ -95,11 +97,9 @@ object FastDownload {
                                 val k = next.getAndIncrement()
                                 if (k >= pending.size) break
                                 val i = pending[k]
-                                if (fetchChunk(url, ch, i, size, buf, cancel, got)) {
+                                if (fetchChunk(url, ch, i, size, buf, cancel, got, report)) {
                                     synchronized(mapOut) { mapOut.write("$i\n".toByteArray()); mapOut.flush() }
                                 }
-                                val g = got.get(); val l = lastReport.get()
-                                if (g - l >= (8 shl 20) && lastReport.compareAndSet(l, g)) progress(g, size)
                             }
                         } catch (e: Throwable) { failed.compareAndSet(null, e) }
                     }.apply { name = "dl-$it"; start() }
@@ -123,7 +123,7 @@ object FastDownload {
     }
 
     /** Jeden kawalek; ponawianie od miejsca zerwania (5 prob). false = przerwane przez [cancel]. */
-    private fun fetchChunk(url: String, ch: FileChannel, i: Int, size: Long, buf: ByteArray, cancel: () -> Boolean, got: AtomicLong): Boolean {
+    private fun fetchChunk(url: String, ch: FileChannel, i: Int, size: Long, buf: ByteArray, cancel: () -> Boolean, got: AtomicLong, report: () -> Unit): Boolean {
         val start = i * CHUNK
         val end = minOf(size, start + CHUNK)
         var pos = start
@@ -150,6 +150,7 @@ object FastDownload {
                         while (bb.hasRemaining()) at += ch.write(bb, at)
                         pos += r
                         got.addAndGet(r.toLong())
+                        report()
                         attempt = 0
                     }
                 }

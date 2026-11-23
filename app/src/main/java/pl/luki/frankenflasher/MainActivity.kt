@@ -64,6 +64,8 @@ class MainActivity : Activity() {
     private lateinit var logView: TextView
     private lateinit var scroll: ScrollView
     private lateinit var progress: ProgressBar
+    private lateinit var progressText: TextView
+    private var pTotal = 0L; private var pLastDone = 0L; private var pWinT = 0L; private var pWinDone = 0L; private var pSpeed = 0.0
     private lateinit var partEdit: EditText
     private lateinit var status: TextView
     private lateinit var stepView: TextView
@@ -374,7 +376,9 @@ class MainActivity : Activity() {
             progressTintList = android.content.res.ColorStateList.valueOf(Ui.ACCENT)
             progressBackgroundTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.argb(60, 255, 255, 255))
         }
-        act.addView(progress, LinearLayout.LayoutParams(MATCH_PARENT, ui.dp(8)).apply { topMargin = ui.dp(4); bottomMargin = ui.dp(6) })
+        act.addView(progress, LinearLayout.LayoutParams(MATCH_PARENT, ui.dp(8)).apply { topMargin = ui.dp(4); bottomMargin = ui.dp(2) })
+        progressText = TextView(this).apply { textSize = 12f; setTextColor(Ui.TEXT2); isSingleLine = true; visibility = android.view.View.GONE }
+        act.addView(progressText, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { bottomMargin = ui.dp(4) })
         val logBar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL }
         var expanded = false
         logView = TextView(this).apply { typeface = Typeface.MONOSPACE; textSize = 10.5f; setTextColor(Ui.TEXT2); setTextIsSelectable(true) }
@@ -467,8 +471,28 @@ class MainActivity : Activity() {
             .putExtra(Intent.EXTRA_SUBJECT, "Franken Flasher log").putExtra(Intent.EXTRA_TEXT, text), tr("Udostepnij log", "Share log")))
     }
 
+    /** Pasek + tekst: ile z ilu, procent, predkosc (srednia z ostatnich sekund) i pozostaly czas. */
     private fun setProgress(done: Long, total: Long) = runOnUiThread {
         progress.progress = if (total > 0) (done * 1000 / total).toInt() else 0
+        if (total <= 0) { progressText.visibility = android.view.View.GONE; pTotal = 0; return@runOnUiThread }
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (total != pTotal || done < pLastDone) { pTotal = total; pWinT = now; pWinDone = done; pSpeed = 0.0 }
+        pLastDone = done
+        val dt = now - pWinT
+        if (dt >= 2000) {
+            val inst = (done - pWinDone) * 1000.0 / dt
+            pSpeed = if (pSpeed == 0.0) inst else pSpeed * 0.6 + inst * 0.4
+            pWinT = now; pWinDone = done
+        }
+        fun size(b: Long) = if (total >= (1L shl 30)) "%.2f GB".format(b / 1073741824.0) else "${b / (1 shl 20)} MB"
+        val sb = StringBuilder("${size(done)} / ${size(total)}  ·  %.1f%%".format(done * 100.0 / total))
+        if (pSpeed > 0) {
+            sb.append("  ·  %.1f MB/s".format(pSpeed / (1 shl 20)))
+            val eta = ((total - done) / pSpeed).toLong()
+            if (eta > 0) sb.append("  ·  " + tr("zostalo ", "left ") + (if (eta >= 60) "${eta / 60} min ${eta % 60} s" else "$eta s"))
+        }
+        progressText.text = sb
+        progressText.visibility = android.view.View.VISIBLE
     }
 
     // ---------------- USB ----------------
