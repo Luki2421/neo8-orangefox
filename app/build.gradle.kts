@@ -11,8 +11,8 @@ android {
         applicationId = "pl.luki.frankenflasher"
         minSdk = 26
         targetSdk = 35
-        versionCode = 66
-        versionName = "1.9.9"
+        versionCode = 67
+        versionName = "2.0.0"
     }
     // Staly klucz podpisu - dzieki temu nowe wersje instaluja sie jako aktualizacja
     signingConfigs {
@@ -26,8 +26,10 @@ android {
     }
     buildTypes {
         debug { signingConfig = signingConfigs.getByName("franken") }
+        // Release (nie debuggable): ART kompiluje kod w pelni - dekompresja XZ w Javie wielokrotnie szybsza niz w debug.
         release { isMinifyEnabled = false; signingConfig = signingConfigs.getByName("franken") }
     }
+    lint { checkReleaseBuilds = false; abortOnError = false }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

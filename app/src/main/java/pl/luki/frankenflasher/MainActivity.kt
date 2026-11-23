@@ -83,6 +83,8 @@ class MainActivity : Activity() {
     private lateinit var otaModelEdit: EditText
     private lateinit var otaRegionBtn: TextView
     private lateinit var otaFound: TextView
+    /** Jak ponownie zapytac serwer o pakiet z otaRes (odswiezenie wygaslego linku w trakcie pobierania). */
+    private var otaRequery: (() -> pl.luki.frankenflasher.ota.OplusOta.Result?)? = null
     private lateinit var otaLinkEdit: EditText
     private lateinit var otaLinkFound: TextView
     private var logFile: java.io.File? = null
@@ -775,6 +777,7 @@ class MainActivity : Activity() {
                 setStep(tr("Szukanie OTA...", "Searching OTA..."))
                 val r = pl.luki.frankenflasher.ota.OplusOta(::log).query(input, region, null, taste)
                 otaRes = r
+                otaRequery = { pl.luki.frankenflasher.ota.OplusOta { }.query(input, region, null, taste) }
                 archiveResults(input, listOf(Triple(region, taste, r)))
                 val txt = otaText(r)
                 val best = r.best()
@@ -802,6 +805,12 @@ class MainActivity : Activity() {
             append(tr("Rozmiar: ", "Size: ")).append("%.2f GB".format(best.size / 1073741824.0))
             if (best.md5 != null) append(" · MD5")
         }
+    }
+
+    /** Zapytanie o serie wersji (np. RMX8899_11.C) w regionie - zwraca najnowsza wersje tej serii. */
+    private fun seriesRequery(model: String, otaVersion: String?, region: String, taste: Boolean): (() -> pl.luki.frankenflasher.ota.OplusOta.Result?)? {
+        val series = otaVersion?.let { Regex("""^(.+?_11\.[A-Z])""").find(it)?.groupValues?.get(1) } ?: return null
+        return { pl.luki.frankenflasher.ota.OplusOta { }.query(series, region.substringBefore('/'), null, taste) }
     }
 
     private fun otaArchive(): pl.luki.frankenflasher.ota.OtaArchive {
@@ -833,6 +842,7 @@ class MainActivity : Activity() {
                 searchableSingle(tr("Historia wersji ${model.ifEmpty { "" }} (${list.size})", "Version history ${model.ifEmpty { "" }} (${list.size})"), labels) { i ->
                     val e = list[i]
                     otaRes = e.toResult()
+                    otaRequery = seriesRequery(e.model, e.otaVersion, e.region, e.taste)
                     otaFound.text = otaText(otaRes!!, e.region + if (e.taste) " beta" else "") +
                         tr("\nZ archiwum (znalezione ${df.format(java.util.Date(e.found))})", "\nFrom archive (found ${df.format(java.util.Date(e.found))})")
                     log(tr("Wybrano z archiwum: ${labels[i]} - nacisnij Pobierz (stary adres moze wygasnac - wtedy Szukaj)",
@@ -892,6 +902,7 @@ class MainActivity : Activity() {
                     searchableSingle(tr("Wersje $input (${hits.size}) - wybierz do pobrania", "$input versions (${hits.size}) - pick to download"), labels) { i ->
                         val (reg, taste, r) = hits[i]
                         otaRes = r
+                        otaRequery = seriesRequery(base, r!!.otaVersion, reg, taste)
                         otaFound.text = otaText(r!!, reg + if (taste) " beta" else "")
                         log(tr("Wybrano: ${labels[i]} - nacisnij Pobierz", "Selected: ${labels[i]} - tap Download"))
                     }
@@ -948,6 +959,7 @@ class MainActivity : Activity() {
                 setStep(tr("Wczytywanie linku...", "Loading link..."))
                 val l = pl.luki.frankenflasher.ota.OtaLink.load(text, ::log)
                 otaRes = l.result
+                otaRequery = null
                 val txt = otaText(l.result, "link") + l.warnings.joinToString("") { "\n" + tr("Uwaga: ", "Note: ") + it }
                 runOnUiThread { otaLinkFound.text = txt; otaFound.text = txt }
                 log(tr("Link: ${l.result.versionName} (${l.result.best()!!.size / (1 shl 20)} MB)", "Link: ${l.result.versionName} (${l.result.best()!!.size / (1 shl 20)} MB)"))
@@ -1034,7 +1046,7 @@ class MainActivity : Activity() {
                     setStep(tr("Pobieranie $name...", "Downloading $name..."))
                     log(tr("Pobieranie -> FrankenFlasher/OTA/${out.name} (${pkg.size / (1 shl 20)} MB)", "Downloading -> FrankenFlasher/OTA/${out.name} (${pkg.size / (1 shl 20)} MB)"))
                     val t0 = System.currentTimeMillis()
-                    pl.luki.frankenflasher.ota.OplusOta(::log).download(pkg, out, { dlCancel }, ::setProgress)
+                    pl.luki.frankenflasher.ota.OplusOta(::log).download(pkg, out, { dlCancel }, ::setProgress, otaRequery)
                     val s = (System.currentTimeMillis() - t0) / 1000
                     log(tr("Pobrano w ${s / 60} min ${s % 60} s", "Downloaded in ${s / 60} min ${s % 60} s"))
                 }

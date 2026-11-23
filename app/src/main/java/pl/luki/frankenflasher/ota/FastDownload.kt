@@ -55,11 +55,19 @@ object FastDownload {
      * Pobiera [url] do [part] (dokladnie [size] bajtow). Zwraca false, gdy serwer nie obsluguje Range
      * (nic nie zostalo zmienione - wtedy pobieranie jednym polaczeniem). [cancel] przerywa wyjatkiem
      * InterruptedException; pobrane kawalki zostaja.
+     * [refresh] - nowy adres, gdy podpisany link wygasnie w trakcie (serwery OPlus: ~10 min);
+     * pobieranie trwa dalej bez udzialu uzytkownika (max [MAX_REFRESH] razy).
      */
     fun run(url: String, part: File, size: Long, threads: Int, cancel: () -> Boolean,
-            log: (String) -> Unit, progress: (Long, Long) -> Unit): Boolean {
+            log: (String) -> Unit, progress: (Long, Long) -> Unit, refresh: ((Int) -> String)? = null): Boolean {
         require(size > 0)
-        if (!supportsRange(url)) return false
+        val link = Link(url, refresh, log)
+        val ranged = try { supportsRange(link.url) } catch (e: IOException) {
+            // link wygasl zanim pobieranie ruszylo (np. dlugo po Szukaj) - jedna proba z nowym adresem
+            if (refresh == null || e.message?.let { "link wygasl" in it || "link expired" in it } != true) throw e
+            supportsRange(link.renew(link.url))
+        }
+        if (!ranged) return false
         val n = ((size + CHUNK - 1) / CHUNK).toInt()
         val map = mapFile(part)
         val done = BooleanArray(n)
@@ -97,7 +105,7 @@ object FastDownload {
                                 val k = next.getAndIncrement()
                                 if (k >= pending.size) break
                                 val i = pending[k]
-                                if (fetchChunk(url, ch, i, size, buf, cancel, got, report)) {
+                                if (fetchChunk(link, ch, i, size, buf, cancel, got, report)) {
                                     synchronized(mapOut) { mapOut.write("$i\n".toByteArray()); mapOut.flush() }
                                 }
                             }
@@ -122,22 +130,50 @@ object FastDownload {
         return true
     }
 
+    const val MAX_REFRESH = 30
+
+    /** Wspolny dla watkow adres; odswiezany raz na wygasniecie (pierwszy watek z 403 pobiera nowy). */
+    private class Link(@Volatile var url: String, val refresh: ((Int) -> String)?, val log: (String) -> Unit) {
+        var count = 0
+        var broken: IOException? = null
+        @Synchronized fun renew(failed: String): String {
+            broken?.let { throw it }
+            if (url != failed) return url
+            if (refresh == null || count >= MAX_REFRESH) throw ExpiredException()
+            count++
+            log(tr("Link wygasl - pobieram nowy adres ($count)...", "Link expired - getting a new URL ($count)..."))
+            url = try { refresh.invoke(count) } catch (e: Exception) {
+                throw broken ?: IOException(tr("link wygasl i nie udalo sie go odswiezyc (${e.message}) - Szukaj albo Wczytaj link ponownie, Pobierz wznowi",
+                    "link expired and could not be refreshed (${e.message}) - Search or Load link again, Download resumes"), e).also { broken = it }
+            }
+            return url
+        }
+    }
+
+    private class ExpiredException : IOException(tr("link wygasl, Szukaj albo Wczytaj link ponownie", "link expired, Search or Load link again"))
+
     /** Jeden kawalek; ponawianie od miejsca zerwania (5 prob). false = przerwane przez [cancel]. */
-    private fun fetchChunk(url: String, ch: FileChannel, i: Int, size: Long, buf: ByteArray, cancel: () -> Boolean, got: AtomicLong, report: () -> Unit): Boolean {
+    private fun fetchChunk(link: Link, ch: FileChannel, i: Int, size: Long, buf: ByteArray, cancel: () -> Boolean, got: AtomicLong, report: () -> Unit): Boolean {
         val start = i * CHUNK
         val end = minOf(size, start + CHUNK)
         var pos = start
         var attempt = 0
         while (pos < end) {
             if (cancel()) return false
+            val url = link.url
             val c = URL(url).openConnection() as HttpURLConnection
             c.connectTimeout = 20000; c.readTimeout = 60000
             c.setRequestProperty("Range", "bytes=$pos-${end - 1}")
             c.setRequestProperty("Accept-Encoding", "identity")
             try {
                 val code = c.responseCode
-                if (code != 206) throw IOException(tr("HTTP $code przy kawalku $i", "HTTP $code for chunk $i") +
-                    if (code == 403 || code == 404 || code == 410) tr(" - link wygasl, Szukaj albo Wczytaj link ponownie", " - link expired, Search or Load link again") else "")
+                if (code == 403 || code == 404 || code == 410) {
+                    try { link.renew(url) } catch (e: ExpiredException) {
+                        throw IOException(tr("HTTP $code przy kawalku $i - ", "HTTP $code for chunk $i - ") + e.message)
+                    }
+                    continue
+                }
+                if (code != 206) throw IOException(tr("HTTP $code przy kawalku $i", "HTTP $code for chunk $i"))
                 val cr = c.getHeaderField("Content-Range")
                 if (cr != null && !cr.startsWith("bytes $pos-")) throw IOException("Content-Range: $cr")
                 c.inputStream.use { ins ->

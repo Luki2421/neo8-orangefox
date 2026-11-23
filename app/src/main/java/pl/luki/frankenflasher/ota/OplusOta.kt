@@ -162,7 +162,12 @@ class OplusOta(private val log: (String) -> Unit) {
     }
 
     /** Pobieranie z wznawianiem (plik .part) i sprawdzeniem MD5. [cancel] przerywa (plik .part zostaje). */
-    fun download(pkg: Package, out: File, cancel: () -> Boolean, progress: (Long, Long) -> Unit): File {
+    /**
+     * [requery] - ponowne zapytanie, ktore dalo ten pakiet (Szukaj / archiwum); uzywane, gdy podpisany
+     * link wygasnie w trakcie pobierania: nowy downloadCheck tego samego pakietu (ta sama suma MD5 / rozmiar).
+     * Bez niego (link wklejony) - ponowne rozwiniecie tego samego downloadCheck.
+     */
+    fun download(pkg: Package, out: File, cancel: () -> Boolean, progress: (Long, Long) -> Unit, requery: (() -> Result?)? = null): File {
         out.parentFile?.mkdirs()
         val part = File(out.path + ".part")
         val map = FastDownload.mapFile(part)
@@ -170,7 +175,13 @@ class OplusOta(private val log: (String) -> Unit) {
         // Plik pelnej dlugosci bez mapy kawalkow = pobrany (z mapa: pobieranie wielowatkowe w toku).
         if (!(pkg.size > 0 && have == pkg.size && !map.exists())) {
             val url = resolve(pkg.url)
-            if (pkg.size > 0 && FastDownload.run(url, part, pkg.size, FastDownload.THREADS, cancel, log, progress)) {
+            val refresh = { n: Int ->
+                val fresh = if (requery != null && n % 2 == 1) requery()?.packages?.firstOrNull { p ->
+                    p.size == pkg.size && (pkg.md5 == null || p.md5 == null || p.md5.equals(pkg.md5, ignoreCase = true))
+                } else null
+                resolve((fresh ?: pkg).url)
+            }
+            if (pkg.size > 0 && FastDownload.run(url, part, pkg.size, FastDownload.THREADS, cancel, log, progress, refresh)) {
                 have = pkg.size
             } else {
             if (map.exists()) { map.delete(); part.delete(); have = 0 } // serwer bez Range: od poczatku
