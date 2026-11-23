@@ -77,7 +77,7 @@ class Franken(
         for (n in baseOnly) chosen[n] = baseImgs.getValue(n)
         if (baseOnly.isNotEmpty()) log(tr("Franken: tylko w bazie (zostaja z bazy): ${baseOnly.joinToString()}", "Franken: base only (kept from base): ${baseOnly.joinToString()}"))
 
-        checkAndroidVersions(chosen["system"], chosen["vendor"])
+        checkAndroidVersions(chosen["system"], baseImgs["system"], chosen["vendor"])
 
         // --- my_product (dawca + konfiguracja bazy) ---
         if (opt.patchMyProduct) {
@@ -148,18 +148,30 @@ class Franken(
         } catch (_: Exception) { emptyMap() }
     }
 
-    /** Android systemu (dawca) vs vendor (baza): rozne wersje = duze ryzyko bootloopa. */
-    private fun checkAndroidVersions(system: File?, vendor: File?) {
-        val sp = readProps(system, listOf("system/build.prop", "build.prop"))
+    /**
+     * Porownuje Androida systemu dawcy z systemem BAZY. Vendor bazy moze byc starszy od jej systemu
+     * (zamrozony vendor / GRF, np. ColorOS 17 z vendorem Android 16) - to normalne, bo baza sama tak dziala;
+     * ryzyko jest wtedy, gdy system dawcy rozni sie od systemu, z ktorym ten vendor dziala w bazie.
+     */
+    private fun checkAndroidVersions(donorSystem: File?, baseSystem: File?, vendor: File?) {
+        fun sys(img: File?): Pair<String?, Int?> {
+            val p = readProps(img, listOf("system/build.prop", "build.prop"))
+            return (p["ro.system.build.version.release"] ?: p["ro.build.version.release"]) to (p["ro.system.build.version.sdk"] ?: p["ro.build.version.sdk"])?.toIntOrNull()
+        }
+        val (dRel, dSdk) = sys(donorSystem)
+        val (bRel, bSdk) = sys(baseSystem)
         val vp = readProps(vendor, listOf("build.prop", "etc/build.prop"))
-        val sRel = sp["ro.system.build.version.release"] ?: sp["ro.build.version.release"]
-        val sSdk = (sp["ro.system.build.version.sdk"] ?: sp["ro.build.version.sdk"])?.toIntOrNull()
         val vRel = vp["ro.vendor.build.version.release"]
         val vSdk = vp["ro.vendor.build.version.sdk"]?.toIntOrNull()
-        if (sSdk == null || vSdk == null) { log(tr("Franken: nie udalo sie odczytac wersji Androida (system/vendor) - sprawdz recznie", "Franken: could not read Android versions (system/vendor) - check manually")); return }
-        log(tr("Franken: system Android $sRel (SDK $sSdk), vendor Android $vRel (SDK $vSdk)", "Franken: system Android $sRel (SDK $sSdk), vendor Android $vRel (SDK $vSdk)"))
-        if (sSdk != vSdk) log(tr("Franken: UWAGA - rozne wersje Androida dawcy ($sRel) i bazy ($vRel). Duze ryzyko bootloopa - uzyj bazy i dawcy z tym samym Androidem.",
-            "Franken: WARNING - donor ($sRel) and base ($vRel) Android versions differ. High bootloop risk - use base and donor with the same Android."))
+        if (dSdk == null || (bSdk == null && vSdk == null)) { log(tr("Franken: nie udalo sie odczytac wersji Androida (system/vendor) - sprawdz recznie", "Franken: could not read Android versions (system/vendor) - check manually")); return }
+        log(tr("Franken: system dawcy Android $dRel (SDK $dSdk), system bazy Android ${bRel ?: "?"} (SDK ${bSdk ?: "?"}), vendor bazy Android ${vRel ?: "?"} (SDK ${vSdk ?: "?"})",
+            "Franken: donor system Android $dRel (SDK $dSdk), base system Android ${bRel ?: "?"} (SDK ${bSdk ?: "?"}), base vendor Android ${vRel ?: "?"} (SDK ${vSdk ?: "?"})"))
+        val ref = bSdk ?: vSdk!!
+        val refRel = if (bSdk != null) bRel else vRel
+        if (dSdk != ref) log(tr("Franken: UWAGA - rozne wersje Androida dawcy ($dRel) i bazy ($refRel). Duze ryzyko bootloopa - uzyj bazy i dawcy z tym samym Androidem.",
+            "Franken: WARNING - donor ($dRel) and base ($refRel) Android versions differ. High bootloop risk - use base and donor with the same Android."))
+        else if (vSdk != null && vSdk < dSdk) log(tr("Franken: vendor bazy starszy od systemu (zamrozony vendor/GRF) - tak samo jak w samej bazie, to normalne",
+            "Franken: base vendor older than system (frozen vendor/GRF) - same as in the base itself, this is normal"))
     }
 
     // =====================================================================================
