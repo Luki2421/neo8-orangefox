@@ -262,7 +262,7 @@ class MainActivity : Activity() {
         ui.row(cDl, ui.button(tr("Szukaj we wszystkich regionach", "Search all regions"), G) { searchAllOta() })
         ui.row(cDl, ui.button(tr("Historia wersji (archiwum)", "Version history (archive)"), G) { showOtaArchive() })
         ui.row(cDl, ui.button(tr("Pobierz wybrane partycje (bez calego OTA)", "Download selected partitions (no full OTA)"), B) { remotePartitions() })
-        ui.row(cDl, ui.button(tr("Przerwij pobieranie", "Stop download"), G) { dlCancel = true })
+        ui.row(cDl, ui.button(tr("Przerwij pobieranie", "Stop download"), G) { dlCancel = true }, ui.button(tr("Usun niedokonczone", "Delete unfinished"), D) { deletePartialDownloads() })
         val cLink = ui.card(pDl, tr("Link do OTA (jak w OMT)", "OTA link (like OMT)"))
         otaLinkEdit = ui.input(tr("wklej link do OTA (ZIP albo downloadCheck)", "paste an OTA link (ZIP or downloadCheck)")).apply { setText(prefs.getString("dlLink", "")) }
         cLink.addView(otaLinkEdit, ui.lp(bottom = 8))
@@ -271,6 +271,7 @@ class MainActivity : Activity() {
         cLink.addView(otaLinkFound, ui.lp(bottom = 10))
         ui.row(cLink, ui.button(tr("Wklej", "Paste"), G) { pasteOtaLink() }, ui.button(tr("Wczytaj link", "Load link"), B) { loadOtaLink() })
         ui.row(cLink, ui.button(tr("Pobierz cale OTA", "Download full OTA"), B) { downloadOta() }, ui.button(tr("Wybrane partycje", "Selected partitions"), B) { remotePartitions() })
+        ui.row(cLink, ui.button(tr("Przerwij", "Stop"), G) { dlCancel = true }, ui.button(tr("Usun niedokonczone", "Delete unfinished"), D) { deletePartialDownloads() })
         val cDlNext = ui.card(pDl, tr("Dalej", "Next"))
         cDlNext.addView(ui.body(tr("Pobrany plik trafia do FrankenFlasher/OTA i jest od razu ustawiony w zakladce OTA - tam Rozpakuj jako BAZA albo DAWCA.",
             "The file goes to FrankenFlasher/OTA and is set in the OTA tab right away - there Extract as BASE or DONOR.")), ui.lp())
@@ -883,6 +884,28 @@ class MainActivity : Activity() {
         if (t.isNullOrBlank()) { log(tr("Schowek jest pusty", "Clipboard is empty")); return }
         otaLinkEdit.setText(pl.luki.frankenflasher.ota.OtaLink.extract(t) ?: t.trim())
         loadOtaLink()
+    }
+
+    /** Niedokonczone pobierania (FrankenFlasher/OTA/*.part) - wybor i usuniecie. */
+    private fun deletePartialDownloads() {
+        if (busy) { log(tr("Trwa operacja - najpierw Przerwij pobieranie i poczekaj, az sie zatrzyma", "An operation is running - Stop the download first and wait until it stops")); return }
+        if (!hasAllFiles()) { requestAllFiles(); return }
+        val dir = File(android.os.Environment.getExternalStorageDirectory(), "FrankenFlasher/OTA")
+        val parts = dir.listFiles { f -> f.isFile && f.name.endsWith(".part") }?.sortedByDescending { it.lastModified() }.orEmpty()
+        if (parts.isEmpty()) { log(tr("Brak niedokonczonych pobieran w FrankenFlasher/OTA", "No unfinished downloads in FrankenFlasher/OTA")); return }
+        val labels = parts.map { f ->
+            f.name.removeSuffix(".part") + "  ·  " + (if (f.length() >= (1L shl 30)) "%.2f GB".format(f.length() / 1073741824.0) else "${f.length() / (1 shl 20)} MB")
+        }
+        val checked = BooleanArray(parts.size) { true }
+        searchableMulti(tr("Usun niedokonczone (${parts.size})", "Delete unfinished (${parts.size})"), labels, checked, {
+            val sel = parts.filterIndexed { i, _ -> checked[i] }
+            if (sel.isEmpty()) { log(tr("Nic nie zaznaczono", "Nothing selected")); return@searchableMulti }
+            if (busy) { log(tr("Trwa inna operacja", "Another operation is running")); return@searchableMulti }
+            var freed = 0L; var n = 0
+            for (f in sel) { val len = f.length(); if (f.delete()) { freed += len; n++ } else log(tr("Nie mozna usunac ${f.name}", "Cannot delete ${f.name}")) }
+            log(tr("Usunieto $n niedokonczonych pobieran, zwolniono ${freed / (1 shl 20)} MB", "Deleted $n unfinished downloads, freed ${freed / (1 shl 20)} MB"))
+            setStep(tr("Usunieto niedokonczone pobierania", "Unfinished downloads deleted"))
+        })
     }
 
     /** Link do OTA -> otaRes, wiec dzialaja zwykle Pobierz i Pobierz wybrane partycje. */
