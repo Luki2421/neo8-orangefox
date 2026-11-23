@@ -189,10 +189,11 @@ class OtaExtractor(
                     }
                 }
                 log(tr("Rozpakowywanie: $threads watkow", "Extracting: $threads threads"))
-                PayloadWriter.run(ch, info, targets, threads) { n -> progress(done.addAndGet(n), total) }
+                val stats = PayloadWriter.run(ch, info, targets, threads) { n -> progress(done.addAndGet(n), total) }
                 val secs = ((System.currentTimeMillis() - t0) / 1000.0).coerceAtLeast(0.001)
                 log(tr("Zapis %.1f MB/s, sumy SHA-256 w locie".format(total / secs / (1 shl 20)) + (if (reread.get() > 0) " (z pliku: ${reread.get()})" else ""),
                     "Write %.1f MB/s, SHA-256 on the fly".format(total / secs / (1 shl 20)) + (if (reread.get() > 0) " (from file: ${reread.get()})" else "")))
+                log(tr("Pomiar: ", "Profile: ") + stats.summary())
             } finally {
                 synchronized(opened) { for (f in opened) try { f.close() } catch (_: Exception) {} }
             }

@@ -13,6 +13,7 @@ import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
 /**
@@ -33,6 +34,21 @@ object PayloadWriter {
     /** [onDone] raz, w watku roboczym, po zapisaniu wszystkich operacji: true/false = suma policzona
      *  w locie zgodna/niezgodna, null = nie policzona (brak sumy w OTA albo trzeba policzyc z pliku). */
     class Target(val part: PartUpdate, val out: FileChannel, val onDone: (Boolean?) -> Unit)
+
+    /** Pomiar czasu watkow (nanosekundy, suma po watkach) - co ogranicza predkosc rozpakowywania. */
+    class Stats {
+        val read = AtomicLong(); val unpack = AtomicLong(); val write = AtomicLong(); val hash = AtomicLong(); val close = AtomicLong()
+        val bytesByType = java.util.concurrent.ConcurrentHashMap<String, AtomicLong>()
+        var wallNs = 0L; var threads = 1
+        fun summary(): String {
+            val busy = (read.get() + unpack.get() + write.get() + hash.get() + close.get()).coerceAtLeast(1)
+            fun pct(v: AtomicLong) = "%.0f%%".format(v.get() * 100.0 / busy)
+            val util = busy * 100.0 / (wallNs.coerceAtLeast(1) * threads)
+            val types = bytesByType.entries.sortedByDescending { it.value.get() }.joinToString(", ") { "${it.key} ${it.value.get() shr 20} MB" }
+            return "odczyt ${pct(read)} · rozpakowanie ${pct(unpack)} · zapis ${pct(write)} · suma ${pct(hash)} · zamkniecie ${pct(close)}" +
+                " · watki zajete %.0f%% (%d)".format(util, threads) + " · dane: $types"
+        }
+    }
 
     /** Operacja wieksza od tego jest czytana i zapisywana strumieniowo (bez sumy w locie). */
     private const val MAX_IN_MEMORY = 16L shl 20
@@ -121,7 +137,8 @@ object PayloadWriter {
             if (failed || part.hash == null || next != pieces!!.size) null else md.digest().contentEquals(part.hash)
     }
 
-    fun run(src: FileChannel, info: PayloadInfo, targets: List<Target>, threads: Int, onBytes: (Long) -> Unit) {
+    fun run(src: FileChannel, info: PayloadInfo, targets: List<Target>, threads: Int, onBytes: (Long) -> Unit): Stats {
+        val st = Stats(); st.threads = threads.coerceAtLeast(1); val wall0 = System.nanoTime()
         val bs = info.blockSize.toLong()
         val failed = AtomicReference<Throwable>()
         val pool = Executors.newFixedThreadPool(threads.coerceAtLeast(1))
@@ -132,14 +149,16 @@ object PayloadWriter {
                 val hasher = Hasher(t.part, bs)
                 val finish = Runnable {
                     if (failed.get() != null) return@Runnable
-                    try { t.out.force(false); t.onDone(hasher.result()) } catch (e: Throwable) { failed.compareAndSet(null, e); throw e }
+                    try { val c0 = System.nanoTime(); t.out.force(false); t.onDone(hasher.result()); st.close.addAndGet(System.nanoTime() - c0) } catch (e: Throwable) { failed.compareAndSet(null, e); throw e }
                 }
                 if (t.part.ops.isEmpty()) { futures += pool.submit(finish); continue }
                 for ((i, op) in t.part.ops.withIndex()) futures += pool.submit(Runnable {
                     if (failed.get() != null) return@Runnable
                     try {
-                        val out = writeOp(src, info, op, t.out, bs, onBytes)
+                        val out = writeOp(src, info, op, t.out, bs, onBytes, st)
+                        val h0 = System.nanoTime()
                         if (out === STREAMED) hasher.drop() else hasher.add(i, out)
+                        st.hash.addAndGet(System.nanoTime() - h0)
                     } catch (e: Throwable) {
                         failed.compareAndSet(null, IllegalStateException("${t.part.name}: ${e.message ?: e}", e)); throw e
                     }
@@ -151,6 +170,8 @@ object PayloadWriter {
                 if (failed.get() != null) break
             }
             failed.get()?.let { throw it }
+            st.wallNs = System.nanoTime() - wall0
+            return st
         } finally {
             pool.shutdownNow()
         }
@@ -158,16 +179,23 @@ object PayloadWriter {
 
     private val STREAMED = ByteArray(0)
 
+    private fun typeName(t: Int) = when (t) {
+        OpType.REPLACE -> "REPLACE"; OpType.REPLACE_BZ -> "BZ2"; OpType.REPLACE_XZ -> "XZ"; OpType.ZSTD -> "ZSTD"
+        OpType.ZERO -> "ZERO"; OpType.DISCARD -> "DISCARD"; else -> "typ $t"
+    }
+
     /** Zapisuje operacje; zwraca jej wynik (dla sumy), null dla ZERO/DISCARD, [STREAMED] dla duzych operacji. */
-    private fun writeOp(src: FileChannel, info: PayloadInfo, op: Op, out: FileChannel, bs: Long, onBytes: (Long) -> Unit): ByteArray? {
+    private fun writeOp(src: FileChannel, info: PayloadInfo, op: Op, out: FileChannel, bs: Long, onBytes: (Long) -> Unit, st: Stats): ByteArray? {
         val outLen = op.dst.sumOf { it.num } * bs
+        st.bytesByType.getOrPut(typeName(op.type)) { AtomicLong() }.addAndGet(outLen)
         if (op.type == OpType.ZERO || op.type == OpType.DISCARD) { // dziury w pliku (ftruncate) = zera
             onBytes(outLen); return null
         }
         val at = info.dataStart + op.dataOffset
         // Jeden odczyt calej skompresowanej operacji zamiast wielu malych (wazne przy odczycie przez SAF/FUSE).
+        val r0 = System.nanoTime()
         val raw: InputStream = if (op.dataLength <= MAX_IN_MEMORY)
-            ByteArrayInputStream(PayloadParser.readAt(src, at, op.dataLength.toInt()))
+            ByteArrayInputStream(PayloadParser.readAt(src, at, op.dataLength.toInt())).also { st.read.addAndGet(System.nanoTime() - r0) }
         else RegionInputStream(src, at, op.dataLength).buffered(1 shl 20)
         val ins: InputStream = when (op.type) {
             OpType.REPLACE -> raw
@@ -180,9 +208,11 @@ object PayloadWriter {
         ins.use {
             if (outLen <= MAX_IN_MEMORY) {
                 // Caly wynik w pamieci: zapis + suma w locie.
+                val u0 = System.nanoTime()
                 val data = ByteArray(outLen.toInt())
                 var got = 0
                 while (got < data.size) { val r = ins.read(data, got, data.size - got); if (r < 0) break; got += r }
+                val w0 = System.nanoTime(); st.unpack.addAndGet(w0 - u0)
                 var off = 0L
                 for (e in op.dst) {
                     var pos = e.start * bs
@@ -191,6 +221,7 @@ object PayloadWriter {
                     while (bb.hasRemaining()) pos += out.write(bb, pos)
                     off += len
                 }
+                st.write.addAndGet(System.nanoTime() - w0)
                 onBytes(outLen)
                 return data
             }
@@ -201,10 +232,13 @@ object PayloadWriter {
                 while (left > 0) {
                     val want = minOf(left, buf.size.toLong()).toInt()
                     var got = 0
+                    val u0 = System.nanoTime()
                     while (got < want) { val r = ins.read(buf, got, want - got); if (r < 0) break; got += r }
+                    val w0 = System.nanoTime(); st.unpack.addAndGet(w0 - u0)
                     if (got == 0) break
                     val bb = ByteBuffer.wrap(buf, 0, got)
                     while (bb.hasRemaining()) pos += out.write(bb, pos)
+                    st.write.addAndGet(System.nanoTime() - w0)
                     left -= got
                     onBytes(got.toLong())
                     if (got < want) break
