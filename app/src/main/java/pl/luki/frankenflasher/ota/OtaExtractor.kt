@@ -9,6 +9,7 @@ import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.InputStream
 import java.nio.channels.FileChannel
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
 /** Podzial partycji na foldery jak w FastbootFirmwareFlasher (+ partycje logiczne z metadanych OTA zawsze do SYSTEM). */
@@ -165,6 +166,8 @@ class OtaExtractor(
             val total = parts.sumOf { it.size }
             val done = AtomicLong()
             val bad = ArrayList<String>()
+            val reread = AtomicInteger()
+            val t0 = System.currentTimeMillis()
             val opened = java.util.Collections.synchronizedSet(HashSet<android.os.ParcelFileDescriptor>())
             try {
                 val targets = parts.sortedByDescending { it.size }.map { p ->
@@ -173,10 +176,11 @@ class OtaExtractor(
                     val opfd = gd.create("${p.name}.img")
                     opened += opfd
                     Os.ftruncate(opfd.fileDescriptor, p.size)
-                    PayloadWriter.Target(p, FileOutputStream(opfd.fileDescriptor).channel) {
+                    PayloadWriter.Target(p, FileOutputStream(opfd.fileDescriptor).channel) { inline ->
                         opened -= opfd
                         opfd.close()
-                        val ok = p.hash?.let { h -> sha256(gd.input("${p.name}.img")).contentEquals(h) }
+                        // Suma zwykle policzona w locie; z pliku tylko gdy sie nie dalo.
+                        val ok = p.hash?.let { h -> inline ?: sha256(gd.input("${p.name}.img")).contentEquals(h).also { reread.incrementAndGet() } }
                         when (ok) {
                             true -> log(tr("  $g/${p.name}.img (${p.size / (1 shl 20)} MB) - suma OK", "  $g/${p.name}.img (${p.size / (1 shl 20)} MB) - checksum OK"))
                             false -> { synchronized(bad) { bad += p.name }; log(tr("  $g/${p.name}.img - ZLA SUMA SHA-256!", "  $g/${p.name}.img - BAD SHA-256 CHECKSUM!")) }
@@ -186,6 +190,9 @@ class OtaExtractor(
                 }
                 log(tr("Rozpakowywanie: $threads watkow", "Extracting: $threads threads"))
                 PayloadWriter.run(ch, info, targets, threads) { n -> progress(done.addAndGet(n), total) }
+                val secs = ((System.currentTimeMillis() - t0) / 1000.0).coerceAtLeast(0.001)
+                log(tr("Zapis %.1f MB/s, sumy SHA-256 w locie".format(total / secs / (1 shl 20)) + (if (reread.get() > 0) " (z pliku: ${reread.get()})" else ""),
+                    "Write %.1f MB/s, SHA-256 on the fly".format(total / secs / (1 shl 20)) + (if (reread.get() > 0) " (from file: ${reread.get()})" else "")))
             } finally {
                 synchronized(opened) { for (f in opened) try { f.close() } catch (_: Exception) {} }
             }
