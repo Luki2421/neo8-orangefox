@@ -20,7 +20,9 @@ jobs:
         run: |
           sudo apt-get install -y -qq autoconf automake libtool pkg-config >/dev/null
           bash .github/scripts/build-erofs.sh
-      - name: Build debug APK
+      - name: Natywny dekoder XZ (liblzma, arm64, NDK)
+        run: bash .github/scripts/build-xzjni.sh
+      - name: Build release APK
         run: gradle :app:assembleRelease --stacktrace
       - name: Uprawnienia w APK (privapp)
         run: find app/build/intermediates -name AndroidManifest.xml -path "*merged_manifest*" | head -1 | xargs grep -o 'uses-permission[^/]*' || true

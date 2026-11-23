@@ -39,6 +39,7 @@ object PayloadWriter {
     class Stats {
         val read = AtomicLong(); val unpack = AtomicLong(); val write = AtomicLong(); val hash = AtomicLong(); val close = AtomicLong()
         val bytesByType = java.util.concurrent.ConcurrentHashMap<String, AtomicLong>()
+        val nativeOps = AtomicLong(); val nativeFail = AtomicLong()
         var wallNs = 0L; var threads = 1
         fun summary(): String {
             val busy = (read.get() + unpack.get() + write.get() + hash.get() + close.get()).coerceAtLeast(1)
@@ -46,7 +47,9 @@ object PayloadWriter {
             val util = busy * 100.0 / (wallNs.coerceAtLeast(1) * threads)
             val types = bytesByType.entries.sortedByDescending { it.value.get() }.joinToString(", ") { "${it.key} ${it.value.get() shr 20} MB" }
             return "odczyt ${pct(read)} · rozpakowanie ${pct(unpack)} · zapis ${pct(write)} · suma ${pct(hash)} · zamkniecie ${pct(close)}" +
-                " · watki zajete %.0f%% (%d)".format(util, threads) + " · dane: $types"
+                " · watki zajete %.0f%% (%d)".format(util, threads) + " · dane: $types" +
+                " · XZ: ${if (nativeOps.get() > 0) NativeXz.describe() + " (${nativeOps.get()} op.)" else "Java"}" +
+                (if (nativeFail.get() > 0) " · natywny blad: ${nativeFail.get()} (Java)" else "")
         }
     }
 
@@ -179,6 +182,18 @@ object PayloadWriter {
 
     private val STREAMED = ByteArray(0)
 
+    /** Wynik operacji (w pamieci) na jej miejsca w obrazie - zapis pozycyjny. */
+    private fun writeExtents(op: Op, data: ByteArray, out: FileChannel, bs: Long) {
+        var off = 0L
+        for (e in op.dst) {
+            var pos = e.start * bs
+            val len = e.num * bs
+            val bb = ByteBuffer.wrap(data, off.toInt(), len.toInt())
+            while (bb.hasRemaining()) pos += out.write(bb, pos)
+            off += len
+        }
+    }
+
     private fun typeName(t: Int) = when (t) {
         OpType.REPLACE -> "REPLACE"; OpType.REPLACE_BZ -> "BZ2"; OpType.REPLACE_XZ -> "XZ"; OpType.ZSTD -> "ZSTD"
         OpType.ZERO -> "ZERO"; OpType.DISCARD -> "DISCARD"; else -> "typ $t"
@@ -194,8 +209,24 @@ object PayloadWriter {
         val at = info.dataStart + op.dataOffset
         // Jeden odczyt calej skompresowanej operacji zamiast wielu malych (wazne przy odczycie przez SAF/FUSE).
         val r0 = System.nanoTime()
-        val raw: InputStream = if (op.dataLength <= MAX_IN_MEMORY)
-            ByteArrayInputStream(PayloadParser.readAt(src, at, op.dataLength.toInt())).also { st.read.addAndGet(System.nanoTime() - r0) }
+        val compressed: ByteArray? = if (op.dataLength <= MAX_IN_MEMORY)
+            PayloadParser.readAt(src, at, op.dataLength.toInt()).also { st.read.addAndGet(System.nanoTime() - r0) }
+        else null
+        // XZ natywnie (liblzma): bufor -> bufor; przy bledzie dekoder w Javie ponizej (on tez zglosi uszkodzone dane).
+        if (compressed != null && op.type == OpType.REPLACE_XZ && outLen <= MAX_IN_MEMORY && NativeXz.available) {
+            val u0 = System.nanoTime()
+            val data = ByteArray(outLen.toInt())
+            val n = try { NativeXz.decode(compressed, compressed.size, data) } catch (_: Throwable) { -200 }
+            if (n >= 0) {
+                val w0 = System.nanoTime(); st.unpack.addAndGet(w0 - u0); st.nativeOps.incrementAndGet()
+                writeExtents(op, data, out, bs)
+                st.write.addAndGet(System.nanoTime() - w0)
+                onBytes(outLen)
+                return data
+            }
+            st.nativeFail.incrementAndGet()
+        }
+        val raw: InputStream = if (compressed != null) ByteArrayInputStream(compressed)
         else RegionInputStream(src, at, op.dataLength).buffered(1 shl 20)
         val ins: InputStream = when (op.type) {
             OpType.REPLACE -> raw
@@ -213,14 +244,7 @@ object PayloadWriter {
                 var got = 0
                 while (got < data.size) { val r = ins.read(data, got, data.size - got); if (r < 0) break; got += r }
                 val w0 = System.nanoTime(); st.unpack.addAndGet(w0 - u0)
-                var off = 0L
-                for (e in op.dst) {
-                    var pos = e.start * bs
-                    val len = e.num * bs
-                    val bb = ByteBuffer.wrap(data, off.toInt(), len.toInt())
-                    while (bb.hasRemaining()) pos += out.write(bb, pos)
-                    off += len
-                }
+                writeExtents(op, data, out, bs)
                 st.write.addAndGet(System.nanoTime() - w0)
                 onBytes(outLen)
                 return data
