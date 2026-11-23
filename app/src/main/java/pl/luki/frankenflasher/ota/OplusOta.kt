@@ -165,9 +165,16 @@ class OplusOta(private val log: (String) -> Unit) {
     fun download(pkg: Package, out: File, cancel: () -> Boolean, progress: (Long, Long) -> Unit): File {
         out.parentFile?.mkdirs()
         val part = File(out.path + ".part")
+        val map = FastDownload.mapFile(part)
         var have = if (part.isFile) part.length() else 0L
-        if (!(pkg.size > 0 && have == pkg.size)) {
-            val c = URL(resolve(pkg.url)).openConnection() as HttpURLConnection
+        // Plik pelnej dlugosci bez mapy kawalkow = pobrany (z mapa: pobieranie wielowatkowe w toku).
+        if (!(pkg.size > 0 && have == pkg.size && !map.exists())) {
+            val url = resolve(pkg.url)
+            if (pkg.size > 0 && FastDownload.run(url, part, pkg.size, FastDownload.THREADS, cancel, log, progress)) {
+                have = pkg.size
+            } else {
+            if (map.exists()) { map.delete(); part.delete(); have = 0 } // serwer bez Range: od poczatku
+            val c = URL(url).openConnection() as HttpURLConnection
             c.connectTimeout = 20000; c.readTimeout = 60000
             if (have > 0) c.setRequestProperty("Range", "bytes=$have-")
             val code = c.responseCode
@@ -191,6 +198,7 @@ class OplusOta(private val log: (String) -> Unit) {
                     }
                 }
             } finally { c.disconnect() }
+            }
             if (pkg.size > 0 && part.length() != pkg.size) throw java.io.IOException(tr("Niepelny plik: ${part.length() / (1 shl 20)} z ${pkg.size / (1 shl 20)} MB - nacisnij Pobierz, aby wznowic",
                 "Incomplete: ${part.length() / (1 shl 20)} of ${pkg.size / (1 shl 20)} MB - tap Download to resume"))
         }

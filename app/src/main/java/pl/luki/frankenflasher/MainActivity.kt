@@ -893,8 +893,10 @@ class MainActivity : Activity() {
         val dir = File(android.os.Environment.getExternalStorageDirectory(), "FrankenFlasher/OTA")
         val parts = dir.listFiles { f -> f.isFile && f.name.endsWith(".part") }?.sortedByDescending { it.lastModified() }.orEmpty()
         if (parts.isEmpty()) { log(tr("Brak niedokonczonych pobieran w FrankenFlasher/OTA", "No unfinished downloads in FrankenFlasher/OTA")); return }
+        fun sz(b: Long) = if (b >= (1L shl 30)) "%.2f GB".format(b / 1073741824.0) else "${b / (1 shl 20)} MB"
         val labels = parts.map { f ->
-            f.name.removeSuffix(".part") + "  ·  " + (if (f.length() >= (1L shl 30)) "%.2f GB".format(f.length() / 1073741824.0) else "${f.length() / (1 shl 20)} MB")
+            val got = pl.luki.frankenflasher.ota.FastDownload.downloadedBytes(f)
+            f.name.removeSuffix(".part") + "  ·  " + (if (got != f.length()) tr("pobrano ${sz(got)} z ${sz(f.length())}", "${sz(got)} of ${sz(f.length())}") else sz(got))
         }
         val checked = BooleanArray(parts.size) { true }
         searchableMulti(tr("Usun niedokonczone (${parts.size})", "Delete unfinished (${parts.size})"), labels, checked, {
@@ -902,7 +904,7 @@ class MainActivity : Activity() {
             if (sel.isEmpty()) { log(tr("Nic nie zaznaczono", "Nothing selected")); return@searchableMulti }
             if (busy) { log(tr("Trwa inna operacja", "Another operation is running")); return@searchableMulti }
             var freed = 0L; var n = 0
-            for (f in sel) { val len = f.length(); if (f.delete()) { freed += len; n++ } else log(tr("Nie mozna usunac ${f.name}", "Cannot delete ${f.name}")) }
+            for (f in sel) { val len = pl.luki.frankenflasher.ota.FastDownload.downloadedBytes(f); if (f.delete()) { pl.luki.frankenflasher.ota.FastDownload.mapFile(f).delete(); freed += len; n++ } else log(tr("Nie mozna usunac ${f.name}", "Cannot delete ${f.name}")) }
             log(tr("Usunieto $n niedokonczonych pobieran, zwolniono ${freed / (1 shl 20)} MB", "Deleted $n unfinished downloads, freed ${freed / (1 shl 20)} MB"))
             setStep(tr("Usunieto niedokonczone pobierania", "Unfinished downloads deleted"))
         })
@@ -997,7 +999,7 @@ class MainActivity : Activity() {
         val name = (r.versionName ?: r.otaVersion ?: "ota").replace(Regex("""[\\/:*?"<>|\s]+"""), "_").take(80)
         val out = File(android.os.Environment.getExternalStorageDirectory(), "FrankenFlasher/OTA/$name.zip")
         val free = android.os.Environment.getExternalStorageDirectory().usableSpace
-        if (!out.isFile && free < pkg.size - (File(out.path + ".part").takeIf { it.isFile }?.length() ?: 0L) + (512L shl 20)) {
+        if (!out.isFile && free < pkg.size - pl.luki.frankenflasher.ota.FastDownload.downloadedBytes(File(out.path + ".part"), pkg.size) + (512L shl 20)) {
             log(tr("Za malo miejsca: potrzeba ${pkg.size / (1 shl 30)} GB, wolne ${free / (1 shl 30)} GB", "Not enough space: need ${pkg.size / (1 shl 30)} GB, free ${free / (1 shl 30)} GB")); return
         }
         busy = true; dlCancel = false
