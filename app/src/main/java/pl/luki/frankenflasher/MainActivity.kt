@@ -886,7 +886,7 @@ class MainActivity : Activity() {
         loadOtaLink()
     }
 
-    /** Niedokonczone pobierania (FrankenFlasher/OTA/*.part) - wybor i usuniecie. */
+    /** Niedokonczone pobierania (pliki .part w FrankenFlasher/OTA) - wybor i usuniecie. */
     private fun deletePartialDownloads() {
         if (busy) { log(tr("Trwa operacja - najpierw Przerwij pobieranie i poczekaj, az sie zatrzyma", "An operation is running - Stop the download first and wait until it stops")); return }
         if (!hasAllFiles()) { requestAllFiles(); return }
