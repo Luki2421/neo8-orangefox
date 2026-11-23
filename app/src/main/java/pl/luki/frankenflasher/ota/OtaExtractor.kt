@@ -5,16 +5,10 @@ import android.content.Context
 import android.net.Uri
 import android.provider.DocumentsContract
 import android.system.Os
-import com.github.luben.zstd.ZstdInputStream
-import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream
-import org.tukaani.xz.XZInputStream
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.InputStream
-import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
-import java.util.concurrent.Executors
-import java.util.concurrent.Future
 import java.util.concurrent.atomic.AtomicLong
 
 /** Podzial partycji na foldery jak w FastbootFirmwareFlasher (+ partycje logiczne z metadanych OTA zawsze do SYSTEM). */
@@ -119,7 +113,7 @@ class OtaExtractor(
         override fun write(name: String, b: ByteArray) = java.io.File(dir, name).writeBytes(b)
     }
 
-    fun extract(input: Uri, inputName: String, outTree: Uri, threads: Int = 3): Result {
+    fun extract(input: Uri, inputName: String, outTree: Uri, threads: Int = PayloadWriter.defaultThreads()): Result {
         val rootDoc = DocumentsContract.buildDocumentUriUsingTree(outTree, DocumentsContract.getTreeDocumentId(outTree))
         val outName = inputName.substringBeforeLast('.').ifEmpty { "firmware" }
         val outDir = SafOut(rootDoc).sub(outName)
@@ -128,7 +122,7 @@ class OtaExtractor(
     }
 
     /** Rozpakowanie do zwyklego katalogu [dir] (tworzonego, jesli nie istnieje). */
-    fun extractToDir(input: Uri, inputName: String, dir: java.io.File, threads: Int = 3) {
+    fun extractToDir(input: Uri, inputName: String, dir: java.io.File, threads: Int = PayloadWriter.defaultThreads()) {
         extractTo(input, inputName, FileOut(dir), dir.name, threads)
     }
 
@@ -171,25 +165,29 @@ class OtaExtractor(
             val total = parts.sumOf { it.size }
             val done = AtomicLong()
             val bad = ArrayList<String>()
-            val pool = Executors.newFixedThreadPool(threads)
+            val opened = java.util.Collections.synchronizedSet(HashSet<android.os.ParcelFileDescriptor>())
             try {
-                val futures = ArrayList<Future<*>>()
-                for (p in parts.sortedByDescending { it.size }) {
-                    futures += pool.submit(Runnable {
-                        val g = Classifier.folder(p.name, info.dynamic)
-                        val gd = groupDirs[g]!!
-                        gd.create("${p.name}.img").use { opfd -> writePartition(ch, info, p, opfd) { n -> progress(done.addAndGet(n), total) } }
+                val targets = parts.sortedByDescending { it.size }.map { p ->
+                    val g = Classifier.folder(p.name, info.dynamic)
+                    val gd = groupDirs[g]!!
+                    val opfd = gd.create("${p.name}.img")
+                    opened += opfd
+                    Os.ftruncate(opfd.fileDescriptor, p.size)
+                    PayloadWriter.Target(p, FileOutputStream(opfd.fileDescriptor).channel) {
+                        opened -= opfd
+                        opfd.close()
                         val ok = p.hash?.let { h -> sha256(gd.input("${p.name}.img")).contentEquals(h) }
                         when (ok) {
                             true -> log(tr("  $g/${p.name}.img (${p.size / (1 shl 20)} MB) - suma OK", "  $g/${p.name}.img (${p.size / (1 shl 20)} MB) - checksum OK"))
                             false -> { synchronized(bad) { bad += p.name }; log(tr("  $g/${p.name}.img - ZLA SUMA SHA-256!", "  $g/${p.name}.img - BAD SHA-256 CHECKSUM!")) }
                             null -> log(tr("  $g/${p.name}.img (${p.size / (1 shl 20)} MB) - brak sumy w OTA", "  $g/${p.name}.img (${p.size / (1 shl 20)} MB) - no checksum in OTA"))
                         }
-                    })
+                    }
                 }
-                for (f in futures) try { f.get() } catch (e: java.util.concurrent.ExecutionException) { throw (e.cause ?: e) }
+                log(tr("Rozpakowywanie: $threads watkow", "Extracting: $threads threads"))
+                PayloadWriter.run(ch, info, targets, threads) { n -> progress(done.addAndGet(n), total) }
             } finally {
-                pool.shutdownNow()
+                synchronized(opened) { for (f in opened) try { f.close() } catch (_: Exception) {} }
             }
             if (bad.isNotEmpty()) throw IllegalStateException(tr("Bledne sumy: ${bad.joinToString()} - NIE flashuj, rozpakuj ponownie", "Bad checksums: ${bad.joinToString()} - DO NOT flash, extract again"))
             if (only == null && superDef != null) try { outDir.write("super_def.json", superDef.second) } catch (_: Exception) {}
@@ -233,44 +231,5 @@ class OtaExtractor(
         val looksHash = Regex("^[0-9a-fA-F]{24,}$").matches(fallback)
         val name = if (!looksHash || v == null) fallback else v
         return name.replace(Regex("""[\\/:*?"<>|\s]+"""), "_").take(80)
-    }
-
-    private fun writePartition(src: FileChannel, info: PayloadInfo, p: PartUpdate, opfd: android.os.ParcelFileDescriptor, onBytes: (Long) -> Unit) {
-        val bs = info.blockSize.toLong()
-        run {
-            Os.ftruncate(opfd.fileDescriptor, p.size)
-            val out = FileOutputStream(opfd.fileDescriptor).channel
-            val buf = ByteArray(1 shl 20)
-            for (op in p.ops) {
-                val opBytes = op.dst.sumOf { it.num } * bs
-                if (op.type == OpType.ZERO || op.type == OpType.DISCARD) { onBytes(opBytes); continue } // dziury w pliku = zera
-                val raw: InputStream = RegionInputStream(src, info.dataStart + op.dataOffset, op.dataLength)
-                val ins: InputStream = when (op.type) {
-                    OpType.REPLACE -> raw
-                    OpType.REPLACE_XZ -> XZInputStream(raw.buffered(1 shl 16))
-                    OpType.REPLACE_BZ -> BZip2CompressorInputStream(raw.buffered(1 shl 16))
-                    OpType.ZSTD -> ZstdInputStream(raw.buffered(1 shl 16))
-                    else -> throw IllegalStateException("op ${op.type}")
-                }
-                ins.use {
-                    for (e in op.dst) {
-                        var pos = e.start * bs
-                        var left = e.num * bs
-                        while (left > 0) {
-                            val want = minOf(left, buf.size.toLong()).toInt()
-                            var got = 0
-                            while (got < want) { val r = ins.read(buf, got, want - got); if (r < 0) break; got += r }
-                            if (got == 0) break
-                            val bb = ByteBuffer.wrap(buf, 0, got)
-                            while (bb.hasRemaining()) pos += out.write(bb, pos)
-                            left -= got
-                            onBytes(got.toLong())
-                            if (got < want) break
-                        }
-                    }
-                }
-            }
-            out.force(false)
-        }
     }
 }
