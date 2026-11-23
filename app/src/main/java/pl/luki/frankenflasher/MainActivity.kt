@@ -81,6 +81,8 @@ class MainActivity : Activity() {
     private lateinit var otaModelEdit: EditText
     private lateinit var otaRegionBtn: TextView
     private lateinit var otaFound: TextView
+    private lateinit var otaLinkEdit: EditText
+    private lateinit var otaLinkFound: TextView
     private var logFile: java.io.File? = null
     private val logLock = Any()
 
@@ -261,6 +263,14 @@ class MainActivity : Activity() {
         ui.row(cDl, ui.button(tr("Historia wersji (archiwum)", "Version history (archive)"), G) { showOtaArchive() })
         ui.row(cDl, ui.button(tr("Pobierz wybrane partycje (bez calego OTA)", "Download selected partitions (no full OTA)"), B) { remotePartitions() })
         ui.row(cDl, ui.button(tr("Przerwij pobieranie", "Stop download"), G) { dlCancel = true })
+        val cLink = ui.card(pDl, tr("Link do OTA (jak w OMT)", "OTA link (like OMT)"))
+        otaLinkEdit = ui.input(tr("wklej link do OTA (ZIP albo downloadCheck)", "paste an OTA link (ZIP or downloadCheck)")).apply { setText(prefs.getString("dlLink", "")) }
+        cLink.addView(otaLinkEdit, ui.lp(bottom = 8))
+        otaLinkFound = ui.body(tr("Wklej link i Wczytaj - wersja i rozmiar sa czytane z serwera bez pobierania calosci. Potem Pobierz albo Wybrane partycje.",
+            "Paste a link and Load - version and size are read from the server without downloading it all. Then Download or Selected partitions."))
+        cLink.addView(otaLinkFound, ui.lp(bottom = 10))
+        ui.row(cLink, ui.button(tr("Wklej", "Paste"), G) { pasteOtaLink() }, ui.button(tr("Wczytaj link", "Load link"), B) { loadOtaLink() })
+        ui.row(cLink, ui.button(tr("Pobierz cale OTA", "Download full OTA"), B) { downloadOta() }, ui.button(tr("Wybrane partycje", "Selected partitions"), B) { remotePartitions() })
         val cDlNext = ui.card(pDl, tr("Dalej", "Next"))
         cDlNext.addView(ui.body(tr("Pobrany plik trafia do FrankenFlasher/OTA i jest od razu ustawiony w zakladce OTA - tam Rozpakuj jako BAZA albo DAWCA.",
             "The file goes to FrankenFlasher/OTA and is set in the OTA tab right away - there Extract as BASE or DONOR.")), ui.lp())
@@ -867,11 +877,45 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun pasteOtaLink() {
+        val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        val t = cm.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(this)?.toString()
+        if (t.isNullOrBlank()) { log(tr("Schowek jest pusty", "Clipboard is empty")); return }
+        otaLinkEdit.setText(pl.luki.frankenflasher.ota.OtaLink.extract(t) ?: t.trim())
+        loadOtaLink()
+    }
+
+    /** Link do OTA -> otaRes, wiec dzialaja zwykle Pobierz i Pobierz wybrane partycje. */
+    private fun loadOtaLink() {
+        if (busy) { log(tr("Trwa inna operacja - poczekaj az sie skonczy", "Another operation is running - wait until it finishes")); return }
+        val text = otaLinkEdit.text.toString()
+        if (pl.luki.frankenflasher.ota.OtaLink.extract(text) == null) { log(tr("Wklej link http(s) do OTA", "Paste an http(s) OTA link")); return }
+        prefs.edit().putString("dlLink", text.trim()).apply()
+        otaLinkEdit.clearFocus()
+        (getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).hideSoftInputFromWindow(otaLinkEdit.windowToken, 0)
+        busy = true
+        exec.execute {
+            try {
+                setStep(tr("Wczytywanie linku...", "Loading link..."))
+                val l = pl.luki.frankenflasher.ota.OtaLink.load(text, ::log)
+                otaRes = l.result
+                val txt = otaText(l.result, "link") + l.warnings.joinToString("") { "\n" + tr("Uwaga: ", "Note: ") + it }
+                runOnUiThread { otaLinkFound.text = txt; otaFound.text = txt }
+                log(tr("Link: ${l.result.versionName} (${l.result.best()!!.size / (1 shl 20)} MB)", "Link: ${l.result.versionName} (${l.result.best()!!.size / (1 shl 20)} MB)"))
+                l.warnings.forEach { log(tr("Uwaga: ", "Note: ") + it) }
+                setStep(tr("Link wczytany - Pobierz cale OTA albo Wybrane partycje", "Link loaded - Download full OTA or Selected partitions"))
+            } catch (e: Exception) {
+                log(tr("BLAD linku: ${e.message ?: e}", "Link ERROR: ${e.message ?: e}")); setStep(tr("BLAD linku", "Link ERROR"))
+                runOnUiThread { otaLinkFound.text = tr("Blad: ", "Error: ") + (e.message ?: e.toString()) }
+            } finally { busy = false }
+        }
+    }
+
     /** Wybrane partycje prosto z serwera (HTTP Range na payload.bin w ZIP) - bez pobierania calego OTA. */
     private fun remotePartitions() {
         if (busy) { log(tr("Trwa inna operacja - poczekaj az sie skonczy", "Another operation is running - wait until it finishes")); return }
         val r = otaRes; val pkg = r?.best()
-        if (pkg == null) { log(tr("Najpierw Szukaj albo wybierz wersje z historii", "Search first or pick a version from history")); return }
+        if (pkg == null) { log(tr("Najpierw Szukaj, wybierz wersje z historii albo Wczytaj link", "Search, pick a version from history or Load link first")); return }
         if (!hasAllFiles()) { requestAllFiles(); return }
         busy = true
         exec.execute {
@@ -925,7 +969,7 @@ class MainActivity : Activity() {
     private fun downloadOta() {
         if (busy) { log(tr("Trwa inna operacja - poczekaj az sie skonczy", "Another operation is running - wait until it finishes")); return }
         val r = otaRes; val pkg = r?.best()
-        if (pkg == null) { log(tr("Najpierw Szukaj", "Search first")); return }
+        if (pkg == null) { log(tr("Najpierw Szukaj albo Wczytaj link", "Search or Load link first")); return }
         if (!hasAllFiles()) { requestAllFiles(); return }
         val name = (r.versionName ?: r.otaVersion ?: "ota").replace(Regex("""[\\/:*?"<>|\s]+"""), "_").take(80)
         val out = File(android.os.Environment.getExternalStorageDirectory(), "FrankenFlasher/OTA/$name.zip")
