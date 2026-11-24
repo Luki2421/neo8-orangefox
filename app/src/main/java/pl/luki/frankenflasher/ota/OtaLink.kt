@@ -7,6 +7,8 @@ import java.net.URL
 
 /**
  * OTA z wklejonego linku (jak w OMT): bezposredni link do ZIP albo link downloadCheck z serwerow OPlus.
+ * W pakiecie zostaje oryginalny link (downloadCheck): podpisany adres pliku wygasa po ~10 min,
+ * a downloadCheck daje nowy - Pobierz rozwija go od nowa i odswieza w trakcie pobierania.
  * Wersja, Android i data sa czytane z META-INF/com/android/metadata zapytaniami Range (kilkadziesiat KB),
  * bez pobierania calosci. Wynik ma postac [OplusOta.Result], wiec dzialaja zwykle Pobierz
  * i Pobierz wybrane partycje.
@@ -67,7 +69,7 @@ object OtaLink {
         val published = props["post-timestamp"]?.toLongOrNull()?.let { it * 1000 }
         val name = (version ?: "ota_link").replace(Regex("""[\\/:*?"<>|\s]+"""), "_").take(80)
         val r = OplusOta.Result(0, null, version ?: name, props["ota_target_version"], android, props["os_version"] ?: props["display_os_version"],
-            props["post-security-patch-level"], published, null, listOf(OplusOta.Package("$name.zip", url, size, null)))
+            props["post-security-patch-level"], published, null, listOf(OplusOta.Package("$name.zip", link, size, null)))
         return Loaded(r, ranged, warnings)
     }
 }

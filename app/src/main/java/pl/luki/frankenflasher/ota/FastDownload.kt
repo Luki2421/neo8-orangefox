@@ -142,7 +142,7 @@ object FastDownload {
             if (refresh == null || count >= MAX_REFRESH) throw ExpiredException()
             count++
             log(tr("Link wygasl - pobieram nowy adres ($count)...", "Link expired - getting a new URL ($count)..."))
-            url = try { refresh.invoke(count) } catch (e: Exception) {
+            url = try { refresh.invoke(count).also { if (it == failed) throw IOException(tr("serwer zwrocil ten sam wygasly adres", "server returned the same expired URL")) } } catch (e: Exception) {
                 throw broken ?: IOException(tr("link wygasl i nie udalo sie go odswiezyc (${e.message}) - Szukaj albo Wczytaj link ponownie, Pobierz wznowi",
                     "link expired and could not be refreshed (${e.message}) - Search or Load link again, Download resumes"), e).also { broken = it }
             }
