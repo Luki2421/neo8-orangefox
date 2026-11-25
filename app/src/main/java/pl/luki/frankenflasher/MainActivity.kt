@@ -1483,13 +1483,17 @@ class MainActivity : Activity() {
                 val labels = apps.mapIndexed { i, a ->
                     val e = lvl[i]
                     val desc = e?.description?.lineSequence()?.firstOrNull { it.isNotBlank() }?.let { if (it.length > 110) it.take(107) + "..." else it }
-                    "${a.name}  ·  [${pl.luki.frankenflasher.franken.UadList.short(e?.removal)}]  ·  ${"%.1f".format(a.size / 1048576.0)} MB\n" +
+                    val trk = if (a.pkg?.let { it in pl.luki.frankenflasher.franken.UadList.TRACKING } == true) tr("  ·  logi/sledzenie", "  ·  logs/tracking") else ""
+                    "${a.name}  ·  [${pl.luki.frankenflasher.franken.UadList.short(e?.removal)}]$trk  ·  ${"%.1f".format(a.size / 1048576.0)} MB\n" +
                         "${a.pkg ?: "?"}  ·  ${a.image}/${a.path.substringBeforeLast('/')}" + (desc?.let { "\n$it" } ?: "")
                 }
                 val checked = apps.map { it.key in sel }.toBooleanArray()
                 val recommended = apps.indices.filter { lvl[it]?.removal == "Recommended" }
-                val actions = if (uad.isEmpty()) emptyList() else listOf(
-                    tr("Zaznacz zalecane (${recommended.size})", "Check recommended (${recommended.size})") to { recommended.forEach { checked[it] = true } },
+                // pakiet logi/sledzenie dziala tez bez listy UAD (nazwy pakietow sa wbudowane)
+                val tracking = apps.indices.filter { i -> apps[i].pkg?.let { it in pl.luki.frankenflasher.franken.UadList.TRACKING } == true }
+                val actions = listOfNotNull(
+                    if (uad.isEmpty()) null else tr("Zalecane (${recommended.size})", "Recommended (${recommended.size})") to { recommended.forEach { checked[it] = true } },
+                    tr("Logi i sledzenie (${tracking.size})", "Logs & tracking (${tracking.size})") to { tracking.forEach { checked[it] = true } },
                     tr("Odznacz wszystko", "Uncheck all") to { checked.fill(false) })
                 searchableMulti(tr("Zaznacz aplikacje do USUNIECIA (${apps.size})", "Check apps to REMOVE (${apps.size})"), labels, checked, {
                         apps.forEachIndexed { i, a -> if (checked[i]) sel += a.key else sel -= a.key }
