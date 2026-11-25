@@ -10,9 +10,11 @@ import java.io.IOException
  */
 class Debloat(private val log: (String) -> Unit, private val check: ((File) -> Int)? = null) {
 
-    class App(val image: String, val path: String, val size: Long) {
+    class App(val image: String, val path: String, val size: Long, val apk: String? = null) {
         val key get() = "$image:$path"
         val name get() = path.substringAfterLast('/')
+        /** Nazwa pakietu z AndroidManifest.xml (null gdy nie odczytano). */
+        @Volatile var pkg: String? = null
     }
 
     companion object {
@@ -20,7 +22,10 @@ class Debloat(private val log: (String) -> Unit, private val check: ((File) -> I
         val ROOTS = listOf("app", "priv-app", "del-app", "del-app-pre", "reserve", "system/app", "system/priv-app")
     }
 
-    fun scan(images: Map<String, File>): List<App> {
+    /**
+     * [pkgOf] (obraz, sciezka APK) -> nazwa pakietu; czytane rownolegle (4 procesy dump.erofs naraz).
+     */
+    fun scan(images: Map<String, File>, pkgOf: ((File, String) -> String?)? = null): List<App> {
         val out = ArrayList<App>()
         for ((img, f) in images.toSortedMap()) {
             try {
@@ -29,11 +34,23 @@ class Debloat(private val log: (String) -> Unit, private val check: ((File) -> I
                         val l = p.list(root) ?: continue
                         for (d in l.filter { it.type == 2 }) {
                             val path = "$root/${d.name}"
-                            out += App(img, path, dirSize(p, path, 3))
+                            val apks = p.list(path).orEmpty().filter { it.type == 1 && it.name.endsWith(".apk") }.map { it.name }
+                            val apk = (apks.firstOrNull { it == "${d.name}.apk" } ?: apks.firstOrNull())?.let { "$path/$it" }
+                            out += App(img, path, dirSize(p, path, 3), apk)
                         }
                     }
                 }
             } catch (e: Exception) { log(tr("debloat: pomijam $img (${e.message})", "debloat: skipping $img (${e.message})")) }
+        }
+        if (pkgOf != null) {
+            val pool = java.util.concurrent.Executors.newFixedThreadPool(4)
+            try {
+                out.filter { it.apk != null }.map { a ->
+                    pool.submit { a.pkg = try { pkgOf(images.getValue(a.image), a.apk!!) } catch (_: Exception) { null } }
+                }.forEach { it.get() }
+            } finally { pool.shutdownNow() }
+            log(tr("debloat: nazwy pakietow odczytane dla ${out.count { it.pkg != null }} z ${out.size} aplikacji",
+                "debloat: package names read for ${out.count { it.pkg != null }} of ${out.size} apps"))
         }
         return out.sortedBy { it.name.lowercase() }
     }

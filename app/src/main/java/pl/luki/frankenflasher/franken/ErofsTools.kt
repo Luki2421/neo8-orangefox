@@ -39,6 +39,13 @@ class ErofsTools(val mkfs: File, val fsck: File, val dump: File, private val log
         return out
     }
 
+    /** Nazwa pakietu APK z obrazu: strumien dump.erofs --cat czytany tylko do AndroidManifest.xml. */
+    fun apkPackage(img: File, path: String): String? {
+        val p = ProcessBuilder(dump.path, "--cat", "--path=/" + path.trimStart('/'), img.path)
+            .redirectError(File("/dev/null")).start()
+        return try { ApkPackage.fromApkStream(p.inputStream.buffered(1 shl 16)) } finally { p.destroy(); try { p.waitFor() } catch (_: Exception) {} }
+    }
+
     /** fsck obrazu: 0 = OK. */
     fun check(img: File): Int = run(fsck.path, img.path)
 }

@@ -1369,7 +1369,7 @@ class MainActivity : Activity() {
 
     /** Lista wielokrotnego wyboru z polem wyszukiwania; [checked] zmieniane na miejscu. */
     private fun searchableMulti(title: String, labels: List<String>, checked: BooleanArray, onOk: () -> Unit,
-                                neutral: Pair<String, () -> Unit>? = null) {
+                                neutral: Pair<String, () -> Unit>? = null, actions: List<Pair<String, () -> Unit>> = emptyList()) {
         val box = searchBox()
         val list = android.widget.ListView(this).apply { choiceMode = android.widget.ListView.CHOICE_MODE_MULTIPLE }
         var shown = labels.indices.toList()
@@ -1392,7 +1392,15 @@ class MainActivity : Activity() {
         refresh()
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; setPadding(dpx(16), dpx(8), dpx(16), 0)
-            addView(box); addView(count)
+            addView(box)
+            if (actions.isNotEmpty()) addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                for ((t, f) in actions) addView(android.widget.Button(this@MainActivity).apply {
+                    text = t; isAllCaps = false; textSize = 13f
+                    setOnClickListener { f(); refresh() }
+                }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            })
+            addView(count)
             addView(list, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (resources.displayMetrics.heightPixels * 0.55).toInt()))
         }
         val b = AlertDialog.Builder(this).setTitle(title).setView(root)
@@ -1456,17 +1464,36 @@ class MainActivity : Activity() {
     private fun chooseDebloat(images: Map<String, File>) {
         if (!hasAllFiles()) { requestAllFiles(); return }
         exec.execute {
-            setStep(tr("Szukanie aplikacji w obrazach...", "Scanning images for apps..."))
-            val apps = debloatTool().scan(images)
+            setStep(tr("Szukanie aplikacji w obrazach i odczyt nazw pakietow...", "Scanning images for apps and reading package names..."))
+            val tools = pl.luki.frankenflasher.franken.erofsTools(this, ::log)
+            val apps = debloatTool().scan(images) { img, apk -> tools.apkPackage(img, apk) }
+            if (apps.isEmpty()) { setStep(tr("Gotowe", "Done")); log(tr("debloat: nie znaleziono aplikacji", "debloat: no apps found")); return@execute }
+            setStep(tr("Lista UAD-ng...", "UAD-ng list..."))
+            val uad = pl.luki.frankenflasher.franken.UadList(File(android.os.Environment.getExternalStorageDirectory(), "FrankenFlasher/uad_lists.json"), ::log).load()
             setStep(tr("Gotowe", "Done"))
-            if (apps.isEmpty()) { log(tr("debloat: nie znaleziono aplikacji", "debloat: no apps found")); return@execute }
+            val lvl = apps.map { a -> a.pkg?.let { uad[it] } }
+            if (uad.isNotEmpty()) log(tr("UAD-ng: ", "UAD-ng: ") + pl.luki.frankenflasher.franken.UadList.LEVELS.joinToString(" · ") { l ->
+                "${pl.luki.frankenflasher.franken.UadList.short(l)} ${lvl.count { it?.removal == l }}" } + tr(" · brak w UAD ${lvl.count { it == null }}", " · not in UAD ${lvl.count { it == null }}"))
             val sel = debloatSet().toMutableSet()
             runOnUiThread {
-                val labels = apps.map { "${it.name}  ·  ${it.image}/${it.path.substringBeforeLast('/')}  ·  ${"%.1f".format(it.size / 1048576.0)} MB" }.toTypedArray()
+                val labels = apps.mapIndexed { i, a ->
+                    val e = lvl[i]
+                    val desc = e?.description?.lineSequence()?.firstOrNull { it.isNotBlank() }?.let { if (it.length > 110) it.take(107) + "..." else it }
+                    "${a.name}  ·  [${pl.luki.frankenflasher.franken.UadList.short(e?.removal)}]  ·  ${"%.1f".format(a.size / 1048576.0)} MB\n" +
+                        "${a.pkg ?: "?"}  ·  ${a.image}/${a.path.substringBeforeLast('/')}" + (desc?.let { "\n$it" } ?: "")
+                }
                 val checked = apps.map { it.key in sel }.toBooleanArray()
-                searchableMulti(tr("Zaznacz aplikacje do USUNIECIA (${apps.size})", "Check apps to REMOVE (${apps.size})"), labels.toList(), checked, {
+                val recommended = apps.indices.filter { lvl[it]?.removal == "Recommended" }
+                val actions = if (uad.isEmpty()) emptyList() else listOf(
+                    tr("Zaznacz zalecane (${recommended.size})", "Check recommended (${recommended.size})") to { recommended.forEach { checked[it] = true } },
+                    tr("Odznacz wszystko", "Uncheck all") to { checked.fill(false) })
+                searchableMulti(tr("Zaznacz aplikacje do USUNIECIA (${apps.size})", "Check apps to REMOVE (${apps.size})"), labels, checked, {
                         apps.forEachIndexed { i, a -> if (checked[i]) sel += a.key else sel -= a.key }
                         prefs.edit().putString("debloat", sel.joinToString("\n")).apply()
+                        val risky = apps.indices.filter { checked[it] && lvl[it]?.removal.let { r -> r == "Expert" || r == "Unsafe" } }
+                        if (risky.isNotEmpty()) log(tr("UWAGA UAD-ng: zaznaczone Ekspert/NIEBEZPIECZNE: ", "WARNING UAD-ng: checked Expert/UNSAFE: ") +
+                            risky.joinToString { "${apps[it].name} (${pl.luki.frankenflasher.franken.UadList.short(lvl[it]?.removal)})" } +
+                            tr(" - mozliwy bootloop albo niedzialajace funkcje", " - possible bootloop or broken features"))
                         log(tr("debloat: do usuniecia ${apps.count { it.key in sel }}: ", "debloat: to remove ${apps.count { it.key in sel }}: ") + apps.filter { it.key in sel }.joinToString { it.name } +
                             tr("\nUWAGA: nie usuwaj uslug systemowych (np. GmsCore, Phonesky, SystemUI, Launcher) - system moze sie nie uruchomic.",
                                 "\nWARNING: do not remove system services (e.g. GmsCore, Phonesky, SystemUI, Launcher) - the system may not boot."))
@@ -1474,7 +1501,7 @@ class MainActivity : Activity() {
                         apps.forEach { sel -= it.key }
                         prefs.edit().putString("debloat", sel.joinToString("\n")).apply()
                         log(tr("debloat: wybor wyczyszczony", "debloat: selection cleared"))
-                    })
+                    }, actions)
             }
         }
     }
