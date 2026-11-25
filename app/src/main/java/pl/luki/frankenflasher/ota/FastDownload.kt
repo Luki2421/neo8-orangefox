@@ -22,6 +22,18 @@ import java.util.concurrent.atomic.AtomicReference
 object FastDownload {
     const val CHUNK = 16L shl 20
     const val THREADS = 8
+    /** Serwery w Chinach: duze opoznienie i gubione pakiety z Europy - jedno polaczenie ~0.45 MB/s, wiec wiecej polaczen. */
+    const val THREADS_CN = 16
+
+    private val CN_HOST = Regex("""(^|[.-])cn([.-]|$)""")
+
+    fun isChinaHost(url: String): Boolean = try {
+        val h = java.net.URL(url).host.lowercase()
+        h.endsWith("allawntech.com") || CN_HOST.containsMatchIn(h)
+    } catch (_: Exception) { false }
+
+    /** Liczba polaczen dla pakietu: 16 dla serwerow CN, 8 dla pozostalych. */
+    fun threadsFor(vararg urls: String): Int = if (urls.any { isChinaHost(it) }) THREADS_CN else THREADS
 
     fun mapFile(part: File) = File(part.path + ".map")
 
@@ -87,8 +99,9 @@ object FastDownload {
         val startBytes = got.get()
         if (pending.isEmpty()) { map.delete(); return true }
         val workers = minOf(threads, pending.size).coerceAtLeast(1)
-        log(tr("Pobieranie: $workers polaczen, ${pending.size} z $n kawalkow po ${CHUNK shr 20} MB",
-            "Downloading: $workers connections, ${pending.size} of $n chunks of ${CHUNK shr 20} MB"))
+        val cn = if (threads >= THREADS_CN) tr(" (serwer w Chinach)", " (server in China)") else ""
+        log(tr("Pobieranie: $workers polaczen$cn, ${pending.size} z $n kawalkow po ${CHUNK shr 20} MB",
+            "Downloading: $workers connections$cn, ${pending.size} of $n chunks of ${CHUNK shr 20} MB"))
         progress(startBytes, size)
         val next = AtomicInteger(0)
         val failed = AtomicReference<Throwable>()

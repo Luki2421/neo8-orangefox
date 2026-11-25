@@ -181,7 +181,7 @@ class OplusOta(private val log: (String) -> Unit) {
                 } else null
                 resolve((fresh ?: pkg).url)
             }
-            if (pkg.size > 0 && FastDownload.run(url, part, pkg.size, FastDownload.THREADS, cancel, log, progress, refresh)) {
+            if (pkg.size > 0 && FastDownload.run(url, part, pkg.size, FastDownload.threadsFor(pkg.url, url), cancel, log, progress, refresh)) {
                 have = pkg.size
             } else {
             if (map.exists()) { map.delete(); part.delete(); have = 0 } // serwer bez Range: od poczatku
