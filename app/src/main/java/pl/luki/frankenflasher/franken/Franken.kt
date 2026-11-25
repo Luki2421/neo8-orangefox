@@ -393,7 +393,10 @@ class Franken(
             val base = "priv-app/FrankenFlasher"
             ensureDir("$base/lib/arm64")
             p.putFile("$base/FrankenFlasher.apk", apk.readBytes(), apkTpl)
-            for ((n, b) in libs) p.putFile("$base/lib/arm64/$n", b, apkTpl)
+            // Narzedzia erofs (libmkfs_erofs.so itd.) sa uruchamiane jako programy - musza miec prawo wykonania (0755),
+            // inaczej wbudowana aplikacja dostaje "error=13, Permission denied".
+            val libTpl = ErofsPatcher.NewFile(0x81ED, apkTpl.uid, apkTpl.gid, apkTpl.xattrs, ByteArray(0))
+            for ((n, b) in libs) p.putFile("$base/lib/arm64/$n", b, libTpl)
             ensureDir("etc/permissions")
             val xmlTpl = firstFile("etc/permissions", 0)?.let { p.templateOf(it) } ?: apkTpl
             p.putFile("etc/permissions/privapp-permissions-$pkg.xml", xml.toByteArray(), xmlTpl)
