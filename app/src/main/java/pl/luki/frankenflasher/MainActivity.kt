@@ -1374,8 +1374,10 @@ class MainActivity : Activity() {
         val list = android.widget.ListView(this).apply { choiceMode = android.widget.ListView.CHOICE_MODE_MULTIPLE }
         var shown = labels.indices.toList()
         val count = TextView(this).apply { setPadding(dpx(4), dpx(4), 0, dpx(4)) }
+        // Przeglad wyboru: tylko zaznaczone (np. po "Zaznacz zalecane"); odznaczony wpis znika przy nastepnym odswiezeniu.
+        val onlyChecked = android.widget.CheckBox(this).apply { text = tr("Pokaz tylko zaznaczone", "Show checked only") }
         fun refresh() {
-            shown = labels.indices.filter { matches(labels[it], box.text.toString()) }
+            shown = labels.indices.filter { (!onlyChecked.isChecked || checked[it]) && matches(labels[it], box.text.toString()) }
             list.adapter = android.widget.ArrayAdapter(this, android.R.layout.simple_list_item_multiple_choice, shown.map { labels[it] })
             shown.forEachIndexed { pos, i -> list.setItemChecked(pos, checked[i]) }
             count.text = tr("zaznaczone: ${checked.count { it }}  ·  widoczne: ${shown.size}/${labels.size}", "checked: ${checked.count { it }}  ·  shown: ${shown.size}/${labels.size}")
@@ -1389,10 +1391,12 @@ class MainActivity : Activity() {
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun afterTextChanged(s: android.text.Editable?) = refresh()
         })
+        onlyChecked.setOnCheckedChangeListener { _, _ -> refresh() }
         refresh()
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; setPadding(dpx(16), dpx(8), dpx(16), 0)
             addView(box)
+            addView(onlyChecked)
             if (actions.isNotEmpty()) addView(LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.HORIZONTAL
                 for ((t, f) in actions) addView(android.widget.Button(this@MainActivity).apply {
