@@ -315,7 +315,10 @@ static int cmd_bridge(const char *fifo_path, long extra_uid, char **player) {
     if (child < 0) { perror("fork"); return 70; }
     const double start = now_s();
     fprintf(stderr, "bridge: listening, pipe %d bytes, player pid %d, ceiling %d%%\n", pipe_size, (int)child, ceiling);
-    int client = -1, rc = 0, announced = 0, streaming = 0;
+    /* The FIFO is writable at once and agmplay reads its header (plus a stdio
+     * buffer) long before agm_init and pcm_open finish. Playback has only begun
+     * once the pipe was full and the player then took several more chunks. */
+    int client = -1, rc = 0, announced = 0, streaming = 0, pipe_was_full = 0, taken_after_full = 0;
     int32_t gain = target_gain(ceiling), target = gain;
     double next_volume = 0, client_since = 0;
     int swap = want_swap();
@@ -372,8 +375,10 @@ static int cmd_bridge(const char *fifo_path, long extra_uid, char **player) {
             next_volume = now_s() + 0.2;
         }
         if (child < 0) { if (client < 0) usleep(20000); else ring_drop(ring_fill & ~(size_t)3); continue; }
-        if (!(fds[0].revents & POLLOUT)) continue;
-        if (!announced) { announced = 1; fprintf(stderr, "bridge: player is consuming at %.2fs\n", now_s() - start); }
+        if (!(fds[0].revents & POLLOUT)) { pipe_was_full = 1; continue; }
+        if (pipe_was_full && !announced && ++taken_after_full >= 3) {
+            announced = 1; fprintf(stderr, "bridge: player is consuming at %.2fs\n", now_s() - start);
+        }
         memset(chunk, 0, sizeof(chunk));
         if (!streaming && (ring_fill >= PREBUFFER || (client < 0 && ring_fill >= 4))) streaming = 1;
         if (streaming) {

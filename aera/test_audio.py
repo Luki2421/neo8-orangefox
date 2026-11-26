@@ -128,6 +128,23 @@ def check_channels(work, bridge):
     return results
 
 
+def check_announcement(work, bridge):
+    """The readiness line must wait for a slow player, not appear at once."""
+    slow = work / 'slow_player.py'
+    slow.write_text('import sys,time\nf=open(sys.argv[1],"rb");f.read(44)\ntime.sleep(1.5)\n'
+                    'while True:\n    d=f.read(3840)\n    if not d: break\n    time.sleep(0.02)\n')
+    fifo = work / 'slow.wav'
+    proc = subprocess.Popen([str(bridge), 'bridge', str(fifo), '--accept-uid', str(os.getuid()), '--',
+                             sys.executable, str(slow), str(fifo)], stderr=subprocess.PIPE, text=True)
+    time.sleep(2.5)
+    proc.terminate()
+    _, log = proc.communicate(timeout=5)
+    line = next(l for l in log.splitlines() if 'player is consuming at' in l)
+    seconds = float(line.rsplit(' ', 1)[1].rstrip('s'))
+    assert 1.4 <= seconds <= 2.2, line
+    return seconds
+
+
 def main():
     files = check_assets()
     with tempfile.TemporaryDirectory() as tmp:
@@ -149,6 +166,7 @@ def main():
                 raise AssertionError('validator accepted image without ' + broken)
         print('protocol:', check_protocol(work))
         print('channels:', check_channels(work, work / 'bridge'))
+        print('announcement after slow start:', check_announcement(work, work / 'bridge'))
     print('Neo8 audio checks passed:', report['files'])
 
 
