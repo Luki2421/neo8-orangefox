@@ -1407,13 +1407,18 @@ class MainActivity : Activity() {
                 }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
             })
             addView(count)
-            addView(list, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (resources.displayMetrics.heightPixels * 0.55).toInt()))
+            addView(list, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
         }
         val b = AlertDialog.Builder(this).setTitle(title).setView(root)
             .setPositiveButton("OK") { _, _ -> onOk() }
             .setNegativeButton(tr("Anuluj", "Cancel"), null)
         neutral?.let { (t, f) -> b.setNeutralButton(t) { _, _ -> f() } }
-        b.show()
+        fitDialog(b.show())
+    }
+
+    /** Okno listy: 90% wysokosci ekranu, lista bierze reszte miejsca - ostatnia pozycja zawsze da sie przewinac. */
+    private fun fitDialog(d: AlertDialog) {
+        d.window?.setLayout(android.view.ViewGroup.LayoutParams.MATCH_PARENT, (resources.displayMetrics.heightPixels * 0.9).toInt())
     }
 
     /** Lista pojedynczego wyboru z polem wyszukiwania. */
@@ -1436,10 +1441,11 @@ class MainActivity : Activity() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; setPadding(dpx(16), dpx(8), dpx(16), 0)
             addView(box)
-            addView(list, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (resources.displayMetrics.heightPixels * 0.55).toInt()))
+            addView(list, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
         }
         dlg = AlertDialog.Builder(this).setTitle(title).setView(root).setNegativeButton(tr("Anuluj", "Cancel"), null).create()
         dlg.show()
+        fitDialog(dlg)
     }
 
     // ---------------- Debloat ----------------
