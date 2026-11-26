@@ -1398,9 +1398,10 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL; setPadding(dpx(16), dpx(8), dpx(16), 0)
             addView(box)
             addView(onlyChecked)
-            if (actions.isNotEmpty()) addView(LinearLayout(this@MainActivity).apply {
+            // przyciski po 2 w wierszu (waski ekran)
+            for (row in actions.chunked(2)) addView(LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.HORIZONTAL
-                for ((t, f) in actions) addView(android.widget.Button(this@MainActivity).apply {
+                for ((t, f) in row) addView(android.widget.Button(this@MainActivity).apply {
                     text = t; isAllCaps = false; textSize = 13f
                     setOnClickListener { f(); refresh() }
                 }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
@@ -1492,9 +1493,12 @@ class MainActivity : Activity() {
                 val recommended = apps.indices.filter { lvl[it]?.removal == "Recommended" }
                 // pakiet logi/sledzenie dziala tez bez listy UAD (nazwy pakietow sa wbudowane)
                 val tracking = apps.indices.filter { i -> apps[i].pkg?.let { it in pl.luki.frankenflasher.franken.UadList.TRACKING } == true }
+                val mineSet = pl.luki.frankenflasher.franken.UadList.mine(File(android.os.Environment.getExternalStorageDirectory(), "FrankenFlasher/debloat_moje.txt"))
+                val mine = apps.indices.filter { i -> apps[i].pkg?.let { it in mineSet } == true }
                 val actions = listOfNotNull(
                     if (uad.isEmpty()) null else tr("Zalecane (${recommended.size})", "Recommended (${recommended.size})") to { recommended.forEach { checked[it] = true } },
                     tr("Logi i sledzenie (${tracking.size})", "Logs & tracking (${tracking.size})") to { tracking.forEach { checked[it] = true } },
+                    tr("Moje (${mine.size})", "Mine (${mine.size})") to { mine.forEach { checked[it] = true } },
                     tr("Odznacz wszystko", "Uncheck all") to { checked.fill(false) })
                 searchableMulti(tr("Zaznacz aplikacje do USUNIECIA (${apps.size})", "Check apps to REMOVE (${apps.size})"), labels, checked, {
                         apps.forEachIndexed { i, a -> if (checked[i]) sel += a.key else sel -= a.key }

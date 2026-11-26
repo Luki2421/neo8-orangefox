@@ -24,6 +24,97 @@ class UadList(private val cache: File, private val log: (String) -> Unit) {
          * o logach, telemetrii, statystykach, diagnostyce, reklamach albo sledzeniu (OPPO/realme/OnePlus/HeyTap).
          * Bez aplikacji z funkcjami dla uzytkownika (przegladarka, sklep, chmura, motywy, odtwarzacze, zdrowie...).
          */
+        /** Pakiet "Moje": domyslna lista uzytkownika (skrypt uninstall_packages MT Manager, 74 pakiety).
+         *  Edytowalna w FrankenFlasher/debloat_moje.txt (jeden pakiet w linii, # komentarz). */
+        val MINE_DEFAULT = listOf(
+            "android.autoinstalls.config.oneplus",
+            "com.android.apps.tag",
+            "com.android.bips",
+            "com.android.bookmarkprovider",
+            "com.android.chrome",
+            "com.android.egg",
+            "com.android.hotwordenrollment.okgoogle",
+            "com.android.hotwordenrollment.xgoogle",
+            "com.android.internal.display.cutout.emulation.corner",
+            "com.android.internal.display.cutout.emulation.double",
+            "com.android.internal.display.cutout.emulation.hole",
+            "com.android.internal.display.cutout.emulation.tall",
+            "com.android.internal.display.cutout.emulation.waterfall",
+            "com.android.keychain",
+            "com.android.printspooler",
+            "com.android.providers.calendar",
+            "com.android.traceur",
+            "com.coloros.activation",
+            "com.coloros.assistantscreen",
+            "com.coloros.compass2",
+            "com.coloros.operationManual",
+            "com.coloros.video",
+            "com.coloros.weather.service",
+            "com.facebook.appmanager",
+            "com.facebook.services",
+            "com.facebook.system",
+            "com.google.ambient.streaming",
+            "com.google.android.adservices.api",
+            "com.google.android.aicore",
+            "com.google.android.apps.bard",
+            "com.google.android.apps.messaging",
+            "com.google.android.apps.photos",
+            "com.google.android.apps.safetyhub",
+            "com.google.android.apps.setupwizard.searchselector",
+            "com.google.android.apps.tachyon",
+            "com.google.android.as",
+            "com.google.android.as.oss",
+            "com.google.android.calendar",
+            "com.google.android.contacts",
+            "com.google.android.inputmethod.latin",
+            "com.google.android.printservice.recommendation",
+            "com.google.android.projection.gearhead",
+            "com.google.android.setupwizard",
+            "com.google.android.youtube",
+            "com.google.ar.core",
+            "com.heytap.accessory",
+            "com.heytap.browser",
+            "com.heytap.cloud",
+            "com.heytap.market",
+            "com.heytap.mydevices",
+            "com.microsoft.appmanager",
+            "com.oneplus.account",
+            "com.oneplus.membership",
+            "com.oneplus.oshare",
+            "com.oplus.bttestmode",
+            "com.oplus.cast",
+            "com.oplus.games",
+            "com.oplus.linker",
+            "com.oplus.locationproxy",
+            "com.oplus.logkit",
+            "com.oplus.melody",
+            "com.oplus.metis",
+            "com.oplus.olc",
+            "com.oplus.omoji",
+            "com.oplus.pay",
+            "com.oplus.phonemanager",
+            "com.oplus.securepay",
+            "com.oplus.securitykeyboard",
+            "com.oplus.stdsp",
+            "com.oplus.subsys",
+            "com.oplus.themestore",
+            "com.oppo.quicksearchbox",
+            "com.redteamobile.roaming",
+            "net.oneplus.weather",
+        )
+
+        /** Lista "Moje" z pliku; gdy go nie ma - tworzy go z [MINE_DEFAULT]. */
+        fun mine(file: File): Set<String> {
+            if (!file.isFile) try {
+                file.parentFile?.mkdirs()
+                file.writeText("# Franken Flasher - pakiet debloat \"Moje\": jedna nazwa pakietu w linii, # = komentarz\n" +
+                    MINE_DEFAULT.joinToString("\n") + "\n")
+            } catch (_: Exception) { return MINE_DEFAULT.toSet() }
+            return try {
+                file.readLines().map { it.substringBefore('#').trim() }.filter { it.isNotEmpty() }.toSet()
+            } catch (_: Exception) { MINE_DEFAULT.toSet() }
+        }
+
         val TRACKING = setOf(
             // logi i zglaszanie bledow
             "com.coloros.logkit", "com.coloros.logkit.plugin.upload", "com.oplus.logkit", "com.oppo.logkit",
