@@ -355,6 +355,7 @@ class MainActivity : Activity() {
         ui.toggle(cFr, tr("dzwonki z haptic_ringtone do product", "ringtones from haptic_ringtone to product"), { frOpt.ringtones }, { frOpt.ringtones = it })
         ui.toggle(cFr, tr("Franken Flasher jako aplikacja systemowa (restart bez roota)", "Franken Flasher as system app (reboot without root)"), { frEmbed }, { frEmbed = it })
         ui.toggle(cFr, tr("biblioteki my_product/lib64 do product (Aparat)", "my_product/lib64 libraries to product (Camera)"), { frOpt.productLibs }, { frOpt.productLibs = it })
+        ui.toggle(cFr, tr("nagrywanie rozmow (flagi regionu, jak modul Callrec)", "call recording (region flags, like the Callrec module)"), { frOpt.callRecording }, { frOpt.callRecording = it })
         ui.toggle(cFr, tr("pomin my_preload", "skip my_preload"), { frOpt.skipMyPreload }, { frOpt.skipMyPreload = it })
         val cTools = ui.card(p4, tr("Narzedzia / testy", "Tools / tests"))
         ui.row(cTools, ui.button(tr("Dostep do plikow", "File access"), G, ::requestAllFiles), ui.button(tr("Test narzedzi EROFS", "Test EROFS tools"), G, ::testErofsTools))

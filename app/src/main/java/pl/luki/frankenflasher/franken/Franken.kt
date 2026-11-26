@@ -39,6 +39,9 @@ class Franken(
         /** APK tej aplikacji jako uprzywilejowana aplikacja systemowa (product/priv-app) z REBOOT/RECOVERY -
          *  restart do recovery/bootloader/fastbootd bez roota, jak w custom ROM. */
         var appApk: File? = null,
+        /** Nagrywanie rozmow (jak modul "Mms + call recording lite" / or965): flagi regionu w my_region, my_stock
+         *  i my_product (etc/extension), ktore ukrywaja nagrywanie; Wiadomosci (com.android.mms) odblokowuje app_v2. */
+        var callRecording: Boolean = true,
         /** Partycje logiczne brane z bazy (domyslnie jak FFF: odm, odm_dlkm, vendor, vendor_dlkm, system_dlkm). */
         var fromBase: MutableSet<String> = HW_FROM_BASE.toMutableSet(),
     )
@@ -119,6 +122,13 @@ class Franken(
             for (n in listOf("my_stock", "my_region")) {
                 val src = chosen[n] ?: continue
                 unlockAppV2(src, File(outSys, "$n.img"))?.let { chosen[n] = it }
+            }
+        }
+        // --- nagrywanie rozmow ---
+        if (opt.callRecording) {
+            for (n in listOf("my_region", "my_stock", "my_product")) {
+                val src = chosen[n] ?: continue
+                enableCallRecording(n, src, File(outSys, "$n.img"))?.let { chosen[n] = it }
             }
         }
 
@@ -551,6 +561,34 @@ class Franken(
         return out
     }
 
+    /**
+     * Nagrywanie rozmow - te same zmiany co customize.sh modulu "Enable Mms + call recording (lite)":
+     *  - my_region etc/extension/com.oplus.app-features.xml: + oplus_dialer_enable (phone, telecom), - no_display_record
+     *  - my_product etc/extension/<kraj>/appfeature.country.dynamic_features.xml: - no_display_record,
+     *    - incallui.not_support_record, - incallui.support_record_prompt
+     *  - my_stock etc/extension/com.oplus.app-features.xml: - bloki hide_call_record_mcc i support_call_record_prompt_mcc
+     */
+    private fun enableCallRecording(name: String, src: File, out: File): File? {
+        step(tr("nagrywanie rozmow: $name", "call recording: $name"))
+        val target = when (name) {
+            "my_product" -> "appfeature.country.dynamic_features.xml"
+            else -> "com.oplus.app-features.xml"
+        }
+        val files = catAll(src, target).filterKeys { it.startsWith("etc/extension/") }
+        val edits = LinkedHashMap<String, String>()
+        for ((rel, bytes) in files) {
+            val txt = String(bytes)
+            val nt = callRecordingEdit(name, txt)
+            if (nt != txt) edits[rel] = nt
+        }
+        if (edits.isEmpty()) { log(tr("nagrywanie rozmow: $name - bez zmian (brak blokad)", "call recording: $name - unchanged (no blocks)")); return null }
+        if (src.canonicalPath != out.canonicalPath) copyImage(src, out)
+        ErofsPatcher(out).use { p -> edits.forEach { (rel, txt) -> p.putFile(rel, txt.toByteArray()) }; p.commit() }
+        log(tr("nagrywanie rozmow: $name - ${edits.keys.joinToString()}", "call recording: $name - ${edits.keys.joinToString()}"))
+        checkImage(out)
+        return out
+    }
+
     private fun checkImage(img: File) {
         val rc = tools.check(img)
         if (rc != 0) throw IOException(tr("fsck.erofs ${img.name}: kod $rc - obraz niepoprawny, przerwano", "fsck.erofs ${img.name}: code $rc - invalid image, aborted"))
@@ -673,6 +711,36 @@ class Franken(
 
         val MANIFEST_WHOLE = setOf("ro.build.version.oplusrom", "ro.build.version.oplusrom.confidential", "ro.build.version.oplusrom.display")
         val MANIFEST_PREFIXED = listOf("ro.build.display.id", "ro.build.display.id.show")
+
+        private val NO_RECORD_LINE = Regex("""(no_display_record|incallui\.not_support_record|incallui\.support_record_prompt)"\s*/>""")
+        private val DIALER_FEATURES = listOf("com.android.phone.oplus_dialer_enable", "com.android.server.telecom.oplus_dialer_enable")
+        private val MCC_BLOCKS = listOf("com.android.incallui.hide_call_record_mcc", "com.android.incallui.support_call_record_prompt_mcc")
+
+        /** Zmiany tekstu pliku cech (linia po linii, jak sed w module); [name] = partycja. */
+        fun callRecordingEdit(name: String, txt: String): String {
+            val nl = if (txt.contains("\r\n")) "\r\n" else "\n"
+            val lines = txt.split(nl)
+            val out = ArrayList<String>(lines.size + 2)
+            var skipBlock = false
+            for (l in lines) {
+                if (skipBlock) { if (l.contains("</app_feature>")) skipBlock = false; continue }
+                when (name) {
+                    "my_region" -> {
+                        if (l.contains("no_display_record\"/>")) continue
+                        out += l
+                        if (Regex("""<extend_features>\s*$""").containsMatchIn(l))
+                            for (f in DIALER_FEATURES) if (!txt.contains("\"$f\"")) out += "\t<app_feature name=\"$f\"/>"
+                    }
+                    "my_product" -> if (!NO_RECORD_LINE.containsMatchIn(l)) out += l
+                    "my_stock" -> {
+                        if (MCC_BLOCKS.any { l.contains("<app_feature name=\"$it\">") }) { skipBlock = !l.contains("</app_feature>"); continue }
+                        out += l
+                    }
+                    else -> out += l
+                }
+            }
+            return out.joinToString(nl)
+        }
 
         val APP_V2_ENABLE = listOf(
             "com.android.contacts", "com.android.incallui", "com.android.mms", "com.oplus.blacklistapp",
