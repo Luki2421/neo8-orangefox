@@ -1499,12 +1499,19 @@ class MainActivity : Activity() {
                 val recommended = apps.indices.filter { lvl[it]?.removal == "Recommended" }
                 // pakiet logi/sledzenie dziala tez bez listy UAD (nazwy pakietow sa wbudowane)
                 val tracking = apps.indices.filter { i -> apps[i].pkg?.let { it in pl.luki.frankenflasher.franken.UadList.TRACKING } == true }
-                val mineSet = pl.luki.frankenflasher.franken.UadList.mine(File(android.os.Environment.getExternalStorageDirectory(), "FrankenFlasher/debloat_moje.txt"))
-                val mine = apps.indices.filter { i -> apps[i].pkg?.let { it in mineSet } == true }
+                val mineFile = File(android.os.Environment.getExternalStorageDirectory(), "FrankenFlasher/debloat_moje.txt")
+                val mineSet = pl.luki.frankenflasher.franken.UadList.mine(mineFile)
+                // "Moje": nazwa pakietu albo nazwa katalogu aplikacji
+                val mine = apps.indices.filter { i -> apps[i].name in mineSet || apps[i].pkg?.let { it in mineSet } == true }
                 val actions = listOfNotNull(
                     if (uad.isEmpty()) null else tr("Zalecane (${recommended.size})", "Recommended (${recommended.size})") to { recommended.forEach { checked[it] = true } },
                     tr("Logi i sledzenie (${tracking.size})", "Logs & tracking (${tracking.size})") to { tracking.forEach { checked[it] = true } },
                     tr("Moje (${mine.size})", "Mine (${mine.size})") to { mine.forEach { checked[it] = true } },
+                    tr("Zapisz zaznaczone jako Moje", "Save checked as Mine") to {
+                        val sel = apps.indices.filter { checked[it] }.map { apps[it].pkg ?: apps[it].name }
+                        try { pl.luki.frankenflasher.franken.UadList.save(mineFile, sel); log(tr("debloat: zapisano ${sel.size} pozycji jako Moje (FrankenFlasher/debloat_moje.txt)", "debloat: saved ${sel.size} entries as Mine (FrankenFlasher/debloat_moje.txt)")) }
+                        catch (e: Exception) { log(tr("debloat: nie udalo sie zapisac Moje: ${e.message}", "debloat: could not save Mine: ${e.message}")) }
+                    },
                     tr("Odznacz wszystko", "Uncheck all") to { checked.fill(false) })
                 searchableMulti(tr("Zaznacz aplikacje do USUNIECIA (${apps.size})", "Check apps to REMOVE (${apps.size})"), labels, checked, {
                         apps.forEachIndexed { i, a -> if (checked[i]) sel += a.key else sel -= a.key }

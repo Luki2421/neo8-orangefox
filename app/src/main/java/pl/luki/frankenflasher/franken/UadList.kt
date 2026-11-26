@@ -24,95 +24,98 @@ class UadList(private val cache: File, private val log: (String) -> Unit) {
          * o logach, telemetrii, statystykach, diagnostyce, reklamach albo sledzeniu (OPPO/realme/OnePlus/HeyTap).
          * Bez aplikacji z funkcjami dla uzytkownika (przegladarka, sklep, chmura, motywy, odtwarzacze, zdrowie...).
          */
-        /** Pakiet "Moje": domyslna lista uzytkownika (skrypt uninstall_packages MT Manager, 74 pakiety).
-         *  Edytowalna w FrankenFlasher/debloat_moje.txt (jeden pakiet w linii, # komentarz). */
+        /** Pakiet "Moje": domyslna lista uzytkownika - 70 aplikacji z jego debloatu (log 26.11.2026), nazwy katalogow
+         *  aplikacji (app/priv-app/<nazwa>). W pliku FrankenFlasher/debloat_moje.txt moga byc nazwy katalogow albo pakietow. */
         val MINE_DEFAULT = listOf(
-            "android.autoinstalls.config.oneplus",
-            "com.android.apps.tag",
-            "com.android.bips",
-            "com.android.bookmarkprovider",
-            "com.android.chrome",
-            "com.android.egg",
-            "com.android.hotwordenrollment.okgoogle",
-            "com.android.hotwordenrollment.xgoogle",
-            "com.android.internal.display.cutout.emulation.corner",
-            "com.android.internal.display.cutout.emulation.double",
-            "com.android.internal.display.cutout.emulation.hole",
-            "com.android.internal.display.cutout.emulation.tall",
-            "com.android.internal.display.cutout.emulation.waterfall",
-            "com.android.keychain",
-            "com.android.printspooler",
-            "com.android.providers.calendar",
-            "com.android.traceur",
-            "com.coloros.activation",
-            "com.coloros.assistantscreen",
-            "com.coloros.compass2",
-            "com.coloros.operationManual",
-            "com.coloros.video",
-            "com.coloros.weather.service",
-            "com.facebook.appmanager",
-            "com.facebook.services",
-            "com.facebook.system",
-            "com.google.ambient.streaming",
-            "com.google.android.adservices.api",
-            "com.google.android.aicore",
-            "com.google.android.apps.bard",
-            "com.google.android.apps.messaging",
-            "com.google.android.apps.photos",
-            "com.google.android.apps.safetyhub",
-            "com.google.android.apps.setupwizard.searchselector",
-            "com.google.android.apps.tachyon",
-            "com.google.android.as",
-            "com.google.android.as.oss",
-            "com.google.android.calendar",
-            "com.google.android.contacts",
-            "com.google.android.inputmethod.latin",
-            "com.google.android.printservice.recommendation",
-            "com.google.android.projection.gearhead",
-            "com.google.android.setupwizard",
-            "com.google.android.youtube",
-            "com.google.ar.core",
-            "com.heytap.accessory",
-            "com.heytap.browser",
-            "com.heytap.cloud",
-            "com.heytap.market",
-            "com.heytap.mydevices",
-            "com.microsoft.appmanager",
-            "com.oneplus.account",
-            "com.oneplus.membership",
-            "com.oneplus.oshare",
-            "com.oplus.bttestmode",
-            "com.oplus.cast",
-            "com.oplus.games",
-            "com.oplus.linker",
-            "com.oplus.locationproxy",
-            "com.oplus.logkit",
-            "com.oplus.melody",
-            "com.oplus.metis",
-            "com.oplus.olc",
-            "com.oplus.omoji",
-            "com.oplus.pay",
-            "com.oplus.phonemanager",
-            "com.oplus.securepay",
-            "com.oplus.securitykeyboard",
-            "com.oplus.stdsp",
-            "com.oplus.subsys",
-            "com.oplus.themestore",
-            "com.oppo.quicksearchbox",
-            "com.redteamobile.roaming",
-            "net.oneplus.weather",
+            "AccessoryFramework",
+            "AICore",
+            "AndroidAutoStub",
+            "AndroidSystemIntelligence_Features",
+            "ARCore",
+            "AssistantScreen",
+            "BookmarkProvider",
+            "Browser",
+            "BTtestmode",
+            "BuiltInPrintService",
+            "Calendar",
+            "CalendarGoogle",
+            "CalendarProvider",
+            "Chrome64",
+            "CloudService",
+            "CrossDeviceServicesStub",
+            "DCS",
+            "EasterEgg",
+            "Facebook",
+            "Facebook-appmanager",
+            "Facebook-installer",
+            "Facebook-services",
+            "GlobalSearch",
+            "GoogleCalendarSyncAdapter",
+            "GoogleContacts",
+            "GoogleDialer",
+            "GoogleGemini",
+            "HeyCast",
+            "InstagramStub",
+            "Instant",
+            "KeKeMarket",
+            "KeKePay",
+            "KeKeThemeSpace",
+            "KeyChain",
+            "LFEHer",
+            "LinktoWindows",
+            "LocationProxy",
+            "LogKit",
+            "MCS",
+            "Meet",
+            "Melody",
+            "Messages",
+            "Metis",
+            "Olc",
+            "OplusGames",
+            "OplusOperationManual",
+            "OplusPhoneActivation",
+            "OplusQualityProtect",
+            "OplusSecurityKeyboard",
+            "OppoCompass2",
+            "OppoWeatherService",
+            "OPSynergy",
+            "OTrace",
+            "PersonalSafety",
+            "Photos",
+            "PostmanService",
+            "PrintSpooler",
+            "PrivateComputeServices",
+            "SAUHelper",
+            "SearchSelector",
+            "Shelper",
+            "SoftsimRedteaRoaming",
+            "StdSP",
+            "SubsystemApp",
+            "Tag",
+            "Traceur",
+            "VideoGallery",
+            "Videos_del",
+            "YouTube",
+            "YTMusic_del",
         )
+
+        /** Pierwsza domyslna lista (74 pakiety ze skryptu MT Manager) - plik z nia bez zmian jest zastepowany nowa. */
+        private val MINE_V1 = setOf("android.autoinstalls.config.oneplus", "com.android.apps.tag", "com.android.bips", "com.android.bookmarkprovider", "com.android.chrome", "com.android.egg", "com.android.hotwordenrollment.okgoogle", "com.android.hotwordenrollment.xgoogle", "com.android.internal.display.cutout.emulation.corner", "com.android.internal.display.cutout.emulation.double", "com.android.internal.display.cutout.emulation.hole", "com.android.internal.display.cutout.emulation.tall", "com.android.internal.display.cutout.emulation.waterfall", "com.android.keychain", "com.android.printspooler", "com.android.providers.calendar", "com.android.traceur", "com.coloros.activation", "com.coloros.assistantscreen", "com.coloros.compass2", "com.coloros.operationManual", "com.coloros.video", "com.coloros.weather.service", "com.facebook.appmanager", "com.facebook.services", "com.facebook.system", "com.google.ambient.streaming", "com.google.android.adservices.api", "com.google.android.aicore", "com.google.android.apps.bard", "com.google.android.apps.messaging", "com.google.android.apps.photos", "com.google.android.apps.safetyhub", "com.google.android.apps.setupwizard.searchselector", "com.google.android.apps.tachyon", "com.google.android.as", "com.google.android.as.oss", "com.google.android.calendar", "com.google.android.contacts", "com.google.android.inputmethod.latin", "com.google.android.printservice.recommendation", "com.google.android.projection.gearhead", "com.google.android.setupwizard", "com.google.android.youtube", "com.google.ar.core", "com.heytap.accessory", "com.heytap.browser", "com.heytap.cloud", "com.heytap.market", "com.heytap.mydevices", "com.microsoft.appmanager", "com.oneplus.account", "com.oneplus.membership", "com.oneplus.oshare", "com.oplus.bttestmode", "com.oplus.cast", "com.oplus.games", "com.oplus.linker", "com.oplus.locationproxy", "com.oplus.logkit", "com.oplus.melody", "com.oplus.metis", "com.oplus.olc", "com.oplus.omoji", "com.oplus.pay", "com.oplus.phonemanager", "com.oplus.securepay", "com.oplus.securitykeyboard", "com.oplus.stdsp", "com.oplus.subsys", "com.oplus.themestore", "com.oppo.quicksearchbox", "com.redteamobile.roaming", "net.oneplus.weather")
 
         /** Lista "Moje" z pliku; gdy go nie ma - tworzy go z [MINE_DEFAULT]. */
         fun mine(file: File): Set<String> {
-            if (!file.isFile) try {
-                file.parentFile?.mkdirs()
-                file.writeText("# Franken Flasher - pakiet debloat \"Moje\": jedna nazwa pakietu w linii, # = komentarz\n" +
-                    MINE_DEFAULT.joinToString("\n") + "\n")
-            } catch (_: Exception) { return MINE_DEFAULT.toSet() }
+            if (!file.isFile) try { save(file, MINE_DEFAULT) } catch (_: Exception) { return MINE_DEFAULT.toSet() }
             return try {
-                file.readLines().map { it.substringBefore('#').trim() }.filter { it.isNotEmpty() }.toSet()
+                val set = file.readLines().map { it.substringBefore('#').trim() }.filter { it.isNotEmpty() }.toSet()
+                if (set == MINE_V1) { save(file, MINE_DEFAULT); MINE_DEFAULT.toSet() } else set
             } catch (_: Exception) { MINE_DEFAULT.toSet() }
+        }
+
+        /** Zapis listy "Moje" (nazwy pakietow albo katalogow aplikacji). */
+        fun save(file: File, entries: Collection<String>) {
+            file.parentFile?.mkdirs()
+            file.writeText("# Franken Flasher - pakiet debloat \"Moje\": nazwa pakietu albo katalogu aplikacji w linii, # = komentarz\n" +
+                entries.joinToString("\n") + "\n")
         }
 
         val TRACKING = setOf(
