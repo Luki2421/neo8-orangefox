@@ -41,7 +41,8 @@ def check_assets():
                    'MI2S-LPAIF-RX-SECONDARY', 'mount -t "$fs" -o ro'):
         if needle not in player:
             raise ValueError('Audio player script lacks ' + needle)
-    for forbidden in ('rm -rf', 'mount -o remount,rw', ' /vendor/lib', 'mount --bind "$STOCK/vendor" /vendor'):
+    for forbidden in ('rm -rf', 'mount -o remount,rw', ' /vendor/lib', 'mount --bind "$STOCK/vendor" /vendor',
+                      'bind "$STOCK/vendor" /vendor', 'bind /tmp /tmp'):
         if forbidden in player:
             raise ValueError('Audio player script must not contain ' + forbidden)
     return files

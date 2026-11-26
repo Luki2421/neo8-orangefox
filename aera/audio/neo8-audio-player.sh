@@ -112,10 +112,34 @@ bind() {
         mount --bind "$src" "$dst"
     fi
 }
+# The stock vendor is a tmpfs of per-entry binds, never one bind with the DSP
+# and modem mounted inside it: AERA releases Super (image flash, fastbootd)
+# by unmounting partition-backed mounts deepest first, and a child such as
+# /vendor/dsp would keep them busy. The DSP and modem mounts sit on the tmpfs.
+vendor_tree() {
+    local dst="$ROOT/vendor" entry name
+    if ! grep -q " $dst " /proc/mounts; then
+        mkdir -p "$dst" && mount -t tmpfs -o mode=0755 neo8-vendor "$dst" || return 1
+    fi
+    for entry in "$STOCK/vendor/"* "$STOCK/vendor/".[!.]*; do
+        [ -e "$entry" ] || [ -L "$entry" ] || continue
+        name="${entry##*/}"
+        case "$name" in dsp|firmware_mnt) mkdir -p "$dst/$name"; continue ;; esac
+        if [ -L "$entry" ]; then
+            [ -L "$dst/$name" ] || ln -s "$(readlink "$entry")" "$dst/$name" || return 1
+        elif grep -q " $dst/$name " /proc/mounts; then
+            continue
+        elif [ -d "$entry" ]; then
+            mkdir -p "$dst/$name" && mount --bind "$entry" "$dst/$name" || return 1
+        else
+            : > "$dst/$name" && mount --bind "$entry" "$dst/$name" || return 1
+        fi
+    done
+}
 mkdir -p "$ROOT"
 bind /system /system
 bind /system_ext /system_ext
-bind "$STOCK/vendor" /vendor
+vendor_tree || { echo "neo8-audio: cannot build the vendor tree"; exit 1; }
 bind "$STOCK/odm" /odm
 bind /dev /dev r
 bind /proc /proc
@@ -128,7 +152,10 @@ bind "$STOCK/dsp" /vendor/dsp
 bind "$STOCK/modem" /vendor/firmware_mnt
 mkdir -p "$ROOT/linkerconfig"
 [ -d /apex ] && bind /apex /apex
-bind /tmp /tmp
+# Only the helper directory: a bind of all of /tmp would be a peer of /tmp and
+# copy every later mount under /tmp (Wi-Fi, this chroot) into the chroot.
+mkdir -p "$AGM"
+bind /tmp/neo8-agm /tmp/neo8-agm
 
 start_daemon() {
     local name="$1" old; shift
