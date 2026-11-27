@@ -95,6 +95,7 @@ class Franken(
             fixAudioVolumes(chosen, outSys)
             addDonorVendorProps(chosen, donorImgs, outSys)
             copyDonorOverlays(chosen, donorImgs, outSys)
+            fixDonorLibs(chosen, outSys)
         }
 
         // --- my_product (dawca + konfiguracja bazy) ---
@@ -670,6 +671,98 @@ class Franken(
         chosen["vendor"] = out
         log(tr("wlasciwosci: vendor/$path + ${add.entries.joinToString { "${it.key}=${it.value}" }} (bez tego karta SIM tylko na 3G/2G)",
             "props: vendor/$path + ${add.entries.joinToString { "${it.key}=${it.value}" }} (otherwise the SIM stays on 3G/2G)"))
+    }
+
+    /**
+     * Poprawki binarne bibliotek dawcy (ta sama dlugosc, tylko gdy kod pasuje do wzorca).
+     *
+     * libcsextimpl.so (rozszerzenie cameraserver OnePlus w system_ext DerpFesta): transakcja 10014
+     * (preOpenCamera, aplikacja aparatu wysyla ja przy kolejnym uruchomieniu) wola
+     * CameraServiceExtFactory::getInstance()->[vtable 0]() z cameraservera. Zamiennik w cameraserver
+     * DerpFesta zwraca tablice funkcji zamiast obiektu z vtable -> skok pod bajty kodu -> SIGBUS,
+     * cameraserver i aparat padaja (log 2026-11-27 20:15). Poprawka: 10014 od razu zwraca 0
+     * (bez wstepnego otwarcia - aparat otwiera sie normalnie, jak przy pierwszym uruchomieniu).
+     */
+    private fun fixDonorLibs(chosen: MutableMap<String, File>, outSys: File) {
+        fun u32(d: ByteArray, i: Int) = (d[i].toInt() and 0xFF) or ((d[i + 1].toInt() and 0xFF) shl 8) or
+            ((d[i + 2].toInt() and 0xFF) shl 16) or ((d[i + 3].toInt() and 0xFF) shl 24)
+        fun le(v: Int) = byteArrayOf(v.toByte(), (v shr 8).toByte(), (v shr 16).toByte(), (v shr 24).toByte())
+        fun find(d: ByteArray, pat: ByteArray, from: Int): Int {
+            var i = from
+            outer@ while (i <= d.size - pat.size) {
+                for (k in pat.indices) if (d[i + k] != pat[k]) { i++; continue@outer }
+                return i
+            }
+            return -1
+        }
+        /** null = nie ten kod; pusta lista = juz poprawione */
+        fun csextPreOpen(d: ByteArray): List<Pair<Int, ByteArray>>? {
+            if (find(d, "_ZN7android23CameraServiceExtFactory11getInstanceEv".toByteArray(), 0) < 0) return null
+            // ldr x8,[x0]; ldr x8,[x8]; blr x8; ldr x8,[x0]
+            val pat = byteArrayOf(0x08, 0x00, 0x40, 0xF9.toByte(), 0x08, 0x01, 0x40, 0xF9.toByte(), 0x00, 0x01, 0x3F, 0xD6.toByte(), 0x08, 0x00, 0x40, 0xF9.toByte())
+            val hits = ArrayList<Pair<Int, ByteArray>>()
+            var already = 0
+            var i = find(d, pat, 0)
+            while (i >= 0) {
+                if (i % 4 == 0 && i >= 4 && i + 24 <= d.size) {
+                    val bl = u32(d, i - 4); val ld = u32(d, i + 16); val b = u32(d, i + 20)
+                    // ldr x8,[x8,#imm]; b <blr x8; mov w0,wzr>
+                    if ((ld and 0xFFC003FF.toInt()) == 0xF9400108.toInt() && (b ushr 26) == 0x05) {
+                        val t = i + 20 + ((b shl 6) shr 4)
+                        if (t >= 0 && t + 8 <= d.size && u32(d, t) == 0xD63F0100.toInt() && u32(d, t + 4) == 0x2A1F03E0) {
+                            val want = 0x14000000 or (((t + 4 - (i - 4)) shr 2) and 0x3FFFFFF)
+                            when {
+                                bl == want -> already++
+                                (bl ushr 26) == 0x25 -> hits += (i - 4) to le(want)
+                            }
+                        }
+                    }
+                }
+                i = find(d, pat, i + 1)
+            }
+            return if (hits.size + already == 1) hits else null
+        }
+
+        data class Fix(val part: String, val path: String, val what: String, val make: (ByteArray) -> List<Pair<Int, ByteArray>>?)
+        val fixes = listOf(Fix("system_ext", "lib64/libcsextimpl.so",
+            tr("aparat OnePlus: transakcja preOpenCamera (10014) wylaczona - zamiennik w cameraserver DerpFesta powodowal SIGBUS przy kolejnym uruchomieniu aparatu",
+                "OnePlus camera: preOpenCamera transaction (10014) disabled - the DerpFest cameraserver shim caused SIGBUS on the next camera launch"),
+            ::csextPreOpen))
+
+        for (f in fixes) {
+            // system_ext osobno albo w system (system/system_ext/...)
+            val (n, path) = when {
+                chosen[f.part]?.let { img -> try { imgCat(img, f.path) } catch (_: Exception) { null } } != null -> f.part to f.path
+                chosen["system"]?.let { img -> try { imgCat(img, "system/${f.part}/${f.path}") } catch (_: Exception) { null } } != null -> "system" to "system/${f.part}/${f.path}"
+                else -> continue
+            }
+            val img = chosen.getValue(n)
+            val data = imgCat(img, path) ?: continue
+            val patches = f.make(data)
+            if (patches == null) { log(tr("biblioteki: $path - kod nie pasuje do wzorca (inna wersja), pomijam: ${f.what}", "libraries: $path - code does not match (other version), skipped: ${f.what}")); continue }
+            if (patches.isEmpty()) continue
+            val out = File(outSys, "$n.img")
+            when (fsType(img)) {
+                "ext4" -> {
+                    if (img.canonicalPath != out.canonicalPath) copyImage(img, out)
+                    val offs = Ext4Reader(out).use { r -> patches.map { (o, b) -> r.physicalOffset(path, o.toLong()) to b } }
+                    if (offs.any { it.first == null }) { log(tr("biblioteki: $path - nie znaleziono danych w obrazie, pomijam", "libraries: $path - data not found in image, skipped")); continue }
+                    java.io.RandomAccessFile(out, "rw").use { raf -> for ((o, b) in offs) { raf.seek(o!!); raf.write(b) } }
+                }
+                "erofs" -> {
+                    if (img.canonicalPath != out.canonicalPath) copyImage(img, out)
+                    val nd = data.copyOf(); for ((o, b) in patches) System.arraycopy(b, 0, nd, o, b.size)
+                    ErofsPatcher(out).use { p -> p.putFile(path, nd); p.commit() }
+                    checkImage(out)
+                }
+                else -> continue
+            }
+            val check = imgCat(out, path)
+            if (check == null || patches.any { (o, b) -> !check.copyOfRange(o, o + b.size).contentEquals(b) } || check.size != data.size)
+                throw IOException(tr("biblioteki: $path - poprawka sie nie zapisala", "libraries: $path - patch was not written"))
+            chosen[n] = out
+            log(tr("biblioteki: $n/${f.path} - ${f.what}", "libraries: $n/${f.path} - ${f.what}"))
+        }
     }
 
     /**

@@ -156,7 +156,25 @@ class Ext4Reader(file: File) : Closeable {
     }
 
     /** Zawartosc pliku [path] (wzgledem korzenia obrazu) albo null, gdy go nie ma. */
-    fun cat(path: String): ByteArray? {
+    fun cat(path: String): ByteArray? = resolve(path)?.let { data(it) }
+
+    /**
+     * Polozenie w obrazie bajtu [off] pliku [path] (do poprawek tej samej dlugosci w miejscu: dane
+     * plikow ext4 nie maja sum kontrolnych). null: brak pliku, dane inline albo extent niezainicjowany.
+     */
+    fun physicalOffset(path: String, off: Long): Long? {
+        val ino = resolve(path) ?: return null
+        if (off < 0 || off >= ino.size || ino.flags and 0x10000000 != 0 || ino.flags and 0x80000 == 0) return null
+        val ext = ArrayList<LongArray>()
+        extents(ByteBuffer.wrap(ino.iblock).order(ByteOrder.LITTLE_ENDIAN), ext)
+        val lblk = off / blockSize
+        val e = ext.firstOrNull { lblk >= it[0] && lblk < it[0] + it[2] } ?: return null
+        if (e[3] == 1L) return null
+        return (e[1] + (lblk - e[0])) * blockSize + off % blockSize
+    }
+
+    /** I-wezel zwyklego pliku [path] (symlinki po drodze rozwiazywane) albo null. */
+    private fun resolve(path: String): Inode? {
         var parts = path.trim('/').split('/').filter { it.isNotEmpty() && it != "." }
         var cur = inode(2)
         var i = 0
@@ -181,7 +199,7 @@ class Ext4Reader(file: File) : Closeable {
             cur = next
             i++
         }
-        return if ((cur.mode and 0xF000) == 0x8000) data(cur) else null
+        return if ((cur.mode and 0xF000) == 0x8000) cur else null
     }
 
     /** Nazwy w katalogu [path] (null gdy brak). */
