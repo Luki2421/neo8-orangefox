@@ -93,6 +93,7 @@ class Franken(
             checkSepolicy(chosen, outSys)
             checkContexts(chosen, outSys)
             fixAudioVolumes(chosen, outSys)
+            addDonorVendorProps(chosen, donorImgs, outSys)
         }
 
         // --- my_product (dawca + konfiguracja bazy) ---
@@ -578,6 +579,34 @@ class Franken(
         }
     }
 
+    /**
+     * Wlasciwosci, ktore system AOSP dawcy dostaje od SWOJEGO vendora, a vendor ColorOS ich nie ma (ColorOS ustawia
+     * to swoim frameworkiem): ro.telephony.default_network - bez niej domyslny tryb sieci to WCDMA_PREF (tylko
+     * 3G/2G), karta zostaje na 2G (DerpFest na RMX8899: karta 1 na 2G/3G). Wartosc z vendora/odm dawcy,
+     * dopisana do vendor/build.prop bazy, gdy jej tam brak.
+     */
+    private fun addDonorVendorProps(chosen: MutableMap<String, File>, donorImgs: Map<String, File>, outSys: File) {
+        val vendor = chosen["vendor"] ?: return
+        val base = readProps(vendor, listOf("build.prop", "etc/build.prop")) + readProps(chosen["odm"], listOf("etc/build.prop", "build.prop"))
+        val donor = readProps(donorImgs["vendor"], listOf("build.prop", "etc/build.prop")) + readProps(donorImgs["odm"], listOf("etc/build.prop", "build.prop"))
+        val add = DONOR_VENDOR_PROPS.filter { it !in base && !donor[it].isNullOrBlank() }.associateWith { donor.getValue(it) }
+        val missing = DONOR_VENDOR_PROPS.filter { it !in base && donor[it].isNullOrBlank() }
+        if (missing.isNotEmpty()) log(tr("wlasciwosci: brak ${missing.joinToString()} w vendorze bazy i dawcy - Android uzyje domyslnych (siec: tylko 3G/2G - zmien tryb sieci w Ustawieniach)",
+            "props: ${missing.joinToString()} missing in base and donor vendor - Android defaults apply (network: 3G/2G only - change network type in Settings)"))
+        if (add.isEmpty()) return
+        if (fsType(vendor) != "erofs") { log(tr("wlasciwosci: vendor bazy nie jest EROFS - nie dopisuje ${add.keys.joinToString()}", "props: base vendor is not EROFS - not adding ${add.keys.joinToString()}")); return }
+        val path = listOf("build.prop", "etc/build.prop").first { p -> try { imgCat(vendor, p) != null } catch (_: Exception) { false } }
+        val old = String(imgCat(vendor, path)!!)
+        val text = old.trimEnd('\n') + "\n\n# Franken: z vendora dawcy AOSP (vendor ColorOS ich nie ma)\n" + add.entries.joinToString("") { (k, v) -> "$k=$v\n" }
+        val out = File(outSys, "vendor.img")
+        if (vendor.canonicalPath != out.canonicalPath) copyImage(vendor, out)
+        ErofsPatcher(out).use { p -> p.putFile(path, text.toByteArray()); p.commit() }
+        checkImage(out)
+        chosen["vendor"] = out
+        log(tr("wlasciwosci: vendor/$path + ${add.entries.joinToString { "${it.key}=${it.value}" }} (bez tego karta SIM tylko na 3G/2G)",
+            "props: vendor/$path + ${add.entries.joinToString { "${it.key}=${it.value}" }} (otherwise the SIM stays on 3G/2G)"))
+    }
+
     /** Plik z partycji: osobny obraz albo (system_ext/product) wewnatrz system; system jako root ("system/...") albo nie. */
     private fun partFile(chosen: Map<String, File>, n: String, p: String): ByteArray? {
         fun cat(img: File?, path: String) = img?.let { try { imgCat(it, path) } catch (_: Exception) { null } }
@@ -1054,6 +1083,9 @@ class Franken(
         val CIL_DECL = Regex("""\((?:type|typeattribute|typealias|role|roleattribute|boolean|tunable)\s+([A-Za-z0-9_.]+)[\s)]""")
         val CIL_TYPE = Regex("""\(type\s+([A-Za-z0-9_.]+)\)""")
         val CIL_NAME = Regex("""[A-Za-z_][A-Za-z0-9_.]*""")
+
+        /** Wlasciwosci vendora dawcy AOSP potrzebne jego systemowi, ktorych vendor ColorOS nie ustawia. */
+        val DONOR_VENDOR_PROPS = listOf("ro.telephony.default_network")
 
         /** Kategorie urzadzen w krzywych glosnosci, ktore zna AOSP (AudioHalVolumeCurve.DeviceCategory). */
         val AOSP_VOLUME_CATEGORIES = setOf("DEVICE_CATEGORY_HEADSET", "DEVICE_CATEGORY_SPEAKER", "DEVICE_CATEGORY_EARPIECE",
