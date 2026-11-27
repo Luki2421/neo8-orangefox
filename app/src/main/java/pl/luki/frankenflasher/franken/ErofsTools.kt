@@ -4,7 +4,11 @@ import java.io.File
 import java.io.IOException
 
 /** Natywne erofs-utils (budowane w CI ze zrodel) - na telefonie jako lib*.so w nativeLibraryDir. */
-class ErofsTools(val mkfs: File, val fsck: File, val dump: File, private val log: (String) -> Unit) {
+class ErofsTools(
+    val mkfs: File, val fsck: File, val dump: File, private val log: (String) -> Unit,
+    /** secilc (libsepol, budowany w CI) - kompilacja polityki SELinux jak init; systemowy jest dla aplikacji zablokowany. */
+    val secilc: File? = null,
+) {
 
     fun available() = mkfs.canExecute() && fsck.canExecute()
 

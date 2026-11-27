@@ -330,7 +330,7 @@ class Franken(
      *   secilc plat_sepolicy.cil -m -M true -G -N -c 30 mapping/<ver>.cil [<ver>.compat.cil] [genfs]
      *          [system_ext_sepolicy.cil + mapping + compat] [product_sepolicy.cil + mapping]
      *          plat_pub_versioned.cil vendor_sepolicy.cil [odm_sepolicy.cil]
-     * secilc z telefonu, na ktorym dziala aplikacja (/system/bin/secilc).
+     * secilc z aplikacji (libsepol, budowany w CI; /system/bin/secilc jest dla aplikacji zablokowany - error=13).
      *  - "-m": te same typy w dawcy i w vendorze sa dozwolone (to nie blad)
      *  - atrybuty wersjonowane (np. sh_exec_202504), ktore vendor ColorOS bierze z systemu ColorOS, a ktorych dawca
      *    nie ma -> "Failed to resolve" -> bootloop. Poprawka: puste deklaracje dopisane do plat_pub_versioned.cil
@@ -418,7 +418,7 @@ class Franken(
             }
             true
         } catch (e: Exception) {
-            log(tr("SELinux: secilc z telefonu niedostepny (${e.message}) - sprawdzenie przyblizone", "SELinux: phone secilc unavailable (${e.message}) - approximate check"))
+            log(tr("SELinux: secilc niedostepny (${e.message}) - sprawdzenie przyblizone", "SELinux: secilc unavailable (${e.message}) - approximate check"))
             false
         } finally { dir.deleteRecursively() }
 
@@ -428,8 +428,8 @@ class Franken(
             val fatal = v.contains("Failed to resolve") || v.contains("Re-declaration")
             if (fatal) throw IOException(tr("SELinux: polityka sie nie skompiluje przy starcie: $v - system by nie wstal. Przerywam.",
                 "SELinux: the policy will not compile at boot: $v - the system would not boot. Stopping."))
-            log(tr("SELinux: UWAGA - secilc zglosil blad (moze inna wersja secilc w tym telefonie): $v - ryzyko bootloopa",
-                "SELinux: WARNING - secilc reported an error (maybe a different secilc version on this phone): $v - bootloop risk"))
+            log(tr("SELinux: UWAGA - secilc ($secilcUsed) zglosil blad (moze inna wersja libsepol niz w dawcy): $v - ryzyko bootloopa",
+                "SELinux: WARNING - secilc ($secilcUsed) reported an error (maybe a different libsepol than the donor): $v - bootloop risk"))
         }
         if (extra.isNotEmpty()) {
             val v = chosen.getValue("vendor")
@@ -443,8 +443,8 @@ class Franken(
             log(tr("SELinux: vendor - dopisano ${extra.size} pustych atrybutow do etc/selinux/$PUB_CIL: ${short(extra)} (nazwy z systemu ColorOS, ktorych nie ma dawca - reguly vendora dla nich nic nie robia)",
                 "SELinux: vendor - added ${extra.size} empty attributes to etc/selinux/$PUB_CIL: ${short(extra)} (ColorOS system names the donor lacks - vendor rules for them do nothing)"))
         }
-        if (compiled && verdict == null) log(tr("SELinux: OK - polityka kompiluje sie jak przy starcie (secilc, ${inputs.size} plikow${if (extra.isEmpty()) "" else ", z poprawka vendora"})",
-            "SELinux: OK - the policy compiles as at boot (secilc, ${inputs.size} files${if (extra.isEmpty()) "" else ", with the vendor fix"})"))
+        if (compiled && verdict == null) log(tr("SELinux: OK - polityka kompiluje sie jak przy starcie ($secilcUsed, ${inputs.size} plikow${if (extra.isEmpty()) "" else ", z poprawka vendora"})",
+            "SELinux: OK - the policy compiles as at boot ($secilcUsed, ${inputs.size} files${if (extra.isEmpty()) "" else ", with the vendor fix"})"))
         if (!compiled) log(tr("SELinux: przyblizone - bez kompilacji nie da sie wykluczyc bootloopa", "SELinux: approximate - without compiling a bootloop cannot be ruled out"))
     }
 
@@ -475,10 +475,14 @@ class Franken(
         return names.filter { it !in CIL_OPS && CIL_NAME.matches(it) }.toSet()
     }
 
+    private var secilcUsed = "secilc"
+
     /** Kompilacja jak w init. null = OK, tekst = blad. Wyjatek, gdy secilc nie da sie uruchomic. */
     private fun secilc(files: List<File>, dir: File): String? {
-        val bin = File(SECILC)
-        if (!bin.isFile) throw IOException(tr("brak $SECILC", "no $SECILC"))
+        // wlasny (jniLibs, wykonywalny dla aplikacji), potem systemowy (zwykle zablokowany: error=13)
+        val bin = tools.secilc?.takeIf { it.canExecute() } ?: File(SECILC).takeIf { it.isFile }
+            ?: throw IOException(tr("brak secilc (libsecilc.so i $SECILC)", "no secilc (libsecilc.so and $SECILC)"))
+        secilcUsed = if (bin == tools.secilc) tr("secilc aplikacji", "app secilc") else bin.path
         val out = File(dir, "policy.out")
         val cmd = listOf(bin.path, files[0].absolutePath, "-m", "-M", "true", "-G", "-N", "-c", "30", files[1].absolutePath, "-o", out.absolutePath, "-f", "/dev/null") +
             files.drop(2).map { it.absolutePath }

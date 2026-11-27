@@ -20,6 +20,10 @@ jobs:
         run: |
           sudo apt-get install -y -qq autoconf automake libtool pkg-config >/dev/null
           bash .github/scripts/build-erofs.sh
+      - name: secilc (libsepol, arm64, NDK) - kompilacja polityki SELinux jak init
+        run: |
+          sudo apt-get install -y -qq flex >/dev/null
+          bash .github/scripts/build-secilc.sh
       - name: Natywny dekoder XZ (liblzma, arm64, NDK)
         run: bash .github/scripts/build-xzjni.sh
       - name: Build release APK

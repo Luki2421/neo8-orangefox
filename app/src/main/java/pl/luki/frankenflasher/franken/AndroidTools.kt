@@ -12,5 +12,5 @@ fun erofsTools(ctx: Context, log: (String) -> Unit): ErofsTools {
             "Zainstaluj APK Franken Flashera jako aktualizacje (np. ten sam plik ponownie) - wtedy dziala z /data/app.",
         "erofs tools in $dir are not executable (Franken Flasher embedded in the system by an older version). " +
             "Install the Franken Flasher APK as an update (e.g. the same file again) - it then runs from /data/app."))
-    return ErofsTools(bins[0], bins[1], bins[2], log)
+    return ErofsTools(bins[0], bins[1], bins[2], log, File(dir, "libsecilc.so").takeIf { it.isFile })
 }
