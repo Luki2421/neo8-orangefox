@@ -92,6 +92,7 @@ class Franken(
             checkFstab(chosen)
             checkSepolicy(chosen, outSys)
             checkContexts(chosen, outSys)
+            fixAudioVolumes(chosen, outSys)
         }
 
         // --- my_product (dawca + konfiguracja bazy) ---
@@ -541,6 +542,39 @@ class Franken(
             checkImage(out)
             chosen[part] = out
             log(tr("SELinux: $part - poprawiono ${files.keys.joinToString { it.second.substringAfterLast('/') }}", "SELinux: $part - fixed ${files.keys.joinToString { it.second.substringAfterLast('/') }}"))
+        }
+    }
+
+    /**
+     * Glosnosc z vendora/odm ColorOS dla systemu AOSP: audio_policy_volumes.xml ColorOS ma krzywe dla kategorii
+     * urzadzen, ktorych AOSP nie zna (DEVICE_CATEGORY_A2DP, DEVICE_CATEGORY_USB_HEADSET). HAL audio (AIDL) przekazuje
+     * je audioserverowi, a ten na nieznanej kategorii odrzuca CALA konfiguracje glosnosci i bierze domyslna - bez
+     * krzywych i z zakresem 0-0: "APM::VolumeCurve: Invalid device category", "rescaleIndex: index range should
+     * not be zero", glosnosc rozmowy NaN -> cisza w sluchawce (log DerpFest na RMX8899). Framework ColorOS te
+     * kategorie zna (ro.oplus.audio.aidl_volume). Poprawka: usuniecie krzywych z nieznanymi kategoriami (urzadzenia
+     * A2DP/USB i tak dostaja krzywa HEADSET).
+     */
+    private fun fixAudioVolumes(chosen: MutableMap<String, File>, outSys: File) {
+        step(tr("audio: konfiguracja glosnosci ColorOS dla AOSP", "audio: ColorOS volume config for AOSP"))
+        for (part in listOf("vendor", "odm")) {
+            val img = chosen[part] ?: continue
+            if (fsType(img) != "erofs") continue
+            val files = try { listOf("audio_policy_volumes.xml", "audio_policy_engine_stream_volumes.xml").flatMap { catAll(img, it).entries } }
+                catch (e: Exception) { log(tr("audio: $part - nie odczytano (${e.message})", "audio: $part - read failed (${e.message})")); continue }
+            val edits = LinkedHashMap<String, ByteArray>()
+            for ((path, bytes) in files) {
+                val (fixed, removed) = stripUnknownVolumeCategories(String(bytes))
+                if (removed.isEmpty()) continue
+                edits[path] = fixed.toByteArray()
+                log(tr("audio: $part $path - usunieto ${removed.values.sum()} krzywych z kategoriami ColorOS (${removed.keys.joinToString { it.removePrefix("DEVICE_CATEGORY_") }}), ktorych AOSP nie zna - bez tego glosnosc rozmowy = NaN (cisza w sluchawce)",
+                    "audio: $part $path - removed ${removed.values.sum()} curves with ColorOS categories (${removed.keys.joinToString { it.removePrefix("DEVICE_CATEGORY_") }}) unknown to AOSP - otherwise call volume = NaN (silent earpiece)"))
+            }
+            if (edits.isEmpty()) continue
+            val out = File(outSys, "$part.img")
+            if (img.canonicalPath != out.canonicalPath) copyImage(img, out)
+            ErofsPatcher(out).use { p -> edits.forEach { (path, data) -> p.putFile(path, data) }; p.commit() }
+            checkImage(out)
+            chosen[part] = out
         }
     }
 
@@ -1020,6 +1054,29 @@ class Franken(
         val CIL_DECL = Regex("""\((?:type|typeattribute|typealias|role|roleattribute|boolean|tunable)\s+([A-Za-z0-9_.]+)[\s)]""")
         val CIL_TYPE = Regex("""\(type\s+([A-Za-z0-9_.]+)\)""")
         val CIL_NAME = Regex("""[A-Za-z_][A-Za-z0-9_.]*""")
+
+        /** Kategorie urzadzen w krzywych glosnosci, ktore zna AOSP (AudioHalVolumeCurve.DeviceCategory). */
+        val AOSP_VOLUME_CATEGORIES = setOf("DEVICE_CATEGORY_HEADSET", "DEVICE_CATEGORY_SPEAKER", "DEVICE_CATEGORY_EARPIECE",
+            "DEVICE_CATEGORY_EXT_MEDIA", "DEVICE_CATEGORY_HEARING_AID")
+        private val VOLUME_ELEM = Regex("""\n?[ \t]*<volume\b[^>]*?deviceCategory="([A-Z0-9_]+)"[^>]*?(?:/>|>.*?</volume>)""", RegexOption.DOT_MATCHES_ALL)
+        private val XML_COMMENT = Regex("""<!--.*?-->""", RegexOption.DOT_MATCHES_ALL)
+
+        /** Usuwa elementy <volume> z kategoria spoza AOSP (poza komentarzami). Zwraca tekst i liczbe usunietych na kategorie. */
+        fun stripUnknownVolumeCategories(xml: String): Pair<String, Map<String, Int>> {
+            val removed = LinkedHashMap<String, Int>()
+            val out = StringBuilder()
+            var pos = 0
+            fun plain(seg: String) = VOLUME_ELEM.replace(seg) { m ->
+                val cat = m.groupValues[1]
+                if (cat in AOSP_VOLUME_CATEGORIES) m.value else { removed[cat] = (removed[cat] ?: 0) + 1; "" }
+            }
+            for (c in XML_COMMENT.findAll(xml)) {
+                out.append(plain(xml.substring(pos, c.range.first))).append(c.value)
+                pos = c.range.last + 1
+            }
+            out.append(plain(xml.substring(pos)))
+            return out.toString() to removed
+        }
         val CIL_OPS = setOf("and", "or", "not", "xor", "all", "self")
 
         val HW_FROM_BASE = listOf("odm", "odm_dlkm", "vendor", "vendor_dlkm", "system_dlkm")
