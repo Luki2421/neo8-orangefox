@@ -91,6 +91,7 @@ class Franken(
                 "my_* kept from base (ColorOS vendor mounts them, AOSP system ignores them); ColorOS fixes skipped"))
             checkFstab(chosen)
             checkSepolicy(chosen, outSys)
+            checkContexts(chosen, outSys)
         }
 
         // --- my_product (dawca + konfiguracja bazy) ---
@@ -473,6 +474,84 @@ class Franken(
             else -> emptyList()
         }
         return names.filter { it !in CIL_OPS && CIL_NAME.matches(it) }.toSet()
+    }
+
+    /**
+     * *_contexts dawcy AOSP + vendora/odm bazy - init i servicemanager lacza je w jedno:
+     *  - property_contexts: ta sama nazwa (exact / prefix / prefix z kropka) w dwoch plikach -> BuildTrie
+     *    "Duplicate ... match" -> init: "Failed to load serialized property info file" (FATAL) -> restart
+     *    zaraz po starcie jadra (log 2.5.3: persist.sys.theme, ro.vendor.dolby.dax.version)
+     *  - service_contexts / hwservice_contexts: ta sama nazwa -> selabel_open sie nie udaje ->
+     *    servicemanager/hwservicemanager (critical) padaja -> restart
+     * Poprawka: duplikaty z vendor/odm bazy zakomentowane, zostaje wpis dawcy (typy dawcy i vendora sa
+     * laczone przez secilc -m, wiec przy tym samym kontekscie nic sie nie zmienia).
+     */
+    private fun checkContexts(chosen: MutableMap<String, File>, outSys: File) {
+        step(tr("SELinux: *_contexts dawcy i vendora bazy", "SELinux: donor and base vendor *_contexts"))
+        val parts = listOf("system" to "plat", "system_ext" to "system_ext", "product" to "product", "vendor" to "vendor", "odm" to "odm")
+        val base = setOf("vendor", "odm")
+        val edits = LinkedHashMap<Pair<String, String>, MutableList<String>>()   // (partycja, sciezka) -> linie
+        for (kind in listOf("property", "service", "hwservice")) {
+            val first = HashMap<String, Pair<String, String>>()   // klucz -> (partycja, kontekst)
+            val found = ArrayList<String>()
+            val donorDup = ArrayList<String>()
+            for ((part, prefix) in parts) {
+                val path = "etc/selinux/${prefix}_${kind}_contexts"
+                val text = partFile(chosen, part, path)?.let { String(it) } ?: continue
+                val lines = text.split('\n').toMutableList()
+                var changed = false
+                for ((i, raw) in lines.withIndex()) {
+                    val l = raw.trim()
+                    if (l.isEmpty() || l.startsWith("#")) continue
+                    val t = l.split(Regex("\\s+"))
+                    if (t.size < 2) continue
+                    val name = t[0]
+                    val key = if (kind != "property") name else when {
+                        t.getOrNull(2) == "exact" -> "exact $name"
+                        name.endsWith(".") -> "dot ${name.dropLast(1)}"
+                        else -> "prefix $name"
+                    }
+                    val prev = first[key]
+                    if (prev == null) { first[key] = part to t[1]; continue }
+                    val desc = "$name (${prev.first}: ${prev.second}${if (prev.second == t[1]) "" else ", $part: ${t[1]}"})"
+                    if (part in base && prev.first !in base) {
+                        lines[i] = "# Franken: duplikat z ${prev.first} - $raw"
+                        changed = true
+                        found += desc
+                    } else if (part !in base) donorDup += desc
+                }
+                if (changed) edits[part to path] = lines
+            }
+            fun short(l: List<String>) = l.take(8).joinToString("; ") + if (l.size > 8) " ... (+${l.size - 8})" else ""
+            if (found.isNotEmpty()) log(tr("SELinux: ${kind}_contexts - ${found.size} duplikatow dawcy i bazy (init/servicemanager by padl): ${short(found)} - usuwam z bazy",
+                "SELinux: ${kind}_contexts - ${found.size} donor/base duplicates (init/servicemanager would fail): ${short(found)} - removing from base"))
+            if (donorDup.isNotEmpty()) log(tr("SELinux: UWAGA - ${kind}_contexts - duplikaty w samym dawcy: ${short(donorDup)}",
+                "SELinux: WARNING - ${kind}_contexts - duplicates within the donor: ${short(donorDup)}"))
+            if (found.isEmpty() && donorDup.isEmpty()) log(tr("SELinux: ${kind}_contexts - bez duplikatow", "SELinux: ${kind}_contexts - no duplicates"))
+        }
+        for (part in base) {
+            val files = edits.filterKeys { it.first == part }
+            if (files.isEmpty()) continue
+            val src = chosen.getValue(part)
+            if (fsType(src) != "erofs") throw IOException(tr("SELinux: $part bazy wymaga poprawki *_contexts, ale nie jest EROFS. Przerywam.",
+                "SELinux: base $part needs a *_contexts fix but is not EROFS. Stopping."))
+            val out = File(outSys, "$part.img")
+            if (src.canonicalPath != out.canonicalPath) copyImage(src, out)
+            ErofsPatcher(out).use { p -> files.forEach { (k, lines) -> p.putFile(k.second, lines.joinToString("\n").toByteArray()) }; p.commit() }
+            checkImage(out)
+            chosen[part] = out
+            log(tr("SELinux: $part - poprawiono ${files.keys.joinToString { it.second.substringAfterLast('/') }}", "SELinux: $part - fixed ${files.keys.joinToString { it.second.substringAfterLast('/') }}"))
+        }
+    }
+
+    /** Plik z partycji: osobny obraz albo (system_ext/product) wewnatrz system; system jako root ("system/...") albo nie. */
+    private fun partFile(chosen: Map<String, File>, n: String, p: String): ByteArray? {
+        fun cat(img: File?, path: String) = img?.let { try { imgCat(it, path) } catch (_: Exception) { null } }
+        return when (n) {
+            "system" -> cat(chosen["system"], "system/$p") ?: cat(chosen["system"], p)
+            "system_ext", "product" -> cat(chosen[n], p) ?: cat(chosen["system"], "system/$n/$p")
+            else -> cat(chosen[n], p)
+        }
     }
 
     private var secilcUsed = "secilc"
