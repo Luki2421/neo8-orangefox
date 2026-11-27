@@ -18,8 +18,10 @@ git clone -q --depth 1 -b $VER https://github.com/SELinuxProject/selinux.git
 cd selinux
 flex -o libsepol/cil/src/cil_lexer.c libsepol/cil/src/cil_lexer.l
 S=libsepol
+# secilc.c: #include <sepol/cil/cil.h> (po "make install" libsepol) - tu ze zrodel
+mkdir -p inc/sepol && ln -sfn "$PWD/$S/cil/include/cil" inc/sepol/cil
 $CC -O2 -static -D_GNU_SOURCE -DHAVE_REALLOCARRAY -Wl,-z,max-page-size=16384 \
-  -I$S/include -I$S/src -I$S/cil/include -I$S/cil/src \
+  -Iinc -I$S/include -I$S/src -I$S/cil/include -I$S/cil/src \
   $S/src/*.c $S/cil/src/*.c secilc/secilc.c -o secilc.bin
 $STRIP secilc.bin
 mkdir -p "$(dirname "$OUT")"
