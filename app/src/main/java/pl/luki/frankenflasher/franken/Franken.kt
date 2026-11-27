@@ -90,7 +90,7 @@ class Franken(
                 "Franken: AOSP donor (no my_*) - system/system_ext/product from donor, vendor/odm/boot/firmware from base; " +
                 "my_* kept from base (ColorOS vendor mounts them, AOSP system ignores them); ColorOS fixes skipped"))
             checkFstab(chosen)
-            checkSepolicy(chosen)
+            checkSepolicy(chosen, outSys)
         }
 
         // --- my_product (dawca + konfiguracja bazy) ---
@@ -324,49 +324,181 @@ class Franken(
         }
     }
 
-    /** Pliki o danej nazwie w obrazie -> zawartosc (dump.erofs --cat, bez wypakowania). */
     /**
-     * Zgodnosc SELinux dawcy AOSP z vendorem bazy (jak przy GSI), przed budowaniem:
-     *  - typy zadeklarowane i w system_ext/product dawcy, i w vendor/odm bazy -> blad kompilacji polityki przy starcie
-     *  - atrybuty wersjonowane (np. foo_202504), ktorych uzywa polityka vendor/odm bazy, a nie definiuje nic
-     *    po stronie dawcy ani plat_pub_versioned bazy -> blad kompilacji polityki przy starcie (bootloop)
-     * Tylko ostrzezenie w logu; bledy odczytu nie przerywaja budowania.
+     * SELinux dawcy AOSP + vendor bazy: kompilacja polityki dokladnie tak jak init przy starcie
+     * (precompiled_sepolicy vendora nie pasuje do systemu dawcy, wiec init kompiluje sam):
+     *   secilc plat_sepolicy.cil -m -M true -G -N -c 30 mapping/<ver>.cil [<ver>.compat.cil] [genfs]
+     *          [system_ext_sepolicy.cil + mapping + compat] [product_sepolicy.cil + mapping]
+     *          plat_pub_versioned.cil vendor_sepolicy.cil [odm_sepolicy.cil]
+     * secilc z telefonu, na ktorym dziala aplikacja (/system/bin/secilc).
+     *  - "-m": te same typy w dawcy i w vendorze sa dozwolone (to nie blad)
+     *  - atrybuty wersjonowane (np. sh_exec_202504), ktore vendor ColorOS bierze z systemu ColorOS, a ktorych dawca
+     *    nie ma -> "Failed to resolve" -> bootloop. Poprawka: puste deklaracje dopisane do plat_pub_versioned.cil
+     *    vendora bazy (reguly vendora dla typow, ktorych w AOSP nie ma, po prostu nic nie robia)
+     *  - inny blad rozwiazywania nazw -> przerwanie (system by nie wstal)
+     * Gdy secilc nie da sie uruchomic - sprawdzenie przyblizone (tylko wersjonowane nazwy).
      */
-    private fun checkSepolicy(chosen: Map<String, File>) {
-        step(tr("SELinux: zgodnosc dawcy AOSP z vendorem bazy", "SELinux: AOSP donor vs base vendor"))
-        fun cat(n: String, path: String): String? = chosen[n]?.let { img -> try { imgCat(img, path)?.let { String(it) } } catch (_: Exception) { null } }
-        try {
-            val ver = cat("vendor", "etc/selinux/plat_sepolicy_vers.txt")?.trim()
-            if (ver.isNullOrEmpty()) { log(tr("SELinux: brak vendor/etc/selinux/plat_sepolicy_vers.txt - pomijam sprawdzenie", "SELinux: no plat_sepolicy_vers.txt - check skipped")); return }
-            val suffix = "_" + ver.replace('.', '_')
-            val decl = Regex("""\((?:type|typeattribute)\s+([A-Za-z0-9_]+)\)""")
-            val set = Regex("""\(typeattributeset\s+([A-Za-z0-9_]+)\s""")
-            fun names(t: String?) = t?.let { decl.findAll(it).map { m -> m.groupValues[1] }.toSet() + set.findAll(it).map { m -> m.groupValues[1] } } ?: emptySet()
-            val vendorCil = listOfNotNull(cat("vendor", "etc/selinux/vendor_sepolicy.cil"), cat("odm", "etc/selinux/odm_sepolicy.cil"))
-            if (vendorCil.isEmpty()) { log(tr("SELinux: brak vendor_sepolicy.cil w bazie - pomijam sprawdzenie", "SELinux: no vendor_sepolicy.cil in base - check skipped")); return }
-            val vendorDecl = vendorCil.flatMap { decl.findAll(it).map { m -> m.groupValues[1] }.toList() }.toSet()
-            val donorPolicy = listOfNotNull(cat("system_ext", "etc/selinux/system_ext_sepolicy.cil"), cat("product", "etc/selinux/product_sepolicy.cil"))
-            val donorDecl = donorPolicy.flatMap { decl.findAll(it).map { m -> m.groupValues[1] }.toList() }.toSet()
-            val dup = (vendorDecl intersect donorDecl).sorted()
-            val defined = names(cat("vendor", "etc/selinux/plat_pub_versioned.cil")) + vendorDecl + donorDecl +
-                names(cat("system", "system/etc/selinux/plat_sepolicy.cil")) +
-                names(cat("system", "system/etc/selinux/mapping/$ver.cil")) +
-                names(cat("system_ext", "etc/selinux/mapping/$ver.cil")) + names(cat("product", "etc/selinux/mapping/$ver.cil"))
-            val used = vendorCil.flatMap { Regex("""\b([A-Za-z0-9_]+$suffix)\b""").findAll(it).map { m -> m.groupValues[1] }.toList() }.toSet()
-            val undefined = (used - defined).sorted()
-            fun short(l: List<String>) = l.take(12).joinToString() + if (l.size > 12) " ... (+${l.size - 12})" else ""
-            if (dup.isEmpty() && undefined.isEmpty())
-                log(tr("SELinux: OK - polityka vendor $ver bazy nie koliduje z dawca (typow dawcy: ${donorDecl.size}, wersjonowanych uzytych przez vendor: ${used.size})",
-                    "SELinux: OK - base vendor $ver policy does not conflict with the donor (donor types: ${donorDecl.size}, versioned used by vendor: ${used.size})"))
-            if (dup.isNotEmpty()) log(tr("SELinux: UWAGA - te same typy w dawcy i vendorze bazy (${dup.size}): ${short(dup)} - polityka sie nie skompiluje, bootloop",
-                "SELinux: WARNING - same types in donor and base vendor (${dup.size}): ${short(dup)} - policy will not compile, bootloop"))
-            if (undefined.isNotEmpty()) log(tr("SELinux: UWAGA - vendor bazy uzywa typow, ktorych dawca nie ma (${undefined.size}): ${short(undefined)} - prawdopodobny bootloop",
-                "SELinux: WARNING - base vendor uses types the donor lacks (${undefined.size}): ${short(undefined)} - likely bootloop"))
-        } catch (e: Exception) {
-            log(tr("SELinux: sprawdzenie nieudane (${e.message}) - buduje dalej", "SELinux: check failed (${e.message}) - continuing"))
+    private fun checkSepolicy(chosen: MutableMap<String, File>, outSys: File) {
+        step(tr("SELinux: kompilacja polityki (dawca + vendor bazy)", "SELinux: compiling policy (donor + base vendor)"))
+        fun cat(n: String, vararg paths: String): ByteArray? {
+            val img = chosen[n] ?: return null
+            for (p in paths) try { imgCat(img, p)?.let { return it } } catch (_: Exception) {}
+            return null
         }
+        fun sys(p: String) = cat("system", "system/$p", p)
+        fun part(n: String, p: String) = cat(n, p) ?: sys("$n/$p")
+        val ver = cat("vendor", "etc/selinux/plat_sepolicy_vers.txt")?.let { String(it).trim() }
+        if (ver.isNullOrEmpty()) { log(tr("SELinux: brak vendor/etc/selinux/plat_sepolicy_vers.txt - pomijam sprawdzenie", "SELinux: no plat_sepolicy_vers.txt - check skipped")); return }
+        val plat = sys("etc/selinux/plat_sepolicy.cil")
+        val pub = cat("vendor", "etc/selinux/plat_pub_versioned.cil")
+        val vend = cat("vendor", "etc/selinux/vendor_sepolicy.cil")
+        if (plat == null || pub == null || vend == null) {
+            log(tr("SELinux: nie odczytano plikow polityki (plat_sepolicy: ${plat != null}, plat_pub_versioned: ${pub != null}, vendor_sepolicy: ${vend != null}) - pomijam sprawdzenie",
+                "SELinux: policy files not read (plat_sepolicy: ${plat != null}, plat_pub_versioned: ${pub != null}, vendor_sepolicy: ${vend != null}) - check skipped"))
+            return
+        }
+        val map = sys("etc/selinux/mapping/$ver.cil") ?: run {
+            val have = chosen["system"]?.let { imgList(it, "system/etc/selinux/mapping") }?.filter { !it.contains("compat") }?.map { it.removeSuffix(".cil") }?.sorted()
+            throw IOException(tr("SELinux: system dawcy nie ma mapping/$ver.cil - nie obsluguje vendora $ver bazy (ma: ${have?.joinToString() ?: "?"}). Init nie zaladuje polityki - bootloop. Przerywam.",
+                "SELinux: donor system has no mapping/$ver.cil - it does not support base vendor $ver (has: ${have?.joinToString() ?: "?"}). Init cannot load the policy - bootloop. Stopping."))
+        }
+        val gv = cat("vendor", "etc/selinux/genfs_labels_version.txt")?.let { String(it).trim() }
+        // kolejnosc i zestaw jak w init (selinux.cpp, OpenSplitPolicy)
+        val inputs = ArrayList<Pair<String, ByteArray>>()
+        fun add(name: String, data: ByteArray?) { if (data != null) inputs += name to data }
+        add("plat_sepolicy.cil", plat)
+        add("plat_mapping_$ver.cil", map)
+        add("plat_$ver.compat.cil", sys("etc/selinux/mapping/$ver.compat.cil"))
+        if (!gv.isNullOrEmpty()) add("plat_sepolicy_genfs_$gv.cil", sys("etc/selinux/plat_sepolicy_genfs_$gv.cil"))
+        add("system_ext_sepolicy.cil", part("system_ext", "etc/selinux/system_ext_sepolicy.cil"))
+        add("system_ext_mapping_$ver.cil", part("system_ext", "etc/selinux/mapping/$ver.cil"))
+        add("system_ext_$ver.compat.cil", part("system_ext", "etc/selinux/mapping/$ver.compat.cil"))
+        add("product_sepolicy.cil", part("product", "etc/selinux/product_sepolicy.cil"))
+        add("product_mapping_$ver.cil", part("product", "etc/selinux/mapping/$ver.cil"))
+        add(PUB_CIL, pub)
+        add("vendor_sepolicy.cil", vend)
+        add("odm_sepolicy.cil", cat("odm", "etc/selinux/odm_sepolicy.cil"))
+
+        val suffix = "_" + ver.replace('.', '_')
+        // bez komentarzy CIL (';' do konca linii)
+        val texts = inputs.associate { (n, d) -> n to String(d).lineSequence().joinToString("\n") { it.substringBefore(';') } }
+        val declared = texts.values.flatMapTo(HashSet()) { t -> CIL_DECL.findAll(t).map { it.groupValues[1] } }
+        val vendorSide = listOfNotNull(texts["vendor_sepolicy.cil"], texts["odm_sepolicy.cil"])
+        val dup = run {
+            val donorSide = listOfNotNull(texts["system_ext_sepolicy.cil"], texts["product_sepolicy.cil"]).flatMapTo(HashSet()) { t -> CIL_TYPE.findAll(t).map { it.groupValues[1] } }
+            vendorSide.flatMapTo(HashSet()) { t -> CIL_TYPE.findAll(t).map { it.groupValues[1] } }.intersect(donorSide)
+        }
+        // wersjonowane nazwy uzyte przez vendor/odm, ktorych nikt nie deklaruje (z systemu ColorOS)
+        val extra = LinkedHashSet<String>()
+        vendorSide.forEach { t -> Regex("""\b([A-Za-z0-9_]+$suffix)\b""").findAll(t).forEach { m -> if (m.groupValues[1] !in declared) extra += m.groupValues[1] } }
+        fun short(l: Collection<String>) = l.take(12).joinToString() + if (l.size > 12) " ... (+${l.size - 12})" else ""
+        fun pubWithExtra(): ByteArray = if (extra.isEmpty()) pub else (String(pub).trimEnd() + "\n; Franken: atrybuty z systemu ColorOS, ktorych nie ma dawca AOSP (puste)\n" +
+            extra.joinToString("") { "(typeattribute $it)\n" }).toByteArray()
+
+        val dir = File(work, "selinux").apply { deleteRecursively(); mkdirs() }
+        val files = inputs.map { (n, d) -> File(dir, n).apply { writeBytes(d) } }
+        var verdict: String? = null    // null = OK
+        var rounds = 0
+        val compiled: Boolean = try {
+            while (true) {
+                File(dir, PUB_CIL).writeBytes(pubWithExtra())
+                val err = secilc(files, dir)
+                if (err == null) { verdict = null; break }
+                rounds++
+                val m = Regex("""Failed to resolve \S+ statement at (\S+?):(\d+)""").find(err)
+                val src = m?.groupValues?.get(1)?.let { File(it).let { f -> if (f.isAbsolute) f else File(dir, it) } }?.takeIf { it.isFile }
+                val stmt = src?.useLines { s -> s.drop(m!!.groupValues[2].toInt() - 1).firstOrNull() }?.trim()
+                val cand = stmt?.let { s -> Regex("""[A-Za-z0-9_]+""").findAll(s).map { it.value }.filter { it.endsWith(suffix) }.toSet() + typeTokens(s) }.orEmpty()
+                val missing = cand.filter { it !in declared && it !in extra }.toSet()
+                if (missing.isEmpty() || rounds > 40) {
+                    verdict = err.lines().filter { it.isNotBlank() }.take(4).joinToString(" | ") + (if (src != null && stmt != null) " | ${src.name}: ${stmt.take(200)}" else "")
+                    break
+                }
+                extra += missing
+            }
+            true
+        } catch (e: Exception) {
+            log(tr("SELinux: secilc z telefonu niedostepny (${e.message}) - sprawdzenie przyblizone", "SELinux: phone secilc unavailable (${e.message}) - approximate check"))
+            false
+        } finally { dir.deleteRecursively() }
+
+        if (dup.isNotEmpty()) log(tr("SELinux: te same typy w dawcy i vendorze (${dup.size}): ${short(dup.sorted())} - dozwolone (init kompiluje z -m)",
+            "SELinux: same types in donor and vendor (${dup.size}): ${short(dup.sorted())} - allowed (init compiles with -m)"))
+        verdict?.let { v ->
+            val fatal = v.contains("Failed to resolve") || v.contains("Re-declaration")
+            if (fatal) throw IOException(tr("SELinux: polityka sie nie skompiluje przy starcie: $v - system by nie wstal. Przerywam.",
+                "SELinux: the policy will not compile at boot: $v - the system would not boot. Stopping."))
+            log(tr("SELinux: UWAGA - secilc zglosil blad (moze inna wersja secilc w tym telefonie): $v - ryzyko bootloopa",
+                "SELinux: WARNING - secilc reported an error (maybe a different secilc version on this phone): $v - bootloop risk"))
+        }
+        if (extra.isNotEmpty()) {
+            val v = chosen.getValue("vendor")
+            if (fsType(v) != "erofs") throw IOException(tr("SELinux: vendor bazy wymaga ${extra.size} atrybutow (${short(extra)}), ale nie jest EROFS - nie moge go poprawic. Przerywam.",
+                "SELinux: base vendor needs ${extra.size} attributes (${short(extra)}) but is not EROFS - cannot patch it. Stopping."))
+            val out = File(outSys, "vendor.img")
+            copyImage(v, out)
+            ErofsPatcher(out).use { p -> p.putFile("etc/selinux/$PUB_CIL", pubWithExtra()); p.commit() }
+            checkImage(out)
+            chosen["vendor"] = out
+            log(tr("SELinux: vendor - dopisano ${extra.size} pustych atrybutow do etc/selinux/$PUB_CIL: ${short(extra)} (nazwy z systemu ColorOS, ktorych nie ma dawca - reguly vendora dla nich nic nie robia)",
+                "SELinux: vendor - added ${extra.size} empty attributes to etc/selinux/$PUB_CIL: ${short(extra)} (ColorOS system names the donor lacks - vendor rules for them do nothing)"))
+        }
+        if (compiled && verdict == null) log(tr("SELinux: OK - polityka kompiluje sie jak przy starcie (secilc, ${inputs.size} plikow${if (extra.isEmpty()) "" else ", z poprawka vendora"})",
+            "SELinux: OK - the policy compiles as at boot (secilc, ${inputs.size} files${if (extra.isEmpty()) "" else ", with the vendor fix"})"))
+        if (!compiled) log(tr("SELinux: przyblizone - bez kompilacji nie da sie wykluczyc bootloopa", "SELinux: approximate - without compiling a bootloop cannot be ruled out"))
     }
 
+    /**
+     * Nazwy w miejscu typu/atrybutu w regule CIL: zrodlo i cel allow/typetransition, atrybut i wyrazenie
+     * typeattributeset. Wynik typetransition (musi byc typem) - nie, tego nie da sie zastapic pustym atrybutem.
+     */
+    private fun typeTokens(stmt: String): Set<String> {
+        val tok = Regex("""\(|\)|[^\s()]+""").findAll(stmt).map { it.value }.toList()
+        var i = 0
+        fun parse(): Any {
+            if (i >= tok.size) throw IOException("cil")
+            if (tok[i] != "(") return tok[i++]
+            i++
+            val l = ArrayList<Any>()
+            while (i < tok.size && tok[i] != ")") l += parse()
+            i++
+            return l
+        }
+        val e = (try { parse() } catch (_: Exception) { null }) as? List<*> ?: return emptySet()
+        fun flat(x: Any?): List<String> = when (x) { is String -> listOf(x); is List<*> -> x.flatMap { flat(it) }; else -> emptyList() }
+        val names = when (e.firstOrNull()) {
+            "allow", "auditallow", "dontaudit", "neverallow", "allowx", "auditallowx", "dontauditx", "neverallowx",
+            "typetransition", "typechange", "typemember" -> flat(e.getOrNull(1)) + flat(e.getOrNull(2))
+            "typeattributeset" -> flat(e.getOrNull(1)) + flat(e.getOrNull(2))
+            else -> emptyList()
+        }
+        return names.filter { it !in CIL_OPS && CIL_NAME.matches(it) }.toSet()
+    }
+
+    /** Kompilacja jak w init. null = OK, tekst = blad. Wyjatek, gdy secilc nie da sie uruchomic. */
+    private fun secilc(files: List<File>, dir: File): String? {
+        val bin = File(SECILC)
+        if (!bin.isFile) throw IOException(tr("brak $SECILC", "no $SECILC"))
+        val out = File(dir, "policy.out")
+        val cmd = listOf(bin.path, files[0].absolutePath, "-m", "-M", "true", "-G", "-N", "-c", "30", files[1].absolutePath, "-o", out.absolutePath, "-f", "/dev/null") +
+            files.drop(2).map { it.absolutePath }
+        val p = ProcessBuilder(cmd).directory(dir).redirectErrorStream(true).start()
+        val text = p.inputStream.bufferedReader().readText()
+        if (!p.waitFor(300, java.util.concurrent.TimeUnit.SECONDS)) { p.destroyForcibly(); throw IOException("secilc: timeout") }
+        out.delete()
+        return if (p.exitValue() == 0) null else text.trim().ifEmpty { "secilc: kod ${p.exitValue()}" }
+    }
+
+    /** Nazwy w katalogu obrazu EROFS albo ext4. */
+    private fun imgList(img: File, path: String): List<String>? = try {
+        when (fsType(img)) {
+            "ext4" -> Ext4Reader(img).use { it.list(path) }
+            "erofs" -> ErofsPatcher(img, readOnly = true).use { p -> p.list(path.trimStart('/'))?.map { it.name } }
+            else -> null
+        }?.filter { it != "." && it != ".." }
+    } catch (_: Exception) { null }
+
+    /** Pliki o danej nazwie w obrazie -> zawartosc (dump.erofs --cat, bez wypakowania). */
     private fun catAll(img: File, name: String): Map<String, ByteArray> {
         val paths = ErofsPatcher(img, readOnly = true).use { findFiles(it, name) }
         return paths.associateWith { tools.cat(img, it) }
@@ -798,6 +930,15 @@ class Franken(
     }
 
     companion object {
+        /** secilc telefonu - ten sam program, ktorym init kompiluje polityke przy starcie. */
+        const val SECILC = "/system/bin/secilc"
+        const val PUB_CIL = "plat_pub_versioned.cil"
+        /** Deklaracje nazw, ktore moga stac w miejscu typu (i kilka innych, zeby nie dublowac). */
+        val CIL_DECL = Regex("""\((?:type|typeattribute|typealias|role|roleattribute|boolean|tunable)\s+([A-Za-z0-9_.]+)[\s)]""")
+        val CIL_TYPE = Regex("""\(type\s+([A-Za-z0-9_.]+)\)""")
+        val CIL_NAME = Regex("""[A-Za-z_][A-Za-z0-9_.]*""")
+        val CIL_OPS = setOf("and", "or", "not", "xor", "all", "self")
+
         val HW_FROM_BASE = listOf("odm", "odm_dlkm", "vendor", "vendor_dlkm", "system_dlkm")
 
         val REPLACE_FILES = listOf(
