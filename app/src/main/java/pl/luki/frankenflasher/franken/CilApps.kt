@@ -246,8 +246,11 @@ internal object CilApps {
         val domains = LinkedHashMap<String, MutableList<String>>()
         for (l in donorLines) {
             val d = l["domain"] ?: continue
-            // vendor bazy juz ma reguly dla tej domeny (np. vendor_qtelephony_202504 przez mapping system_ext) - nie ruszac
-            if (d !in donorTypes || d in platDecl || d in vendDecl || d in vendNames || (d + suffix) in vendNames) continue
+            if (d !in donorTypes || d in platDecl || d in vendDecl) continue
+            // vendor bazy zna te domene (np. vendor_qtelephony_202504 - IMS) i ktos zrobil dla niej app_domain
+            // (jest D_userfaultfd) - aplikacja dziala na regulach bazy, nie ruszac. Aparat OnePlus: ColorOS
+            // wspomina opluscamera_app, ale bez app_domain (to robi system ColorOS) -> zostaje.
+            if ((d in vendNames || (d + suffix) in vendNames) && (d + "_userfaultfd") in known) continue
             val pk = domains.getOrPut(d) { ArrayList() }
             l["name"]?.let { if (it !in pk) pk += it }
         }
