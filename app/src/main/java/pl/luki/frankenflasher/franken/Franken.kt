@@ -94,6 +94,7 @@ class Franken(
             checkContexts(chosen, outSys)
             fixAudioVolumes(chosen, outSys)
             addDonorVendorProps(chosen, donorImgs, outSys)
+            copyDonorVendorOverlays(chosen, donorImgs, outSys)
         }
 
         // --- my_product (dawca + konfiguracja bazy) ---
@@ -605,6 +606,38 @@ class Franken(
         chosen["vendor"] = out
         log(tr("wlasciwosci: vendor/$path + ${add.entries.joinToString { "${it.key}=${it.value}" }} (bez tego karta SIM tylko na 3G/2G)",
             "props: vendor/$path + ${add.entries.joinToString { "${it.key}=${it.value}" }} (otherwise the SIM stays on 3G/2G)"))
+    }
+
+    /**
+     * Nakladki (RRO) z vendor/overlay dawcy AOSP: drzewa LineageOS instaluja tam konfiguracje, ktorej system dawcy
+     * potrzebuje (hardware/oplus TelephonyResCommon: config_ims_mmtel_package=org.codeaurora.ims; FrameworksRes,
+     * Wifi, SecureElement...). Vendor ColorOS ich nie ma -> m.in. "NO_IMS_SERVICE_CONFIGURED": modem rejestruje
+     * VoLTE, ale Android nie podlacza uslugi IMS i polaczenia przychodzace przez VoLTE gina ("Null mTracker").
+     * Kopiowane sa nakladki, ktorych vendor bazy nie ma (atrybuty/etykieta SELinux jak sasiednie w vendor/overlay).
+     */
+    private fun copyDonorVendorOverlays(chosen: MutableMap<String, File>, donorImgs: Map<String, File>, outSys: File) {
+        val dv = donorImgs["vendor"] ?: return
+        val vendor = chosen["vendor"] ?: return
+        val donor = imgList(dv, "overlay")?.filter { it.endsWith(".apk") }.orEmpty()
+        if (donor.isEmpty()) { log(tr("nakladki: brak vendor/overlay/*.apk u dawcy", "overlays: no vendor/overlay/*.apk in donor")); return }
+        if (fsType(vendor) != "erofs") { log(tr("nakladki: vendor bazy nie jest EROFS - pomijam", "overlays: base vendor is not EROFS - skipping")); return }
+        val base = imgList(vendor, "overlay")?.toSet()
+        if (base == null) { log(tr("nakladki: brak vendor/overlay w bazie - pomijam", "overlays: no vendor/overlay in base - skipping")); return }
+        val add = LinkedHashMap<String, ByteArray>()
+        for (n in donor.sorted()) {
+            if (n in base) continue
+            val data = try { imgCat(dv, "overlay/$n") } catch (_: Exception) { null } ?: continue
+            if (data.size < 4 || data[0] != 'P'.code.toByte() || data[1] != 'K'.code.toByte()) continue
+            add[n] = data
+        }
+        if (add.isEmpty()) { log(tr("nakladki: vendor bazy ma juz wszystkie nakladki dawcy (${donor.size})", "overlays: base vendor already has all donor overlays (${donor.size})")); return }
+        val out = File(outSys, "vendor.img")
+        if (vendor.canonicalPath != out.canonicalPath) copyImage(vendor, out)
+        ErofsPatcher(out).use { p -> add.forEach { (n, d) -> p.putFile("overlay/$n", d) }; p.commit() }
+        checkImage(out)
+        chosen["vendor"] = out
+        log(tr("nakladki: vendor/overlay + ${add.size} z dawcy (${add.keys.joinToString { it.removeSuffix(".apk") }}) - m.in. konfiguracja IMS (VoLTE), Wi-Fi, NFC",
+            "overlays: vendor/overlay + ${add.size} from donor (${add.keys.joinToString { it.removeSuffix(".apk") }}) - incl. IMS (VoLTE), Wi-Fi, NFC config"))
     }
 
     /** Plik z partycji: osobny obraz albo (system_ext/product) wewnatrz system; system jako root ("system/...") albo nie. */
