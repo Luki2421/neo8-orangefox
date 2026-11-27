@@ -481,11 +481,11 @@ class Franken(
         if (app != null) {
             val doms = app.domains.entries.joinToString { (d, p) -> if (p.isEmpty()) d else "$d (${p.joinToString()})" }
             if (appOk) log(tr("SELinux: aplikacje dawcy bez regul w vendorze bazy: $doms - dopisano ${appRules.size} regul do vendor_sepolicy.cil " +
-                    "(podstawowe app_domain: ${app.essential.count { it in appRules }}, z vendora dawcy: ${app.fromDonor}, z vendora bazy: ${app.fromBase.entries.joinToString { "${it.key} ${it.value}" }.ifEmpty { "-" }}; " +
+                    "(podstawowe app_domain: ${app.essential.count { it in appRules }}, z vendora dawcy: ${app.fromDonor}, z vendora bazy: ${app.fromBase.entries.filter { it.value > 0 }.joinToString { "${it.key} ${it.value}" }.ifEmpty { "0" }}; " +
                     "odrzucone przed kompilacja: ${app.rejected}, przez secilc: $appDropped${appFallback?.let { " ($it)" } ?: ""})" +
                     (if (app.translated.isEmpty()) "" else "; typy dawcy -> bazy (te same sciezki/uslugi): " + app.translated.entries.joinToString { "${it.key}->${it.value}" }),
                 "SELinux: donor apps without base vendor rules: $doms - added ${appRules.size} rules to vendor_sepolicy.cil " +
-                    "(app_domain basics: ${app.essential.count { it in appRules }}, from donor vendor: ${app.fromDonor}, from base vendor: ${app.fromBase.entries.joinToString { "${it.key} ${it.value}" }.ifEmpty { "-" }}; " +
+                    "(app_domain basics: ${app.essential.count { it in appRules }}, from donor vendor: ${app.fromDonor}, from base vendor: ${app.fromBase.entries.filter { it.value > 0 }.joinToString { "${it.key} ${it.value}" }.ifEmpty { "0" }}; " +
                     "rejected before compiling: ${app.rejected}, by secilc: $appDropped${appFallback?.let { " ($it)" } ?: ""})" +
                     (if (app.translated.isEmpty()) "" else "; donor -> base types (same paths/services): " + app.translated.entries.joinToString { "${it.key}->${it.value}" })))
             else log(tr("SELinux: aplikacje dawcy bez regul w vendorze bazy: $doms - reguly NIE dopisane (${if (!compiled) "brak secilc - nie da sie sprawdzic" else "nie kompiluja sie${appFallback?.let { ": $it" } ?: ""}"}) - te aplikacje moga sie wylaczac",

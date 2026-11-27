@@ -240,11 +240,14 @@ internal object CilApps {
         val platDecl = DECL.findAll(plat).mapTo(HashSet()) { it.groupValues[1] }
         val vendDecl = vendorSide.flatMapTo(HashSet()) { t -> DECL.findAll(t).map { it.groupValues[1] } }
 
+        val suffix = "_" + ver.replace('.', '_')
+        val vendNames = vendorSide.flatMapTo(HashSet()) { t -> Regex("""[A-Za-z0-9_.]+""").findAll(t).map { it.value } }
         val donorLines = seapp(donorSeapp)
         val domains = LinkedHashMap<String, MutableList<String>>()
         for (l in donorLines) {
             val d = l["domain"] ?: continue
-            if (d !in donorTypes || d in platDecl || d in vendDecl) continue
+            // vendor bazy juz ma reguly dla tej domeny (np. vendor_qtelephony_202504 przez mapping system_ext) - nie ruszac
+            if (d !in donorTypes || d in platDecl || d in vendDecl || d in vendNames || (d + suffix) in vendNames) continue
             val pk = domains.getOrPut(d) { ArrayList() }
             l["name"]?.let { if (it !in pk) pk += it }
         }
@@ -254,7 +257,6 @@ internal object CilApps {
         val allKnown = known + newTypes
         val types = texts.values.flatMapTo(HashSet()) { t -> TYPE_DECL.findAll(t).map { it.groupValues[1] } } + newTypes
         val chk = Checker(allKnown, types, classPerms(plat))
-        val suffix = "_" + ver.replace('.', '_')
 
         val rules = LinkedHashSet<String>()
         val essential = LinkedHashSet<String>()
@@ -299,9 +301,10 @@ internal object CilApps {
                 val e1 = (if (donorSuffix == null) e0 else mapAtoms(e0) { a -> if (a.endsWith(donorSuffix) && a.length > donorSuffix.length) a.removeSuffix(donorSuffix) else a }) as List<Any>
                 if (atoms(e1).none { mine(it) }) continue
                 // typy vendora dawcy, ktorych baza nie ma -> typ bazy dla tego samego miejsca
+                val used = HashMap<String, String>()
                 @Suppress("UNCHECKED_CAST")
                 val e = if (xl == null) e1 else mapAtoms(e1) { a ->
-                    if (a in allKnown || a in OPS || a in KINDS || NUM.matches(a)) a else xl.of(a)?.also { translated[a] = it } ?: a
+                    if (a in allKnown || a in OPS || a in KINDS || NUM.matches(a)) a else xl.of(a)?.also { used[a] = it } ?: a
                 } as List<Any>
                 if (atoms(e).any { it.startsWith("base_typeattr") }) continue
                 val r = if (e[0] == "typeattributeset") {
@@ -309,7 +312,7 @@ internal object CilApps {
                     val keep = members.filter { mine(it) }.takeIf { it.isNotEmpty() } ?: continue
                     listOf("typeattributeset", e[1], keep)
                 } else e
-                if (add(r)) fromDonor++
+                if (add(r)) { fromDonor++; atoms(r).forEach { a -> used.entries.firstOrNull { it.value == a }?.let { translated[it.key] = it.value } } }
             }
 
             // 3. vendor bazy: domena tego pakietu w bazie albo platform_app (seinfo=platform)
