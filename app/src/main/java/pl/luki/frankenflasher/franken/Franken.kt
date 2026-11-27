@@ -82,6 +82,16 @@ class Franken(
 
         checkAndroidVersions(chosen["system"], baseImgs["system"], chosen["vendor"])
 
+        // --- dawca AOSP (LineageOS/DerpFest...): bez partycji my_* ---
+        val aosp = "my_product" !in donorImgs && "my_stock" !in donorImgs
+        if (aosp) {
+            log(tr("Franken: dawca AOSP (brak my_*) - system/system_ext/product z dawcy, vendor/odm/boot/firmware z bazy; " +
+                "my_* zostaja z bazy (vendor ColorOS je montuje, system AOSP ich nie czyta); poprawki ColorOS pominiete",
+                "Franken: AOSP donor (no my_*) - system/system_ext/product from donor, vendor/odm/boot/firmware from base; " +
+                "my_* kept from base (ColorOS vendor mounts them, AOSP system ignores them); ColorOS fixes skipped"))
+            checkSepolicy(chosen)
+        }
+
         // --- my_product (dawca + konfiguracja bazy) ---
         if (opt.patchMyProduct) {
             val d = donorImgs["my_product"]; val b = baseImgs["my_product"]
@@ -108,24 +118,24 @@ class Franken(
             if (prod != null) embedApp(prod, apk, File(outSys, "product.img"))?.let { chosen["product"] = it }
         }
         // --- my_manifest (baza + wersja dawcy) ---
-        if (opt.patchMyManifest) {
+        if (opt.patchMyManifest && !aosp) {
             val b = baseImgs["my_manifest"]; val d = donorImgs["my_manifest"]
             if (b != null && d != null) patchMyManifest(b, d, File(outSys, "my_manifest.img"))?.let { chosen["my_manifest"] = it }
         }
         // --- odm (baza, tozsamosc dawcy) ---
-        if (opt.patchOdmIdentity) {
+        if (opt.patchOdmIdentity && !aosp) {
             val b = baseImgs["odm"]; val d = donorImgs["odm"]
             if (b != null && d != null) patchOdmIdentity(b, d, File(outSys, "odm.img"))?.let { chosen["odm"] = it }
         }
         // --- app_v2 ---
-        if (opt.unlockAppV2) {
+        if (opt.unlockAppV2 && !aosp) {
             for (n in listOf("my_stock", "my_region")) {
                 val src = chosen[n] ?: continue
                 unlockAppV2(src, File(outSys, "$n.img"))?.let { chosen[n] = it }
             }
         }
         // --- nagrywanie rozmow ---
-        if (opt.callRecording) {
+        if (opt.callRecording && !aosp) {
             for (n in listOf("my_region", "my_stock", "my_product")) {
                 val src = chosen[n] ?: continue
                 enableCallRecording(n, src, File(outSys, "$n.img"))?.let { chosen[n] = it }
@@ -265,6 +275,48 @@ class Franken(
     }
 
     /** Pliki o danej nazwie w obrazie -> zawartosc (dump.erofs --cat, bez wypakowania). */
+    /**
+     * Zgodnosc SELinux dawcy AOSP z vendorem bazy (jak przy GSI), przed budowaniem:
+     *  - typy zadeklarowane i w system_ext/product dawcy, i w vendor/odm bazy -> blad kompilacji polityki przy starcie
+     *  - atrybuty wersjonowane (np. foo_202504), ktorych uzywa polityka vendor/odm bazy, a nie definiuje nic
+     *    po stronie dawcy ani plat_pub_versioned bazy -> blad kompilacji polityki przy starcie (bootloop)
+     * Tylko ostrzezenie w logu; bledy odczytu nie przerywaja budowania.
+     */
+    private fun checkSepolicy(chosen: Map<String, File>) {
+        step(tr("SELinux: zgodnosc dawcy AOSP z vendorem bazy", "SELinux: AOSP donor vs base vendor"))
+        fun cat(n: String, path: String): String? = chosen[n]?.let { img -> try { String(tools.cat(img, path)) } catch (_: Exception) { null } }
+        try {
+            val ver = cat("vendor", "etc/selinux/plat_sepolicy_vers.txt")?.trim()
+            if (ver.isNullOrEmpty()) { log(tr("SELinux: brak vendor/etc/selinux/plat_sepolicy_vers.txt - pomijam sprawdzenie", "SELinux: no plat_sepolicy_vers.txt - check skipped")); return }
+            val suffix = "_" + ver.replace('.', '_')
+            val decl = Regex("""\((?:type|typeattribute)\s+([A-Za-z0-9_]+)\)""")
+            val set = Regex("""\(typeattributeset\s+([A-Za-z0-9_]+)\s""")
+            fun names(t: String?) = t?.let { decl.findAll(it).map { m -> m.groupValues[1] }.toSet() + set.findAll(it).map { m -> m.groupValues[1] } } ?: emptySet()
+            val vendorCil = listOfNotNull(cat("vendor", "etc/selinux/vendor_sepolicy.cil"), cat("odm", "etc/selinux/odm_sepolicy.cil"))
+            if (vendorCil.isEmpty()) { log(tr("SELinux: brak vendor_sepolicy.cil w bazie - pomijam sprawdzenie", "SELinux: no vendor_sepolicy.cil in base - check skipped")); return }
+            val vendorDecl = vendorCil.flatMap { decl.findAll(it).map { m -> m.groupValues[1] }.toList() }.toSet()
+            val donorPolicy = listOfNotNull(cat("system_ext", "etc/selinux/system_ext_sepolicy.cil"), cat("product", "etc/selinux/product_sepolicy.cil"))
+            val donorDecl = donorPolicy.flatMap { decl.findAll(it).map { m -> m.groupValues[1] }.toList() }.toSet()
+            val dup = (vendorDecl intersect donorDecl).sorted()
+            val defined = names(cat("vendor", "etc/selinux/plat_pub_versioned.cil")) + vendorDecl + donorDecl +
+                names(cat("system", "system/etc/selinux/plat_sepolicy.cil")) +
+                names(cat("system", "system/etc/selinux/mapping/$ver.cil")) +
+                names(cat("system_ext", "etc/selinux/mapping/$ver.cil")) + names(cat("product", "etc/selinux/mapping/$ver.cil"))
+            val used = vendorCil.flatMap { Regex("""\b([A-Za-z0-9_]+$suffix)\b""").findAll(it).map { m -> m.groupValues[1] }.toList() }.toSet()
+            val undefined = (used - defined).sorted()
+            fun short(l: List<String>) = l.take(12).joinToString() + if (l.size > 12) " ... (+${l.size - 12})" else ""
+            if (dup.isEmpty() && undefined.isEmpty())
+                log(tr("SELinux: OK - polityka vendor $ver bazy nie koliduje z dawca (typow dawcy: ${donorDecl.size}, wersjonowanych uzytych przez vendor: ${used.size})",
+                    "SELinux: OK - base vendor $ver policy does not conflict with the donor (donor types: ${donorDecl.size}, versioned used by vendor: ${used.size})"))
+            if (dup.isNotEmpty()) log(tr("SELinux: UWAGA - te same typy w dawcy i vendorze bazy (${dup.size}): ${short(dup)} - polityka sie nie skompiluje, bootloop",
+                "SELinux: WARNING - same types in donor and base vendor (${dup.size}): ${short(dup)} - policy will not compile, bootloop"))
+            if (undefined.isNotEmpty()) log(tr("SELinux: UWAGA - vendor bazy uzywa typow, ktorych dawca nie ma (${undefined.size}): ${short(undefined)} - prawdopodobny bootloop",
+                "SELinux: WARNING - base vendor uses types the donor lacks (${undefined.size}): ${short(undefined)} - likely bootloop"))
+        } catch (e: Exception) {
+            log(tr("SELinux: sprawdzenie nieudane (${e.message}) - buduje dalej", "SELinux: check failed (${e.message}) - continuing"))
+        }
+    }
+
     private fun catAll(img: File, name: String): Map<String, ByteArray> {
         val paths = ErofsPatcher(img, readOnly = true).use { findFiles(it, name) }
         return paths.associateWith { tools.cat(img, it) }

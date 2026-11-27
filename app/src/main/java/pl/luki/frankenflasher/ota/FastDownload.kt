@@ -206,6 +206,11 @@ object FastDownload {
                 if (pos < end) throw IOException(tr("Polaczenie zerwane", "Connection dropped"))
             } catch (e: IOException) {
                 if (e.message?.contains("link wygasl") == true || e.message?.contains("link expired") == true) throw e
+                // Serwer CDN z adresu przestal istniec w DNS (log: "Unable to resolve host gauss-compota-c-in...") -
+                // po jednej nieudanej probie nowy adres (downloadCheck zwykle daje inny serwer).
+                if (e is java.net.UnknownHostException && attempt >= 1 && link.refresh != null) {
+                    link.renew(url); attempt = 0; continue
+                }
                 if (++attempt >= 5) throw e
                 Thread.sleep(1000L * attempt)
             } finally { c.disconnect() }
