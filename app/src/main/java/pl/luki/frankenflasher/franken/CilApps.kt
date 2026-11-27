@@ -25,7 +25,80 @@ internal object CilApps {
         val fromDonor: Int,
         val fromBase: Map<String, Int>,           // "domena<-wzor" -> liczba
         val rejected: Int,
+        val translated: Map<String, String>,      // typ dawcy -> typ bazy (ta sama sciezka/wlasciwosc/usluga)
     )
+
+    /**
+     * Konteksty jednej strony (dawcy albo bazy po polaczeniu): teksty *_file_contexts, *_property_contexts,
+     * *_service_contexts, *_hwservice_contexts sklejone w kolejnosci ladowania + genfscon z CIL.
+     */
+    class Ctx(val file: String = "", val property: String = "", val service: String = "", val hwservice: String = "")
+
+    private val GENFS = Regex("""\(genfscon\s+([^\s()]+)\s+"?([^\s()"]+)"?\s+(?:[^\s()]+\s+)?\(\s*[^\s()]+\s+[^\s()]+\s+([^\s()]+)""")
+    private val RE_META = "()[]{}*+?|^$"
+
+    private fun ctxLines(t: String) = t.lineSequence().map { it.substringBefore('#').trim() }.filter { it.isNotEmpty() }
+        .map { it.split(Regex("""\s+""")) }
+    private fun ctxType(c: String?) = c?.split(':')?.getOrNull(2)
+
+    /**
+     * Typy dawcy, ktorych baza nie zna -> typ, ktorym baza oznacza TO SAMO miejsce:
+     *  genfscon (najdluzszy pasujacy prefiks sciezki, jak jadro), file_contexts (ten sam wzorzec albo
+     *  wzorzec bazy pasujacy do sciezki dawcy), property_contexts (ta sama nazwa / najdluzszy prefiks),
+     *  service/hwservice_contexts (ta sama nazwa). Np. proc_ufs_file (/proc/devinfo/ufs) -> typ ColorOS.
+     */
+    private class Translator(donorCil: String, val donor: Ctx, baseTexts: Collection<String>, val base: Ctx, val types: Set<String>) {
+        private val dGenfs = GENFS.findAll(donorCil).map { Triple(it.groupValues[1], it.groupValues[2], it.groupValues[3]) }.toList()
+        private val bGenfs by lazy { baseTexts.flatMap { t -> GENFS.findAll(t).map { Triple(it.groupValues[1], it.groupValues[2], it.groupValues[3]) } } }
+        private val bFile by lazy { ctxLines(base.file).mapNotNull { l -> if (l.size < 2) null else Pair(l[0], ctxType(l.last())) }.toList() }
+        private val bFileRe by lazy { bFile.map { (r, _) -> try { Regex(r) } catch (_: Exception) { null } } }
+        private val bProp by lazy { ctxLines(base.property).mapNotNull { l -> if (l.size < 2) null else Triple(l[0], ctxType(l[1]), l.getOrNull(2) == "exact") }.toList() }
+        private val bSvc by lazy { ctxLines(base.service).mapNotNull { l -> if (l.size < 2) null else l[0] to ctxType(l[1]) }.toMap() }
+        private val bHw by lazy { ctxLines(base.hwservice).mapNotNull { l -> if (l.size < 2) null else l[0] to ctxType(l[1]) }.toMap() }
+        private val cache = HashMap<String, String?>()
+        private val dFile = ctxLines(donor.file).filter { it.size >= 2 }.map { it[0] to ctxType(it.last()) }.toList()
+        private val dProp = ctxLines(donor.property).filter { it.size >= 2 }.map { it[0] to ctxType(it[1]) }.toList()
+        private val dSvc = ctxLines(donor.service).filter { it.size >= 2 }.map { it[0] to ctxType(it[1]) }.toList()
+        private val dHw = ctxLines(donor.hwservice).filter { it.size >= 2 }.map { it[0] to ctxType(it[1]) }.toList()
+
+        fun of(t: String): String? = cache.getOrPut(t) { find(t) }
+
+        private fun literal(re: String): String? {
+            var r = re.removeSuffix("(/.*)?").removeSuffix("(/.*)")
+            r = r.replace(Regex("""\([^()]*\)\?"""), "")
+            r = r.replace(Regex("""\(([^()|]*)(\|[^()]*)?\)"""), "$1")
+            r = r.replace(Regex("""\\(.)"""), "$1")
+            return r.takeIf { x -> x.startsWith("/") && x.none { it in RE_META } }
+        }
+
+        private fun find(t: String): String? {
+            val votes = ArrayList<String>()
+            for ((fs, path, ty) in dGenfs) if (ty == t) {
+                bGenfs.filter { it.first == fs && path.startsWith(it.second) }.maxByOrNull { it.second.length }?.third?.let { votes += it }
+            }
+            for ((re, ty0) in dFile) {
+                if (ty0 != t) continue
+                val exact = bFile.lastOrNull { it.first == re }?.second
+                if (exact != null) { votes += exact; continue }
+                val p = literal(re) ?: continue
+                var best: String? = null; var score = -1
+                bFile.forEachIndexed { i, (r, ty) ->
+                    if (ty == null || bFileRe[i]?.matches(p) != true) return@forEachIndexed
+                    val stem = r.indexOfFirst { it in RE_META }.let { if (it < 0) r.length + 1000 else it }
+                    if (stem >= score) { score = stem; best = ty }
+                }
+                best?.let { votes += it }
+            }
+            for ((n, ty0) in dProp) {
+                if (ty0 != t) continue
+                (bProp.lastOrNull { it.first == n }?.second
+                    ?: bProp.filter { !it.third && n.startsWith(it.first) }.maxByOrNull { it.first.length }?.second)?.let { votes += it }
+            }
+            for ((n, ty0) in dSvc) if (ty0 == t) bSvc[n]?.let { votes += it }
+            for ((n, ty0) in dHw) if (ty0 == t) bHw[n]?.let { votes += it }
+            return votes.filter { it in types && it != t }.groupingBy { it }.eachCount().maxByOrNull { it.value }?.key
+        }
+    }
 
     private val KINDS = setOf("allow", "auditallow", "dontaudit", "allowx", "auditallowx", "dontauditx",
         "typetransition", "typechange", "typemember", "typeattributeset")
@@ -158,6 +231,7 @@ internal object CilApps {
     fun build(
         texts: Map<String, String>, known: Set<String>, ver: String,
         donorSeapp: String, baseSeapp: String, donorVendorCil: String?, donorVer: String?,
+        donorCtx: Ctx = Ctx(), baseCtx: Ctx = Ctx(),
     ): Result? {
         val plat = texts["plat_sepolicy.cil"] ?: return null
         val donorPart = listOfNotNull(texts["system_ext_sepolicy.cil"], texts["product_sepolicy.cil"])
@@ -196,6 +270,8 @@ internal object CilApps {
         }
 
         val donorStmts = donorVendorCil?.let { statements(stripComments(it)) }.orEmpty()
+        val xl = donorVendorCil?.let { Translator(stripComments(it), donorCtx, texts.values, baseCtx, types) }
+        val translated = LinkedHashMap<String, String>()
         val donorSuffix = donorVer?.takeIf { it.isNotBlank() }?.let { "_" + it.trim().replace('.', '_') }
         val baseStmts = vendorSide.flatMap { statements(it) }
 
@@ -220,9 +296,14 @@ internal object CilApps {
                 val e0 = parse(s) ?: continue
                 if (e0[0].toString() !in KINDS) continue
                 @Suppress("UNCHECKED_CAST")
-                val e = (if (donorSuffix == null) e0 else mapAtoms(e0) { a -> if (a.endsWith(donorSuffix) && a.length > donorSuffix.length) a.removeSuffix(donorSuffix) else a }) as List<Any>
-                val at = atoms(e)
-                if (at.none { mine(it) } || at.any { it.startsWith("base_typeattr") }) continue
+                val e1 = (if (donorSuffix == null) e0 else mapAtoms(e0) { a -> if (a.endsWith(donorSuffix) && a.length > donorSuffix.length) a.removeSuffix(donorSuffix) else a }) as List<Any>
+                if (atoms(e1).none { mine(it) }) continue
+                // typy vendora dawcy, ktorych baza nie ma -> typ bazy dla tego samego miejsca
+                @Suppress("UNCHECKED_CAST")
+                val e = if (xl == null) e1 else mapAtoms(e1) { a ->
+                    if (a in allKnown || a in OPS || a in KINDS || NUM.matches(a)) a else xl.of(a)?.also { translated[a] = it } ?: a
+                } as List<Any>
+                if (atoms(e).any { it.startsWith("base_typeattr") }) continue
                 val r = if (e[0] == "typeattributeset") {
                     val members = (e.getOrNull(2) as? List<*>)?.takeIf { l -> l.all { it is String } }?.map { it as String } ?: continue
                     val keep = members.filter { mine(it) }.takeIf { it.isNotEmpty() } ?: continue
@@ -255,6 +336,6 @@ internal object CilApps {
                 fromBase["$d<-$baseDom"] = n
             }
         }
-        return Result(domains, rules.toList(), essential, fromDonor, fromBase, rejected)
+        return Result(domains, rules.toList(), essential, fromDonor, fromBase, rejected, translated)
     }
 }

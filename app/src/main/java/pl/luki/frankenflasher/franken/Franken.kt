@@ -403,10 +403,17 @@ class Franken(
         val app = try {
             fun dcat(n: String, p: String) = donorImgs[n]?.let { img -> try { imgCat(img, p) } catch (_: Exception) { null } }?.let { String(it) }
             val donorCil = listOfNotNull(dcat("vendor", "etc/selinux/vendor_sepolicy.cil"), dcat("odm", "etc/selinux/odm_sepolicy.cil")).joinToString("\n").ifEmpty { null }
+            // konteksty (sciezki, wlasciwosci, uslugi) - do tlumaczenia typow vendora dawcy na typy bazy
+            fun dctx(kind: String) = listOfNotNull(dcat("vendor", "etc/selinux/vendor_$kind"), dcat("odm", "etc/selinux/odm_$kind")).joinToString("\n")
+            fun bctx(kind: String) = listOfNotNull(sys("etc/selinux/plat_$kind"), part("system_ext", "etc/selinux/system_ext_$kind"), part("product", "etc/selinux/product_$kind"),
+                cat("vendor", "etc/selinux/vendor_$kind"), cat("odm", "etc/selinux/odm_$kind")).joinToString("\n") { String(it) }
+            val kinds = listOf("file_contexts", "property_contexts", "service_contexts", "hwservice_contexts")
+            val dc = if (donorCil == null) CilApps.Ctx() else kinds.map { dctx(it) }.let { CilApps.Ctx(it[0], it[1], it[2], it[3]) }
+            val bc = if (donorCil == null) CilApps.Ctx() else kinds.map { bctx(it) }.let { CilApps.Ctx(it[0], it[1], it[2], it[3]) }
             CilApps.build(texts, declared + extra, ver,
                 listOfNotNull(part("system_ext", "etc/selinux/system_ext_seapp_contexts"), part("product", "etc/selinux/product_seapp_contexts")).joinToString("\n") { String(it) },
                 listOfNotNull(cat("vendor", "etc/selinux/vendor_seapp_contexts"), cat("odm", "etc/selinux/odm_seapp_contexts")).joinToString("\n") { String(it) },
-                donorCil, dcat("vendor", "etc/selinux/plat_sepolicy_vers.txt")?.trim())
+                donorCil, dcat("vendor", "etc/selinux/plat_sepolicy_vers.txt")?.trim(), dc, bc)
         } catch (e: Exception) {
             log(tr("SELinux: aplikacje dawcy - nie odczytano regul (${e.message}) - pomijam", "SELinux: donor apps - rules not read (${e.message}) - skipped")); null
         }
@@ -475,10 +482,12 @@ class Franken(
             val doms = app.domains.entries.joinToString { (d, p) -> if (p.isEmpty()) d else "$d (${p.joinToString()})" }
             if (appOk) log(tr("SELinux: aplikacje dawcy bez regul w vendorze bazy: $doms - dopisano ${appRules.size} regul do vendor_sepolicy.cil " +
                     "(podstawowe app_domain: ${app.essential.count { it in appRules }}, z vendora dawcy: ${app.fromDonor}, z vendora bazy: ${app.fromBase.entries.joinToString { "${it.key} ${it.value}" }.ifEmpty { "-" }}; " +
-                    "odrzucone przed kompilacja: ${app.rejected}, przez secilc: $appDropped${appFallback?.let { " ($it)" } ?: ""})",
+                    "odrzucone przed kompilacja: ${app.rejected}, przez secilc: $appDropped${appFallback?.let { " ($it)" } ?: ""})" +
+                    (if (app.translated.isEmpty()) "" else "; typy dawcy -> bazy (te same sciezki/uslugi): " + app.translated.entries.joinToString { "${it.key}->${it.value}" }),
                 "SELinux: donor apps without base vendor rules: $doms - added ${appRules.size} rules to vendor_sepolicy.cil " +
                     "(app_domain basics: ${app.essential.count { it in appRules }}, from donor vendor: ${app.fromDonor}, from base vendor: ${app.fromBase.entries.joinToString { "${it.key} ${it.value}" }.ifEmpty { "-" }}; " +
-                    "rejected before compiling: ${app.rejected}, by secilc: $appDropped${appFallback?.let { " ($it)" } ?: ""})"))
+                    "rejected before compiling: ${app.rejected}, by secilc: $appDropped${appFallback?.let { " ($it)" } ?: ""})" +
+                    (if (app.translated.isEmpty()) "" else "; donor -> base types (same paths/services): " + app.translated.entries.joinToString { "${it.key}->${it.value}" })))
             else log(tr("SELinux: aplikacje dawcy bez regul w vendorze bazy: $doms - reguly NIE dopisane (${if (!compiled) "brak secilc - nie da sie sprawdzic" else "nie kompiluja sie${appFallback?.let { ": $it" } ?: ""}"}) - te aplikacje moga sie wylaczac",
                 "SELinux: donor apps without base vendor rules: $doms - rules NOT added (${if (!compiled) "no secilc - cannot verify" else "they do not compile${appFallback?.let { ": $it" } ?: ""}"}) - these apps may crash"))
         }
