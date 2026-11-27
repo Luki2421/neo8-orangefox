@@ -1757,10 +1757,22 @@ class MainActivity : Activity() {
             .setMessage(tr("Wgrac ${src.name} (${src.size / (1 shl 20)} MB) na partycje \"$part\"?", "Flash ${src.name} (${src.size / (1 shl 20)} MB) to partition \"$part\"?"))
             .setPositiveButton("Flash") { _, _ ->
                 withFb { f ->
-                    setStep("$part <- ${src.name}")
-                    f.flash(part, src, ::setProgress)
+                    // bez sufiksu slotu (np. "vendor") -> biezacy slot, jak fastboot na PC
+                    val target = if (!Regex("_[ab]$").containsMatchIn(part) && f.hasSlot(part))
+                        part + "_" + f.getVar("current-slot").trim().removePrefix("_") else part
+                    setStep("$target <- ${src.name}")
+                    // Partycja logiczna (fastbootd): najpierw rozmiar obrazu, jak "fastboot flash" na PC.
+                    // Bez tego obraz wiekszy od partycji (np. vendor po poprawkach Frankena) konczy sie
+                    // bledem zapisu ostatniej czesci: "FAILED (Operation not permitted)".
+                    if (f.isLogical(target)) {
+                        val size = f.logicalSize(src)
+                        log(tr("$target: partycja logiczna - rozmiar ${size / (1 shl 20)} MB (resize-logical-partition)",
+                            "$target: logical partition - size ${size / (1 shl 20)} MB (resize-logical-partition)"))
+                        f.command("resize-logical-partition:$target:$size", 180_000)
+                    }
+                    f.flash(target, src, ::setProgress)
                     setProgress(0, 0)
-                    setStep(tr("Gotowe: $part", "Done: $part"))
+                    setStep(tr("Gotowe: $target", "Done: $target"))
                 }
             }
             .setNegativeButton(tr("Anuluj", "Cancel"), null)
