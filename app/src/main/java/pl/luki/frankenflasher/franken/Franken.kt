@@ -89,6 +89,7 @@ class Franken(
                 "my_* zostaja z bazy (vendor ColorOS je montuje, system AOSP ich nie czyta); poprawki ColorOS pominiete",
                 "Franken: AOSP donor (no my_*) - system/system_ext/product from donor, vendor/odm/boot/firmware from base; " +
                 "my_* kept from base (ColorOS vendor mounts them, AOSP system ignores them); ColorOS fixes skipped"))
+            checkFstab(chosen)
             checkSepolicy(chosen)
         }
 
@@ -115,7 +116,9 @@ class Franken(
         // --- Franken Flasher jako aplikacja systemowa ---
         opt.appApk?.takeIf { it.isFile }?.let { apk ->
             val prod = chosen["product"]
-            if (prod != null) embedApp(prod, apk, File(outSys, "product.img"))?.let { chosen["product"] = it }
+            if (prod != null && fsType(prod) != "erofs") log(tr("Franken Flasher nie zostanie wbudowany: product dawcy to ${fsType(prod) ?: "nieznany system plikow"}, nie EROFS",
+                "Franken Flasher not embedded: donor product is ${fsType(prod) ?: "an unknown filesystem"}, not EROFS"))
+            else if (prod != null) embedApp(prod, apk, File(outSys, "product.img"))?.let { chosen["product"] = it }
         }
         // --- my_manifest (baza + wersja dawcy) ---
         if (opt.patchMyManifest && !aosp) {
@@ -163,9 +166,56 @@ class Franken(
     private fun readProps(img: File?, paths: List<String>): Map<String, String> {
         if (img == null || !img.isFile) return emptyMap()
         return try {
-            val path = ErofsPatcher(img, readOnly = true).use { e -> paths.firstOrNull { e.lookup(it) != null } } ?: return emptyMap()
-            props(mapOf(path to tools.cat(img, path)))
+            for (path in paths) imgCat(img, path)?.let { return props(mapOf(path to it)) }
+            emptyMap()
         } catch (_: Exception) { emptyMap() }
+    }
+
+    /** "erofs", "ext4" albo null. ROM-y AOSP (LineageOS, DerpFest) czesto maja ext4. */
+    private fun fsType(img: File?): String? = when {
+        img == null || !img.isFile -> null
+        Ext4Reader.isExt4(img) -> "ext4"
+        try { ErofsPatcher(img, readOnly = true).use { true } } catch (_: Exception) { false } -> "erofs"
+        else -> null
+    }
+
+    /** Plik z obrazu EROFS (dump.erofs) albo ext4 (Ext4Reader); null gdy brak. */
+    private fun imgCat(img: File, path: String): ByteArray? = when (fsType(img)) {
+        "ext4" -> Ext4Reader(img).use { it.cat(path) }
+        "erofs" -> {
+            val p = path.trimStart('/')
+            if (ErofsPatcher(img, readOnly = true).use { it.lookup(p) } == null) null else tools.cat(img, p)
+        }
+        else -> null
+    }
+
+    /**
+     * Czy fstab vendora bazy zamontuje partycje dawcy w ich systemie plikow (dawca AOSP: czesto ext4,
+     * ColorOS: tylko EROFS). Gdy fstab nie ma wpisu z typem obrazu dawcy - system sie nie uruchomi, wiec przerywa.
+     */
+    private fun checkFstab(chosen: Map<String, File>) {
+        val vendor = chosen["vendor"] ?: return
+        val names = try { ErofsPatcher(vendor, readOnly = true).use { p -> p.list("etc")?.map { it.name }.orEmpty() } } catch (_: Exception) { emptyList() }
+        val fstabs = names.filter { it.startsWith("fstab.") }
+        if (fstabs.isEmpty()) { log(tr("fstab: brak vendor/etc/fstab.* w bazie - nie sprawdzam", "fstab: no vendor/etc/fstab.* in base - not checked")); return }
+        val types = HashMap<String, MutableSet<String>>()
+        for (f in fstabs) {
+            val txt = imgCat(vendor, "etc/$f")?.let { String(it) } ?: continue
+            for (l in txt.lines()) {
+                val c = l.trim().split(Regex("\\s+"))
+                if (c.size < 3 || c[0].startsWith("#")) continue
+                types.getOrPut(c[1]) { HashSet() } += c[2]
+            }
+        }
+        val bad = ArrayList<String>()
+        for ((part, mnt) in listOf("system" to "/system", "system_ext" to "/system_ext", "product" to "/product")) {
+            val t = fsType(chosen[part]) ?: continue
+            val ok = types[mnt]
+            log(tr("fstab: $part ($t) -> $mnt: ${ok?.joinToString() ?: "brak wpisu"}", "fstab: $part ($t) -> $mnt: ${ok?.joinToString() ?: "no entry"}"))
+            if (ok != null && t !in ok) bad += "$part ($t, fstab: ${ok.joinToString()})"
+        }
+        if (bad.isNotEmpty()) throw IOException(tr("fstab bazy nie zamontuje: ${bad.joinToString()} - system by sie nie uruchomil. Przerywam.",
+            "base fstab will not mount: ${bad.joinToString()} - the system would not boot. Stopping."))
     }
 
     /**
@@ -284,7 +334,7 @@ class Franken(
      */
     private fun checkSepolicy(chosen: Map<String, File>) {
         step(tr("SELinux: zgodnosc dawcy AOSP z vendorem bazy", "SELinux: AOSP donor vs base vendor"))
-        fun cat(n: String, path: String): String? = chosen[n]?.let { img -> try { String(tools.cat(img, path)) } catch (_: Exception) { null } }
+        fun cat(n: String, path: String): String? = chosen[n]?.let { img -> try { imgCat(img, path)?.let { String(it) } } catch (_: Exception) { null } }
         try {
             val ver = cat("vendor", "etc/selinux/plat_sepolicy_vers.txt")?.trim()
             if (ver.isNullOrEmpty()) { log(tr("SELinux: brak vendor/etc/selinux/plat_sepolicy_vers.txt - pomijam sprawdzenie", "SELinux: no plat_sepolicy_vers.txt - check skipped")); return }
