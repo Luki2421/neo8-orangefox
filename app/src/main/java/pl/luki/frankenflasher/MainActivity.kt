@@ -1503,6 +1503,8 @@ class MainActivity : Activity() {
                 val mineSet = pl.luki.frankenflasher.franken.UadList.mine(mineFile)
                 // "Moje": nazwa pakietu albo nazwa katalogu aplikacji
                 val mine = apps.indices.filter { i -> apps[i].name in mineSet || apps[i].pkg?.let { it in mineSet } == true }
+                val missing = mineSet.filter { e -> apps.none { it.name == e || it.pkg == e } }
+                if (missing.isNotEmpty()) log(tr("debloat: z listy Moje nie ma w obrazach (${missing.size}): ", "debloat: Mine entries not in the images (${missing.size}): ") + missing.joinToString())
                 val actions = listOfNotNull(
                     if (uad.isEmpty()) null else tr("Zalecane (${recommended.size})", "Recommended (${recommended.size})") to { recommended.forEach { checked[it] = true } },
                     tr("Logi i sledzenie (${tracking.size})", "Logs & tracking (${tracking.size})") to { tracking.forEach { checked[it] = true } },

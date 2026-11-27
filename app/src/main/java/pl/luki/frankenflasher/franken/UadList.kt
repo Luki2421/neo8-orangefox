@@ -97,7 +97,24 @@ class UadList(private val cache: File, private val log: (String) -> Unit) {
             "Videos_del",
             "YouTube",
             "YTMusic_del",
+            // "Odzyskaj aplikacje systemowe" (27.11.2026): Dokumenty, Klonowanie telefonu, Notatki, Tlumaczenie,
+            // Game Center, Zen Space, realme Community, realme Store
+            "andes.oplus.documentsreader",
+            "com.coloros.backuprestore",
+            "com.coloros.note",
+            "com.coloros.translate",
+            "com.nearme.gamecenter",
+            "com.oneplus.brickmode",
+            "com.realmecomm.app",
+            "com.realmestore.app",
         )
+
+        /** Druga domyslna lista (70 katalogow z debloatu 26.11.2026) - plik z nia bez zmian jest zastepowany nowa. */
+        private val MINE_V2 = setOf("AccessoryFramework", "AICore", "AndroidAutoStub", "AndroidSystemIntelligence_Features", "ARCore", "AssistantScreen", "BookmarkProvider", "Browser", "BTtestmode", "BuiltInPrintService", "Calendar", "CalendarGoogle", "CalendarProvider", "Chrome64", "CloudService", "CrossDeviceServicesStub", "DCS", "EasterEgg", "Facebook", "Facebook-appmanager", "Facebook-installer", "Facebook-services", "GlobalSearch", "GoogleCalendarSyncAdapter", "GoogleContacts", "GoogleDialer", "GoogleGemini", "HeyCast", "InstagramStub", "Instant", "KeKeMarket", "KeKePay", "KeKeThemeSpace", "KeyChain", "LFEHer", "LinktoWindows", "LocationProxy", "LogKit", "MCS", "Meet", "Melody", "Messages", "Metis", "Olc", "OplusGames", "OplusOperationManual", "OplusPhoneActivation", "OplusQualityProtect", "OplusSecurityKeyboard", "OppoCompass2", "OppoWeatherService", "OPSynergy", "OTrace", "PersonalSafety", "Photos", "PostmanService", "PrintSpooler", "PrivateComputeServices", "SAUHelper", "SearchSelector", "Shelper", "SoftsimRedteaRoaming", "StdSP", "SubsystemApp", "Tag", "Traceur", "VideoGallery", "Videos_del", "YouTube", "YTMusic_del")
+
+        /** Dopisywane do zmienionego przez uzytkownika pliku (wersja 3 listy). */
+        private val MINE_ADDED_V3 = listOf("andes.oplus.documentsreader", "com.coloros.backuprestore", "com.coloros.note", "com.coloros.translate", "com.nearme.gamecenter", "com.oneplus.brickmode", "com.realmecomm.app", "com.realmestore.app")
+        private const val MINE_VERSION = 3
 
         /** Pierwsza domyslna lista (74 pakiety ze skryptu MT Manager) - plik z nia bez zmian jest zastepowany nowa. */
         private val MINE_V1 = setOf("android.autoinstalls.config.oneplus", "com.android.apps.tag", "com.android.bips", "com.android.bookmarkprovider", "com.android.chrome", "com.android.egg", "com.android.hotwordenrollment.okgoogle", "com.android.hotwordenrollment.xgoogle", "com.android.internal.display.cutout.emulation.corner", "com.android.internal.display.cutout.emulation.double", "com.android.internal.display.cutout.emulation.hole", "com.android.internal.display.cutout.emulation.tall", "com.android.internal.display.cutout.emulation.waterfall", "com.android.keychain", "com.android.printspooler", "com.android.providers.calendar", "com.android.traceur", "com.coloros.activation", "com.coloros.assistantscreen", "com.coloros.compass2", "com.coloros.operationManual", "com.coloros.video", "com.coloros.weather.service", "com.facebook.appmanager", "com.facebook.services", "com.facebook.system", "com.google.ambient.streaming", "com.google.android.adservices.api", "com.google.android.aicore", "com.google.android.apps.bard", "com.google.android.apps.messaging", "com.google.android.apps.photos", "com.google.android.apps.safetyhub", "com.google.android.apps.setupwizard.searchselector", "com.google.android.apps.tachyon", "com.google.android.as", "com.google.android.as.oss", "com.google.android.calendar", "com.google.android.contacts", "com.google.android.inputmethod.latin", "com.google.android.printservice.recommendation", "com.google.android.projection.gearhead", "com.google.android.setupwizard", "com.google.android.youtube", "com.google.ar.core", "com.heytap.accessory", "com.heytap.browser", "com.heytap.cloud", "com.heytap.market", "com.heytap.mydevices", "com.microsoft.appmanager", "com.oneplus.account", "com.oneplus.membership", "com.oneplus.oshare", "com.oplus.bttestmode", "com.oplus.cast", "com.oplus.games", "com.oplus.linker", "com.oplus.locationproxy", "com.oplus.logkit", "com.oplus.melody", "com.oplus.metis", "com.oplus.olc", "com.oplus.omoji", "com.oplus.pay", "com.oplus.phonemanager", "com.oplus.securepay", "com.oplus.securitykeyboard", "com.oplus.stdsp", "com.oplus.subsys", "com.oplus.themestore", "com.oppo.quicksearchbox", "com.redteamobile.roaming", "net.oneplus.weather")
@@ -106,8 +123,14 @@ class UadList(private val cache: File, private val log: (String) -> Unit) {
         fun mine(file: File): Set<String> {
             if (!file.isFile) try { save(file, MINE_DEFAULT) } catch (_: Exception) { return MINE_DEFAULT.toSet() }
             return try {
-                val set = file.readLines().map { it.substringBefore('#').trim() }.filter { it.isNotEmpty() }.toSet()
-                if (set == MINE_V1) { save(file, MINE_DEFAULT); MINE_DEFAULT.toSet() } else set
+                val lines = file.readLines()
+                val set = lines.map { it.substringBefore('#').trim() }.filter { it.isNotEmpty() }.toSet()
+                val ver = lines.firstNotNullOfOrNull { Regex("""^#\s*wersja\s+(\d+)""").find(it.trim())?.groupValues?.get(1)?.toIntOrNull() } ?: 0
+                when {
+                    set == MINE_V1 || set == MINE_V2 -> { save(file, MINE_DEFAULT); MINE_DEFAULT.toSet() }
+                    ver < MINE_VERSION -> (set + MINE_ADDED_V3).also { save(file, set.toList() + MINE_ADDED_V3.filter { it !in set }) }
+                    else -> set
+                }
             } catch (_: Exception) { MINE_DEFAULT.toSet() }
         }
 
@@ -115,7 +138,7 @@ class UadList(private val cache: File, private val log: (String) -> Unit) {
         fun save(file: File, entries: Collection<String>) {
             file.parentFile?.mkdirs()
             file.writeText("# Franken Flasher - pakiet debloat \"Moje\": nazwa pakietu albo katalogu aplikacji w linii, # = komentarz\n" +
-                entries.joinToString("\n") + "\n")
+                "# wersja $MINE_VERSION\n" + entries.joinToString("\n") + "\n")
         }
 
         val TRACKING = setOf(
