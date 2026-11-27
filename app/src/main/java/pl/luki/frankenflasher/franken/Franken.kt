@@ -90,7 +90,7 @@ class Franken(
                 "Franken: AOSP donor (no my_*) - system/system_ext/product from donor, vendor/odm/boot/firmware from base; " +
                 "my_* kept from base (ColorOS vendor mounts them, AOSP system ignores them); ColorOS fixes skipped"))
             checkFstab(chosen)
-            checkSepolicy(chosen, outSys)
+            checkSepolicy(chosen, outSys, donorImgs)
             checkContexts(chosen, outSys)
             fixAudioVolumes(chosen, outSys)
             addDonorVendorProps(chosen, donorImgs, outSys)
@@ -342,7 +342,7 @@ class Franken(
      *  - inny blad rozwiazywania nazw -> przerwanie (system by nie wstal)
      * Gdy secilc nie da sie uruchomic - sprawdzenie przyblizone (tylko wersjonowane nazwy).
      */
-    private fun checkSepolicy(chosen: MutableMap<String, File>, outSys: File) {
+    private fun checkSepolicy(chosen: MutableMap<String, File>, outSys: File, donorImgs: Map<String, File> = emptyMap()) {
         step(tr("SELinux: kompilacja polityki (dawca + vendor bazy)", "SELinux: compiling policy (donor + base vendor)"))
         fun cat(n: String, vararg paths: String): ByteArray? {
             val img = chosen[n] ?: return null
@@ -399,6 +399,25 @@ class Franken(
         fun pubWithExtra(): ByteArray = if (extra.isEmpty()) pub else (String(pub).trimEnd() + "\n; Franken: atrybuty z systemu ColorOS, ktorych nie ma dawca AOSP (puste)\n" +
             extra.joinToString("") { "(typeattribute $it)\n" }).toByteArray()
 
+        // aplikacje dawcy z domenami, dla ktorych reguly byly w vendorze dawcy (np. aparat OnePlus: opluscamera_app)
+        val app = try {
+            fun dcat(n: String, p: String) = donorImgs[n]?.let { img -> try { imgCat(img, p) } catch (_: Exception) { null } }?.let { String(it) }
+            val donorCil = listOfNotNull(dcat("vendor", "etc/selinux/vendor_sepolicy.cil"), dcat("odm", "etc/selinux/odm_sepolicy.cil")).joinToString("\n").ifEmpty { null }
+            CilApps.build(texts, declared + extra, ver,
+                listOfNotNull(part("system_ext", "etc/selinux/system_ext_seapp_contexts"), part("product", "etc/selinux/product_seapp_contexts")).joinToString("\n") { String(it) },
+                listOfNotNull(cat("vendor", "etc/selinux/vendor_seapp_contexts"), cat("odm", "etc/selinux/odm_seapp_contexts")).joinToString("\n") { String(it) },
+                donorCil, dcat("vendor", "etc/selinux/plat_sepolicy_vers.txt")?.trim())
+        } catch (e: Exception) {
+            log(tr("SELinux: aplikacje dawcy - nie odczytano regul (${e.message}) - pomijam", "SELinux: donor apps - rules not read (${e.message}) - skipped")); null
+        }
+        val appRules = app?.rules.orEmpty().toMutableList()
+        val vendBase = String(vend).trimEnd() + "\n"
+        val vendLines = vendBase.count { it == '\n' }
+        fun vendWithApp(): ByteArray = if (appRules.isEmpty()) vend else
+            (vendBase + "; Franken: reguly vendora dla aplikacji dawcy (${app?.domains?.keys?.joinToString()})\n" + appRules.joinToString("\n") + "\n").toByteArray()
+        var appDropped = 0
+        var appFallback: String? = null
+
         val dir = File(work, "selinux").apply { deleteRecursively(); mkdirs() }
         val files = inputs.map { (n, d) -> File(dir, n).apply { writeBytes(d) } }
         var verdict: String? = null    // null = OK
@@ -406,14 +425,29 @@ class Franken(
         val compiled: Boolean = try {
             while (true) {
                 File(dir, PUB_CIL).writeBytes(pubWithExtra())
+                File(dir, "vendor_sepolicy.cil").writeBytes(vendWithApp())
                 val err = secilc(files, dir)
                 if (err == null) { verdict = null; break }
                 rounds++
+                if (appRules.isNotEmpty()) {
+                    // blad w dopisanych regulach aplikacji -> ta regula wylatuje
+                    val bad = Regex("""vendor_sepolicy\.cil:(\d+)""").findAll(err).map { it.groupValues[1].toInt() - vendLines - 2 }
+                        .filter { it in appRules.indices }.toSortedSet()
+                    if (bad.isNotEmpty() && appDropped < 25 && rounds <= 60) { bad.reversed().forEach { appRules.removeAt(it); appDropped++ }; continue }
+                }
                 val m = Regex("""Failed to resolve \S+ statement at (\S+?):(\d+)""").find(err)
                 val src = m?.groupValues?.get(1)?.let { File(it).let { f -> if (f.isAbsolute) f else File(dir, it) } }?.takeIf { it.isFile }
                 val stmt = src?.useLines { s -> s.drop(m!!.groupValues[2].toInt() - 1).firstOrNull() }?.trim()
                 val cand = stmt?.let { s -> Regex("""[A-Za-z0-9_]+""").findAll(s).map { it.value }.filter { it.endsWith(suffix) }.toSet() + typeTokens(s) }.orEmpty()
                 val missing = cand.filter { it !in declared && it !in extra }.toSet()
+                if ((missing.isEmpty() || rounds > 40) && appRules.isNotEmpty() && rounds <= 62) {
+                    // nie wiadomo, ktora regula - najpierw zostaja tylko podstawowe, potem zadne
+                    appFallback = err.lines().firstOrNull { it.isNotBlank() }
+                    val ess = appRules.filter { it in app!!.essential }
+                    appDropped += appRules.size - (if (ess.size < appRules.size) ess.size else 0)
+                    if (ess.size < appRules.size) { appRules.clear(); appRules += ess } else appRules.clear()
+                    continue
+                }
                 if (missing.isEmpty() || rounds > 40) {
                     verdict = err.lines().filter { it.isNotBlank() }.take(4).joinToString(" | ") + (if (src != null && stmt != null) " | ${src.name}: ${stmt.take(200)}" else "")
                     break
@@ -435,20 +469,41 @@ class Franken(
             log(tr("SELinux: UWAGA - secilc ($secilcUsed) zglosil blad (moze inna wersja libsepol niz w dawcy): $v - ryzyko bootloopa",
                 "SELinux: WARNING - secilc ($secilcUsed) reported an error (maybe a different libsepol than the donor): $v - bootloop risk"))
         }
-        if (extra.isNotEmpty()) {
-            val v = chosen.getValue("vendor")
-            if (fsType(v) != "erofs") throw IOException(tr("SELinux: vendor bazy wymaga ${extra.size} atrybutow (${short(extra)}), ale nie jest EROFS - nie moge go poprawic. Przerywam.",
-                "SELinux: base vendor needs ${extra.size} attributes (${short(extra)}) but is not EROFS - cannot patch it. Stopping."))
-            val out = File(outSys, "vendor.img")
-            copyImage(v, out)
-            ErofsPatcher(out).use { p -> p.putFile("etc/selinux/$PUB_CIL", pubWithExtra()); p.commit() }
-            checkImage(out)
-            chosen["vendor"] = out
-            log(tr("SELinux: vendor - dopisano ${extra.size} pustych atrybutow do etc/selinux/$PUB_CIL: ${short(extra)} (nazwy z systemu ColorOS, ktorych nie ma dawca - reguly vendora dla nich nic nie robia)",
-                "SELinux: vendor - added ${extra.size} empty attributes to etc/selinux/$PUB_CIL: ${short(extra)} (ColorOS system names the donor lacks - vendor rules for them do nothing)"))
+        // reguly aplikacji tylko gdy cala polityka z nimi sie skompilowala
+        val appOk = compiled && verdict == null && appRules.isNotEmpty()
+        if (app != null) {
+            val doms = app.domains.entries.joinToString { (d, p) -> if (p.isEmpty()) d else "$d (${p.joinToString()})" }
+            if (appOk) log(tr("SELinux: aplikacje dawcy bez regul w vendorze bazy: $doms - dopisano ${appRules.size} regul do vendor_sepolicy.cil " +
+                    "(podstawowe app_domain: ${app.essential.count { it in appRules }}, z vendora dawcy: ${app.fromDonor}, z vendora bazy: ${app.fromBase.entries.joinToString { "${it.key} ${it.value}" }.ifEmpty { "-" }}; " +
+                    "odrzucone przed kompilacja: ${app.rejected}, przez secilc: $appDropped${appFallback?.let { " ($it)" } ?: ""})",
+                "SELinux: donor apps without base vendor rules: $doms - added ${appRules.size} rules to vendor_sepolicy.cil " +
+                    "(app_domain basics: ${app.essential.count { it in appRules }}, from donor vendor: ${app.fromDonor}, from base vendor: ${app.fromBase.entries.joinToString { "${it.key} ${it.value}" }.ifEmpty { "-" }}; " +
+                    "rejected before compiling: ${app.rejected}, by secilc: $appDropped${appFallback?.let { " ($it)" } ?: ""})"))
+            else log(tr("SELinux: aplikacje dawcy bez regul w vendorze bazy: $doms - reguly NIE dopisane (${if (!compiled) "brak secilc - nie da sie sprawdzic" else "nie kompiluja sie${appFallback?.let { ": $it" } ?: ""}"}) - te aplikacje moga sie wylaczac",
+                "SELinux: donor apps without base vendor rules: $doms - rules NOT added (${if (!compiled) "no secilc - cannot verify" else "they do not compile${appFallback?.let { ": $it" } ?: ""}"}) - these apps may crash"))
         }
-        if (compiled && verdict == null) log(tr("SELinux: OK - polityka kompiluje sie jak przy starcie ($secilcUsed, ${inputs.size} plikow${if (extra.isEmpty()) "" else ", z poprawka vendora"})",
-            "SELinux: OK - the policy compiles as at boot ($secilcUsed, ${inputs.size} files${if (extra.isEmpty()) "" else ", with the vendor fix"})"))
+        if (extra.isNotEmpty() || appOk) {
+            val v = chosen.getValue("vendor")
+            if (fsType(v) != "erofs") {
+                if (extra.isNotEmpty()) throw IOException(tr("SELinux: vendor bazy wymaga ${extra.size} atrybutow (${short(extra)}), ale nie jest EROFS - nie moge go poprawic. Przerywam.",
+                    "SELinux: base vendor needs ${extra.size} attributes (${short(extra)}) but is not EROFS - cannot patch it. Stopping."))
+                log(tr("SELinux: vendor bazy nie jest EROFS - reguly aplikacji dawcy pominiete", "SELinux: base vendor is not EROFS - donor app rules skipped"))
+            } else {
+                val out = File(outSys, "vendor.img")
+                if (v.canonicalPath != out.canonicalPath) copyImage(v, out)
+                ErofsPatcher(out).use { p ->
+                    if (extra.isNotEmpty()) p.putFile("etc/selinux/$PUB_CIL", pubWithExtra())
+                    if (appOk) p.putFile("etc/selinux/vendor_sepolicy.cil", vendWithApp())
+                    p.commit()
+                }
+                checkImage(out)
+                chosen["vendor"] = out
+                if (extra.isNotEmpty()) log(tr("SELinux: vendor - dopisano ${extra.size} pustych atrybutow do etc/selinux/$PUB_CIL: ${short(extra)} (nazwy z systemu ColorOS, ktorych nie ma dawca - reguly vendora dla nich nic nie robia)",
+                    "SELinux: vendor - added ${extra.size} empty attributes to etc/selinux/$PUB_CIL: ${short(extra)} (ColorOS system names the donor lacks - vendor rules for them do nothing)"))
+            }
+        }
+        if (compiled && verdict == null) log(tr("SELinux: OK - polityka kompiluje sie jak przy starcie ($secilcUsed, ${inputs.size} plikow${if (extra.isEmpty() && !appOk) "" else ", z poprawka vendora"})",
+            "SELinux: OK - the policy compiles as at boot ($secilcUsed, ${inputs.size} files${if (extra.isEmpty() && !appOk) "" else ", with the vendor fix"})"))
         if (!compiled) log(tr("SELinux: przyblizone - bez kompilacji nie da sie wykluczyc bootloopa", "SELinux: approximate - without compiling a bootloop cannot be ruled out"))
     }
 
