@@ -94,7 +94,7 @@ class Franken(
             checkContexts(chosen, outSys)
             fixAudioVolumes(chosen, outSys)
             addDonorVendorProps(chosen, donorImgs, outSys)
-            copyDonorVendorOverlays(chosen, donorImgs, outSys)
+            copyDonorOverlays(chosen, donorImgs, outSys)
         }
 
         // --- my_product (dawca + konfiguracja bazy) ---
@@ -609,35 +609,50 @@ class Franken(
     }
 
     /**
-     * Nakladki (RRO) z vendor/overlay dawcy AOSP: drzewa LineageOS instaluja tam konfiguracje, ktorej system dawcy
-     * potrzebuje (hardware/oplus TelephonyResCommon: config_ims_mmtel_package=org.codeaurora.ims; FrameworksRes,
-     * Wifi, SecureElement...). Vendor ColorOS ich nie ma -> m.in. "NO_IMS_SERVICE_CONFIGURED": modem rejestruje
-     * VoLTE, ale Android nie podlacza uslugi IMS i polaczenia przychodzace przez VoLTE gina ("Null mTracker").
-     * Kopiowane sa nakladki, ktorych vendor bazy nie ma (atrybuty/etykieta SELinux jak sasiednie w vendor/overlay).
+     * Nakladki (RRO) z vendor/overlay i odm/overlay dawcy AOSP: drzewa LineageOS instaluja tam konfiguracje, ktorej
+     * system dawcy potrzebuje, a vendor/odm ColorOS jej nie maja:
+     *  - vendor: hardware/oplus TelephonyResCommon (config_ims_mmtel_package=org.codeaurora.ims) - bez niej
+     *    "NO_IMS_SERVICE_CONFIGURED", polaczenia przychodzace przez VoLTE gina ("Null mTracker"); Wifi, NFC...
+     *  - odm (device_specific): OPlusFrameworksResTarget / OPlusSystemUIResTarget - wyciecie ekranu, promien rogow,
+     *    wysokosc i margines paska stanu (bez nich zegar wchodzi pod zaokraglony rog), krzywe jasnosci
+     * Kopiowane sa nakladki, ktorych baza nie ma. Atrybuty i etykieta SELinux (vendor_overlay_file) - jak sasiednie
+     * pliki; gdy odm bazy nie ma katalogu overlay - wzor z vendor/overlay.
      */
-    private fun copyDonorVendorOverlays(chosen: MutableMap<String, File>, donorImgs: Map<String, File>, outSys: File) {
-        val dv = donorImgs["vendor"] ?: return
-        val vendor = chosen["vendor"] ?: return
-        val donor = imgList(dv, "overlay")?.filter { it.endsWith(".apk") }.orEmpty()
-        if (donor.isEmpty()) { log(tr("nakladki: brak vendor/overlay/*.apk u dawcy", "overlays: no vendor/overlay/*.apk in donor")); return }
-        if (fsType(vendor) != "erofs") { log(tr("nakladki: vendor bazy nie jest EROFS - pomijam", "overlays: base vendor is not EROFS - skipping")); return }
-        val base = imgList(vendor, "overlay")?.toSet()
-        if (base == null) { log(tr("nakladki: brak vendor/overlay w bazie - pomijam", "overlays: no vendor/overlay in base - skipping")); return }
-        val add = LinkedHashMap<String, ByteArray>()
-        for (n in donor.sorted()) {
-            if (n in base) continue
-            val data = try { imgCat(dv, "overlay/$n") } catch (_: Exception) { null } ?: continue
-            if (data.size < 4 || data[0] != 'P'.code.toByte() || data[1] != 'K'.code.toByte()) continue
-            add[n] = data
+    private fun copyDonorOverlays(chosen: MutableMap<String, File>, donorImgs: Map<String, File>, outSys: File) {
+        // wzor atrybutow nakladki (katalog i plik) z vendor/overlay bazy
+        val tpl: Pair<ErofsPatcher.Node?, ErofsPatcher.Node?> = chosen["vendor"]?.takeIf { fsType(it) == "erofs" }?.let { v ->
+            try { ErofsPatcher(v, readOnly = true).use { p ->
+                p.templateOf("overlay") to p.list("overlay")?.firstOrNull { it.name.endsWith(".apk") }?.let { p.templateOf("overlay/${it.name}") }
+            } } catch (_: Exception) { null }
+        } ?: (null to null)
+        for (part in listOf("vendor", "odm")) {
+            val dimg = donorImgs[part] ?: continue
+            val img = chosen[part] ?: continue
+            val donor = imgList(dimg, "overlay")?.filter { it.endsWith(".apk") }.orEmpty()
+            if (donor.isEmpty()) continue
+            if (fsType(img) != "erofs") { log(tr("nakladki: $part bazy nie jest EROFS - pomijam", "overlays: base $part is not EROFS - skipping")); continue }
+            val base = imgList(img, "overlay")?.toSet()
+            if (base == null && (tpl.first == null || tpl.second == null)) { log(tr("nakladki: brak $part/overlay w bazie i wzoru z vendora - pomijam", "overlays: no $part/overlay in base and no vendor template - skipping")); continue }
+            val add = LinkedHashMap<String, ByteArray>()
+            for (n in donor.sorted()) {
+                if (base != null && n in base) continue
+                val data = try { imgCat(dimg, "overlay/$n") } catch (_: Exception) { null } ?: continue
+                if (data.size < 4 || data[0] != 'P'.code.toByte() || data[1] != 'K'.code.toByte()) continue
+                add[n] = data
+            }
+            if (add.isEmpty()) { log(tr("nakladki: $part bazy ma juz wszystkie nakladki dawcy (${donor.size})", "overlays: base $part already has all donor overlays (${donor.size})")); continue }
+            val out = File(outSys, "$part.img")
+            if (img.canonicalPath != out.canonicalPath) copyImage(img, out)
+            ErofsPatcher(out).use { p ->
+                if (base == null) p.mkdir("overlay", tpl.first!!)
+                add.forEach { (n, d) -> p.putFile("overlay/$n", d, if (base == null) tpl.second else null) }
+                p.commit()
+            }
+            checkImage(out)
+            chosen[part] = out
+            log(tr("nakladki: $part/overlay + ${add.size} z dawcy (${add.keys.joinToString { it.removeSuffix(".apk") }})",
+                "overlays: $part/overlay + ${add.size} from donor (${add.keys.joinToString { it.removeSuffix(".apk") }})"))
         }
-        if (add.isEmpty()) { log(tr("nakladki: vendor bazy ma juz wszystkie nakladki dawcy (${donor.size})", "overlays: base vendor already has all donor overlays (${donor.size})")); return }
-        val out = File(outSys, "vendor.img")
-        if (vendor.canonicalPath != out.canonicalPath) copyImage(vendor, out)
-        ErofsPatcher(out).use { p -> add.forEach { (n, d) -> p.putFile("overlay/$n", d) }; p.commit() }
-        checkImage(out)
-        chosen["vendor"] = out
-        log(tr("nakladki: vendor/overlay + ${add.size} z dawcy (${add.keys.joinToString { it.removeSuffix(".apk") }}) - m.in. konfiguracja IMS (VoLTE), Wi-Fi, NFC",
-            "overlays: vendor/overlay + ${add.size} from donor (${add.keys.joinToString { it.removeSuffix(".apk") }}) - incl. IMS (VoLTE), Wi-Fi, NFC config"))
     }
 
     /** Plik z partycji: osobny obraz albo (system_ext/product) wewnatrz system; system jako root ("system/...") albo nie. */
